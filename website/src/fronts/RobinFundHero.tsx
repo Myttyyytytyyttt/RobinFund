@@ -1,47 +1,10 @@
-import { useEffect, useState } from 'react'
+import { GooeyText } from '@/components/ui/gooey-text-morphing'
 
 const VIDEO_URL =
   'https://d8j0ntlcm91z4.cloudfront.net/user_38xzZboKViGWJOttwIXH07lWA1P/hf_20260323_071151_38c3924f-c312-48af-a196-3fbb80e4226f.mp4'
 
 // Palabras de largo casi idéntico para que el titular centrado no "baile" al mutar
 const MORPH_WORDS = ['Fellows.', 'Fortune.', 'Future.', 'Family.']
-const DWELL_MS = 2400
-const SWAP_MS = 400
-
-/** Tercera palabra del titular: metamorfosis blur+fade+rise entre varias palabras. */
-function MorphingWord() {
-  const [index, setIndex] = useState(0)
-  const [visible, setVisible] = useState(true)
-
-  useEffect(() => {
-    const dwell = setTimeout(() => setVisible(false), DWELL_MS)
-    return () => clearTimeout(dwell)
-  }, [index])
-
-  useEffect(() => {
-    if (visible) return
-    const swap = setTimeout(() => {
-      setIndex((i) => (i + 1) % MORPH_WORDS.length)
-      setVisible(true)
-    }, SWAP_MS)
-    return () => clearTimeout(swap)
-  }, [visible])
-
-  return (
-    <span
-      className="inline-block ease-out"
-      style={{
-        opacity: visible ? 1 : 0,
-        filter: visible ? 'blur(0px)' : 'blur(10px)',
-        transform: visible ? 'translateY(0)' : 'translateY(12px)',
-        transitionProperty: 'opacity, filter, transform',
-        transitionDuration: `${SWAP_MS}ms`,
-      }}
-    >
-      {MORPH_WORDS[index]}
-    </span>
-  )
-}
 
 const NAV_LINKS = [
   { label: 'Home', active: true },
@@ -137,9 +100,16 @@ export default function RobinFundHero() {
             </span>
           </div>
 
-          {/* Headline — abstracto y filosófico; la tercera palabra muta */}
-          <h1 className="animate-fade-rise font-bold text-5xl sm:text-6xl md:text-[4.9rem] leading-[0.95] tracking-[-1.5px] text-gray-900 max-w-5xl">
-            Finance. Freedom. <MorphingWord />
+          {/* Headline — abstracto y filosófico; la tercera palabra muta con el efecto gooey */}
+          <h1 className="animate-fade-rise font-bold text-5xl sm:text-6xl md:text-[4.9rem] leading-[0.95] tracking-[-1.5px] text-gray-900 max-w-5xl flex flex-wrap items-center justify-center gap-x-[0.22em]">
+            <span>Finance. Freedom.</span>
+            <GooeyText
+              texts={MORPH_WORDS}
+              morphTime={1}
+              cooldownTime={2}
+              className="w-[3.95em] h-[0.95em]"
+              textClassName="top-0 left-0 w-full text-5xl sm:text-6xl md:text-[4.9rem] font-bold leading-[0.95] tracking-[-1.5px] text-gray-900"
+            />
           </h1>
 
           {/* Subtexto */}

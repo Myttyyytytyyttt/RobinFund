@@ -111,6 +111,7 @@ contract Fund {
 
     State public state;
     bool public frozen; // cacheado; declarable permissionless si isBlocked(fund) (§10.3)
+    uint256 private _lock = 1; // guard de reentrancy (S2)
 
     address[] public assets; // estrictamente ascendente (F13); vacío hasta Fase 1.4
     uint256 public hwmWad; // HWM ajustado por aportes (§7.2); 0 hasta el primer mint
@@ -163,10 +164,17 @@ contract Fund {
     error CooldownActive();
     error BadOrder();
     error BadConfig();
-    error GrossClaimsTooLow();
     error BlackoutActive();
     error StillEligible();
     error SharesLocked();
+    error Reentrancy();
+
+    modifier nonReentrant() {
+        if (_lock != 1) revert Reentrancy();
+        _lock = 2;
+        _;
+        _lock = 1;
+    }
 
     // ---------- Construcción ----------
 
@@ -468,47 +476,72 @@ contract Fund {
 
             _touch(o.lp);
             uint256 price = _sharePrice(navWad);
-            uint256 dueWad = uint256(o.shares) * price / WAD;
-            uint256 due6 = dueWad / USDG_TO_WAD;
+            uint256 due6 = uint256(o.shares) * price / WAD / USDG_TO_WAD;
 
             if (o.inKind) {
-                _executeInKind(withdrawHead, o, price);
+                uint256 removedWad = _executeInKind(withdrawHead, o, price);
+                navWad -= removedWad; // S6: descontar el valor entregado para no sobre-preciar el siguiente
+                withdrawHead++;
             } else {
                 // 1.3a: paga solo si el USDG del fondo cubre (liquidación keeper-asistida en 1.4)
                 if (USDG.balanceOf(address(this)) < due6) break;
+                // CEI (S2): mutaciones de estado ANTES de la transferencia externa
                 _settleNiOnBurn(o.lp, o.shares, due6 * USDG_TO_WAD);
                 share.burn(o.lp, o.shares);
                 lockedShares[o.lp] -= o.shares;
                 pendingOrders[o.lp]--;
-                USDG.safeTransfer(o.lp, due6);
                 navWad -= due6 * USDG_TO_WAD;
-                emit WithdrawExecuted(withdrawHead, o.lp, o.shares, due6, false);
+                uint256 shares = o.shares;
+                address lp = o.lp;
+                withdrawHead++;
+                USDG.safeTransfer(lp, due6);
+                emit WithdrawExecuted(withdrawHead - 1, lp, shares, due6, false);
             }
-            withdrawHead++;
         }
     }
 
-    function _executeInKind(uint256 orderId, WithdrawOrder storage o, uint256 priceIfValid) internal {
+    /// @dev Ejecuta un retiro in-kind. Devuelve el valor WAD retirado del fondo (para descontar del
+    /// NAV local, S6). No requiere NAV válido: solo balances raw pro-rata (§5.3, válvula de escape).
+    function _executeInKind(uint256 orderId, WithdrawOrder storage o, uint256 priceIfValid)
+        internal
+        returns (uint256 removedWad)
+    {
         uint256 supply = share.totalSupply();
+        uint256 shares = o.shares;
+        address lp = o.lp;
         // proceeds para NI: collar (§6, simplificado 1.3a — sin true-up al alza posterior)
         uint256 refPrice = priceIfValid > lastValidSharePriceWad ? priceIfValid : lastValidSharePriceWad;
-        _settleNiOnBurn(o.lp, o.shares, uint256(o.shares) * refPrice / WAD);
+        _settleNiOnBurn(lp, shares, shares * refPrice / WAD);
 
-        // pro-rata físico de cada activo + USDG (try/catch: en Frozen salta tokens bloqueados, §10.3)
+        // CEI (S2): quemar y limpiar estado ANTES de mover activos
+        uint256 usdgSlice = USDG.balanceOf(address(this)) * shares / supply;
+        share.burn(lp, shares);
+        lockedShares[lp] -= shares;
+        pendingOrders[lp]--;
+
+        // pro-rata físico de cada activo (try/catch: en Frozen salta tokens bloqueados, §10.3)
         for (uint256 i; i < assets.length; ++i) {
             uint256 bal = IERC20(assets[i]).balanceOf(address(this));
-            uint256 slice = bal * o.shares / supply;
+            uint256 slice = bal * shares / supply;
             if (slice > 0) {
-                (bool ok,) = assets[i].call(abi.encodeCall(IERC20.transfer, (o.lp, slice)));
+                (address feed,) = REGISTRY.feedOf(assets[i]);
+                removedWad += _valueSliceWad(feed, slice);
+                (bool ok,) = assets[i].call(abi.encodeCall(IERC20.transfer, (lp, slice)));
                 ok; // residual de tokens intransferibles: TODO 1.3b (claim in-kind)
             }
         }
-        uint256 usdgSlice = USDG.balanceOf(address(this)) * o.shares / supply;
-        share.burn(o.lp, o.shares);
-        lockedShares[o.lp] -= o.shares;
-        pendingOrders[o.lp]--;
-        if (usdgSlice > 0) USDG.safeTransfer(o.lp, usdgSlice);
-        emit WithdrawExecuted(orderId, o.lp, o.shares, usdgSlice, true);
+        removedWad += usdgSlice * USDG_TO_WAD;
+        if (usdgSlice > 0) USDG.safeTransfer(lp, usdgSlice);
+        emit WithdrawExecuted(orderId, lp, shares, usdgSlice, true);
+    }
+
+    function _valueSliceWad(address feed, uint256 slice) internal view returns (uint256) {
+        if (feed == address(0)) return 0;
+        try IAggregatorV3(feed).latestRoundData() returns (uint80, int256 px, uint256, uint256, uint80) {
+            return px > 0 ? slice * uint256(px) / 1e8 : 0;
+        } catch {
+            return 0;
+        }
     }
 
     /// @dev Regla de burn del NI (§6): resta max(pro-rata NI, proceeds).
@@ -579,10 +612,30 @@ contract Fund {
         if (msg.sender != KEEPER) return; // solo el keeper aporta grossClaims
 
         uint256 supply = share.totalSupply();
+        uint64 period = ++currentPeriod;
+
+        // Sin shares no hay nada que marcar: registra un settlement trivial y transiciona (S1 — evita
+        // la división por cero de la perf fee con supply==0 que bloqueaba el cierre).
+        if (supply == 0) {
+            settlements[period] = SettlementRec({
+                peWad: uint128(lastValidSharePriceWad),
+                lambdaWad: 0,
+                markTime: uint48(block.timestamp),
+                degraded: degraded
+            });
+            lastMarkTime = uint48(block.timestamp);
+            _postSettle(s.navWad);
+            emit Settled(period, lastValidSharePriceWad, 0, 0, degraded);
+            return;
+        }
+
         uint256 supplyLP = supply - share.balanceOf(FEE_SPLITTER);
         uint256 peWad = _sharePrice(s.navWad);
 
-        // funding neteado (§6) + fix v0.9.1: min(stake, neteado, grossClaims)
+        // Funding neteado (§6): 100% on-chain y KEEPER-INDEPENDIENTE (S3 — el fix v0.9.1 que capaba
+        // por grossClaims permitía a un keeper sub-declarar y reducir la salida del stake, reabriendo
+        // §14.6/§14.20). La pérdida agregada NO vesteada es el techo exacto; el vesting per-LP vive
+        // solo en el REPARTO vía λ, nunca en cuánto sale del stake.
         uint256 nettedWad = 0;
         if (niAggregateWad > 0) {
             uint256 lpValueWad = supplyLP * peWad / WAD;
@@ -592,18 +645,24 @@ contract Fund {
         }
         uint256 stakeWad = stakeEscrow.stakeAvailable() * USDG_TO_WAD;
         uint256 fundingWad = nettedWad < stakeWad ? nettedWad : stakeWad;
-        if (fundingWad > grossClaimsWad) fundingWad = grossClaimsWad; // v0.9.1
-        if (grossClaimsWad < fundingWad) revert GrossClaimsTooLow(); // λ ≤ 1 (redundante tras el min, belt)
 
-        uint64 period = ++currentPeriod;
-        uint256 lambdaWad = grossClaimsWad == 0 ? 0 : fundingWad * WAD / grossClaimsWad;
+        // λ = min(1, funding/grossClaims). Con grossClaims vesteado < funding no-vesteado, λ=1 y se paga
+        // el claim vesteado de cada LP; el residuo (funding − Σ claims) queda en la reserva y se barre
+        // al manager en Closed (v0.9). grossClaims solo baja λ, jamás sube la salida del stake.
+        uint256 lambdaWad;
+        if (grossClaimsWad == 0) {
+            lambdaWad = 0;
+        } else {
+            lambdaWad = fundingWad * WAD / grossClaimsWad;
+            if (lambdaWad > WAD) lambdaWad = WAD;
+        }
         if (fundingWad > 0) {
             uint256 funding6 = fundingWad / USDG_TO_WAD;
             stakeEscrow.slash(funding6);
             reserve.creditPeriod(period, funding6);
         }
 
-        // perf fee (§7.2) — omitida en settlement degradado
+        // perf fee (§7.2) — omitida en settlement degradado; supply>0 garantizado arriba
         uint256 pFinalWad = peWad;
         if (!degraded && hwmWad > 0 && peWad > hwmWad && config.perfFeeBps > 0) {
             uint256 gainWad = (peWad - hwmWad) * supply / WAD;
@@ -619,8 +678,12 @@ contract Fund {
             SettlementRec({peWad: uint128(peWad), lambdaWad: uint128(lambdaWad), markTime: uint48(block.timestamp), degraded: degraded});
         lastMarkTime = uint48(block.timestamp);
         lastValidSharePriceWad = degraded ? lastValidSharePriceWad : pFinalWad;
+        _postSettle(s.navWad);
+        emit Settled(period, peWad, fundingWad, lambdaWad, degraded);
+    }
 
-        // transición de Winding pendiente (§4)
+    /// @dev Transiciones post-settlement comunes (§4, §6).
+    function _postSettle(uint256 navWad) internal {
         if (state == State.PendingWinding) {
             state = State.Winding;
             _voidAllDeposits();
@@ -629,11 +692,10 @@ contract Fund {
         // reducción de stake pendiente: solo en settlement, tras slash, con cap-check (§6)
         if (stakeEscrow.withdrawExecutableAt() != 0 && block.timestamp >= stakeEscrow.withdrawExecutableAt()) {
             uint256 remainingWad = (stakeEscrow.stakeAvailable() - stakeEscrow.pendingWithdraw()) * USDG_TO_WAD;
-            if (uint256(config.kFactor) * remainingWad >= s.navWad) {
+            if (uint256(config.kFactor) * remainingWad >= navWad) {
                 stakeEscrow.executeWithdraw();
             }
         }
-        emit Settled(period, peWad, fundingWad, lambdaWad, degraded);
     }
 
     // ---------- Estados (§4, §10.2, §10.3) ----------
@@ -684,13 +746,15 @@ contract Fund {
         uint256 bal = share.balanceOf(lp) - lockedShares[lp];
         if (bal == 0) revert BadOrder();
         lockedShares[lp] += bal;
-        pendingOrders[lp]++;
+        pendingOrders[lp]++; // balancea el decremento de la ejecución; sin tope (orden de compliance)
+        // cooldown ya vencido (S15: resta saturada para no revertir en chains de timestamp bajo)
+        uint48 reqTime = block.timestamp > config.withdrawCooldown ? uint48(block.timestamp) - config.withdrawCooldown : 0;
         uint256 orderId = withdrawQueue.length;
         withdrawQueue.push(
-            WithdrawOrder({lp: lp, shares: uint128(bal), requestTime: uint48(block.timestamp) - config.withdrawCooldown, cancelled: false, inKind: false})
+            WithdrawOrder({lp: lp, shares: uint128(bal), requestTime: reqTime, cancelled: false, inKind: true}) // in-kind: siempre ejecutable (S5)
         );
         emit ForcedRedemption(lp, bal);
-        emit WithdrawRequested(orderId, lp, bal, false);
+        emit WithdrawRequested(orderId, lp, bal, true);
     }
 
     function _voidAllDeposits() internal {
