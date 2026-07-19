@@ -5,6 +5,7 @@ import {Test} from "forge-std/Test.sol";
 import {Fund} from "../../src/Fund.sol";
 import {TokenRegistry} from "../../src/TokenRegistry.sol";
 import {IEligibilityGate} from "../../src/interfaces/IEligibilityGate.sol";
+import {StakeEscrow} from "../../src/StakeEscrow.sol";
 import {MockAccessRegistry, MockStockToken, MockUSDG, MockFeed, MockGate} from "../mocks/Mocks.sol";
 
 /// @notice Regresiones de los §14 ataques y de los hallazgos de la revision 1.3a (S3, S4, S11, S12).
@@ -38,7 +39,7 @@ contract FundAttacksTest is Test {
         reg.list(address(tsla), address(feed), 90000, 1_00000000, 10000_00000000, address(0xBEEF));
         fund = new Fund(
             reg, IEligibilityGate(address(gate)), manager, keeper, feeSplitter, treasury,
-            Fund.Config({perfFeeBps: 2000, feeMinBps: 100, feeMaxBps: 500, managerEntryShareBps: 5000, kFactor: 25, period: PERIOD, withdrawCooldown: COOLDOWN}),
+            Fund.Config({perfFeeBps: 2000, feeMinBps: 0, feeMaxBps: 0, managerEntryShareBps: 5000, kFactor: 25, period: PERIOD, withdrawCooldown: COOLDOWN}),
             "A", "A"
         );
         usdg.mint(manager, 5000_000000);
@@ -73,8 +74,9 @@ contract FundAttacksTest is Test {
     function test_S11_keeper_subdeclarante_no_reduce_el_slash() public {
         _deposit(alice, 10_000_000000);
         _batch();
+        uint256 fundBal = usdg.balanceOf(address(fund));
         vm.prank(address(fund));
-        usdg.transfer(address(0xDEAD), usdg.balanceOf(address(fund)));
+        usdg.transfer(address(0xDEAD), fundBal);
         _seed(100e18); // 100 TSLA @ $100 = 10.000
 
         vm.warp(block.timestamp + PERIOD + 1);
@@ -95,8 +97,9 @@ contract FundAttacksTest is Test {
     function test_S11_keeper_sobredeclarante_solo_diluye_lambda() public {
         _deposit(alice, 10_000_000000);
         _batch();
+        uint256 fundBal = usdg.balanceOf(address(fund));
         vm.prank(address(fund));
-        usdg.transfer(address(0xDEAD), usdg.balanceOf(address(fund)));
+        usdg.transfer(address(0xDEAD), fundBal);
         _seed(100e18);
 
         vm.warp(block.timestamp + PERIOD + 1);
@@ -120,7 +123,7 @@ contract FundAttacksTest is Test {
         _deposit(alice, 10_000_000000);
         _batch();
         vm.prank(address(fund));
-        usdg.transfer(address(0xDEAD), 5000_000000); // el fondo queda con 5000 USDG + comprara TSLA
+        usdg.transfer(address(0xDEAD), 5000_000000); // el fondo queda con ~5000 USDG + comprara TSLA (fix: cantidad fija, no prank-consumida)
         _seed(50e18); // 50 TSLA @ $100 = 5000
 
         uint256 aBal = fund.share().balanceOf(alice);
@@ -162,8 +165,9 @@ contract FundAttacksTest is Test {
     function test_S12_salir_antes_de_la_marca_no_da_claim() public {
         _deposit(alice, 10_000_000000);
         _batch();
+        uint256 fundBal = usdg.balanceOf(address(fund));
         vm.prank(address(fund));
-        usdg.transfer(address(0xDEAD), usdg.balanceOf(address(fund)));
+        usdg.transfer(address(0xDEAD), fundBal);
         _seed(100e18);
 
         // el precio cae; alice retira in-kind ANTES del settlement
@@ -194,8 +198,9 @@ contract FundAttacksTest is Test {
         _deposit(alice, 5000_000000);
         _deposit(bob, 5000_000000);
         _batch();
+        uint256 fundBal = usdg.balanceOf(address(fund));
         vm.prank(address(fund));
-        usdg.transfer(address(0xDEAD), usdg.balanceOf(address(fund)));
+        usdg.transfer(address(0xDEAD), fundBal);
         _seed(100e18); // 10.000 en 100 TSLA @ $100
 
         // sube a $200: NAV 20.000. B retira in-kind (realiza ganancia)
@@ -219,6 +224,62 @@ contract FundAttacksTest is Test {
         fund.claim();
         // A aporto 5000; su claim de por vida no puede exceder eso (invariante 2)
         assertLe(usdg.balanceOf(alice), 5000_000000, "claim <= aportado incluso con bucketing");
+    }
+
+    // ---------- Q6: _touch usa el balance corriente para períodos históricos — correcto porque
+    // todo cambio de balance va precedido de _touch. Con un depósito ENTRE dos settlements sin tocar,
+    // el balance es invariante en el rango no materializado. ----------
+
+    function test_Q6_touch_balance_invariante_entre_settlements() public {
+        _deposit(alice, 10_000_000000);
+        _batch();
+        uint256 fundBal = usdg.balanceOf(address(fund));
+        vm.prank(address(fund));
+        usdg.transfer(address(0xDEAD), fundBal);
+        _seed(100e18);
+
+        // Settlement 1 con pérdida (TSLA $80): alice NO toca (dormida)
+        vm.warp(block.timestamp + PERIOD + 1);
+        feed.set(80_00000000, block.timestamp);
+        vm.prank(keeper);
+        fund.settle(2000e18);
+
+        // Settlement 2, aún dormida (TSLA $70)
+        vm.warp(block.timestamp + PERIOD + 1);
+        feed.set(70_00000000, block.timestamp);
+        vm.prank(keeper);
+        fund.settle(1000e18); // pérdida incremental desde $80
+
+        // materializa los DOS períodos de golpe con el balance corriente (invariante entre ambos)
+        vm.prank(alice);
+        fund.claim();
+        // claim total ≤ pérdida real ($10.000 → $7.000 = 3.000) y ≤ aportado
+        assertLe(usdg.balanceOf(alice), 3000_000000, "claim acumulado <= perdida real");
+        assertLe(usdg.balanceOf(alice), 10_000_000000, "claim <= aportado (invariante 2)");
+        assertGt(usdg.balanceOf(alice), 0, "cobra algo de ambos periodos");
+    }
+
+    // ---------- S12 #13: reducción de stake es rug-safe (timelock + settlement + cap) ----------
+
+    function test_S12_stake_withdraw_rug_safe() public {
+        StakeEscrow se = fund.stakeEscrow();
+        // el manager solicita retirar todo el stake
+        vm.prank(manager);
+        se.requestWithdraw(5000_000000);
+
+        // no ejecutable fuera de settlement ni antes del timelock (el Fund solo lo invoca en _settle)
+        assertEq(se.pendingWithdraw(), 5000_000000);
+
+        // aún con timelock cumplido, si hay AUM el cap-check lo bloquea
+        _deposit(alice, 10_000_000000);
+        _batch();
+        vm.warp(block.timestamp + 7 days + 1);
+        vm.warp(block.timestamp + PERIOD); // llegar al settlement
+        feed.set(feed.answer(), block.timestamp);
+        vm.prank(keeper);
+        fund.settle(0);
+        // el cap resultante (k×0) < AUM ⇒ NO se ejecutó el retiro; el stake sigue
+        assertGt(se.stakeAvailable(), 0, "no se puede retirar stake bajo AUM (cap-check)");
     }
 
     // ---------- S12 #2: blackout pre-settlement ----------

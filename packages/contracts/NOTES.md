@@ -9,8 +9,8 @@ Estado y decisiones que no viven en el código ni en la spec. Para retomar sin r
 | 0 | Monorepo, AddressBook, fork smoke | 6 fork | ✅ |
 | 1.1 | `TokenRegistry` + `NAVLib` | 45 | ✅ revisado |
 | 1.2 | `FundShare`, `QueueEscrow`, `StakeEscrow`, `CompensationReserve` | 63 | ✅ revisado |
-| 1.3a | `Fund` núcleo (sin trading) | 80 + 4 inv | ✅ revisión en curso |
-| 1.3b | Flecos: true-up del collar in-kind, fill parcial del cap (C19), Frozen completo | — | pendiente |
+| 1.3a | `Fund` núcleo (sin trading) | 93 (26 core+ataques, 4 inv, +escrows/nav) | ✅ revisado (3 lentes) |
+| 1.3b | Flecos: true-up del collar in-kind, fill parcial del cap (C19), Frozen completo, cash-queue reorder | — | pendiente |
 | 1.4 | Adapters de trading (Uniswap v4 + 0x), guardarraíl de slippage, liquidación keeper-asistida | — | pendiente |
 | 1.5 | `EligibilityGate` (EIP-712), `FeeSplitter`, `Guardian`, `FundFactory` | — | pendiente |
 
@@ -21,7 +21,15 @@ Estado y decisiones que no viven en el código ni en la spec. Para retomar sin r
 3. **True-up al alza del collar in-kind** — `_executeInKind` usa `max(precioValido, lastValidSharePrice)` en el burn pero sin la corrección al alza posterior de §6 cuando aparece una ronda mejor. Bounded, documentado.
 4. **Fill parcial del cap (C19)** — hoy un depósito que excede el cap espera al siguiente batch (total-o-nada); la spec pide fill parcial + refund del remanente.
 5. **Frozen completo (§10.3)** — hoy `declareFrozen` cachea el flag y anula depósitos; falta la valoración con haircut de activos bloqueados, la quema parcial proporcional USDG-only, y saltar tokens que reviertan (el esqueleto try/catch está en `_executeInKind`).
-6. **Residual de tokens intransferibles en in-kind** — el `ok` del try/catch se ignora; falta dejar el slice como claim in-kind.
+6. **Residual de tokens intransferibles en in-kind** — el `ok` del try/catch se ignora; falta dejar el slice como claim in-kind (S10 #4).
+7. **Frozen §10.3 incompleto** (S10) — falta: quema parcial USDG-only proporcional (mecánica 3), haircut temporal de activos bloqueados en NAVLib (mecánica 5), release de stake tras distribuir (mecánica 7). Implementado: void depósitos, trading off, first-loss suspendido, in-kind NAV-independiente (`executeInKindWithdrawals`), claim-independence.
+8. **Head-of-line del retiro CASH** (S7) — un retiro cash incuBrible en la cabeza para la cola cash con `break`; mitigado porque `executeInKindWithdrawals` procesa in-kind por separado (la válvula nunca se bloquea). Reordenar cash/in-kind o colas separadas en 1.4 cuando exista liquidación.
+9. **Pagination de `_touch` y `_voidAllDeposits`** (S13) — loops sin cota superior de períodos/órdenes; un LP dormido muchos períodos o una cola enorme podría acercarse al gas límite. Cota práctica alta; pagination en 1.4.
+10. **HWM rounding sobre fee-fondo** (econ Q7) — `hwmWad += feeFondoWad*WAD/supply` redondea a la baja, así que la perf fee podría cristalizar sobre polvo de fee. Bounded a dust. Aceptado.
+
+## Revisión 1.3a (3 lentes) — hallazgos aplicados
+
+Highs: **S3** funding keeper-independiente (`min(stake,netted)`, λ=min(1,funding/gross)) — revirtió el cap v0.9.1 que reintroducía confianza en el keeper; **S1** div-por-cero perf fee con supply==0; **S2** guard de reentrancy + CEI; **S4** válvula in-kind NAV-independiente. Mediums: S5 (forceRedeem in-kind), S6 (in-kind descuenta navWad), S8 (registerAsset gated+cap). Bug extra hallado por los tests: fee-fondo no se añade al NAV pre-mint con supply==0 (rompía el precio seed). Lens económica confirmó S3 independientemente antes de colgarse. SPEC → v0.9.2.
 
 ## Invariantes que el Fund debe cumplir (verificados por fuzzing; mantener en cambios)
 

@@ -150,6 +150,8 @@ contract Fund {
     event StateChanged(State newState);
     event FrozenDeclared();
     event ForcedRedemption(address indexed lp, uint256 shares);
+    event ConvertedToInKind(uint256 indexed orderId);
+    event AssetRegistered(address indexed token);
 
     // ---------- Errores ----------
 
@@ -338,6 +340,7 @@ contract Fund {
         WithdrawOrder storage o = withdrawQueue[orderId];
         if (o.lp != msg.sender || o.cancelled || orderId < withdrawHead) revert BadOrder();
         o.inKind = true;
+        emit ConvertedToInKind(orderId);
     }
 
     // ---------- Ejecución de batches (§5.4) ----------
@@ -812,6 +815,7 @@ contract Fund {
         if (msg.sender != MANAGER && msg.sender != KEEPER) revert NotManager();
         if (assets.length >= 32) revert BadOrder(); // cap de cartera (§10, backstop de gas)
         if (!REGISTRY.isActive(token) || IERC20(token).balanceOf(address(this)) == 0) revert BadOrder();
+        emit AssetRegistered(token);
         uint256 n = assets.length;
         if (n > 0 && token <= assets[n - 1]) {
             // inserción ordenada
