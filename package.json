@@ -1,0 +1,10 @@
+{
+  "name": "robinfund",
+  "private": true,
+  "version": "0.0.1",
+  "description": "Fondos sociales sobre Stock Tokens en Robinhood Chain",
+  "scripts": {
+    "test:contracts": "pnpm --dir packages/contracts test"
+  },
+  "packageManager": "pnpm@10.18.1"
+}
