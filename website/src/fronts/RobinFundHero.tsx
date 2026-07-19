@@ -1,5 +1,47 @@
+import { useEffect, useState } from 'react'
+
 const VIDEO_URL =
   'https://d8j0ntlcm91z4.cloudfront.net/user_38xzZboKViGWJOttwIXH07lWA1P/hf_20260323_071151_38c3924f-c312-48af-a196-3fbb80e4226f.mp4'
+
+// Palabras de largo casi idéntico para que el titular centrado no "baile" al mutar
+const MORPH_WORDS = ['Fellows.', 'Fortune.', 'Future.', 'Family.']
+const DWELL_MS = 2400
+const SWAP_MS = 400
+
+/** Tercera palabra del titular: metamorfosis blur+fade+rise entre varias palabras. */
+function MorphingWord() {
+  const [index, setIndex] = useState(0)
+  const [visible, setVisible] = useState(true)
+
+  useEffect(() => {
+    const dwell = setTimeout(() => setVisible(false), DWELL_MS)
+    return () => clearTimeout(dwell)
+  }, [index])
+
+  useEffect(() => {
+    if (visible) return
+    const swap = setTimeout(() => {
+      setIndex((i) => (i + 1) % MORPH_WORDS.length)
+      setVisible(true)
+    }, SWAP_MS)
+    return () => clearTimeout(swap)
+  }, [visible])
+
+  return (
+    <span
+      className="inline-block ease-out"
+      style={{
+        opacity: visible ? 1 : 0,
+        filter: visible ? 'blur(0px)' : 'blur(10px)',
+        transform: visible ? 'translateY(0)' : 'translateY(12px)',
+        transitionProperty: 'opacity, filter, transform',
+        transitionDuration: `${SWAP_MS}ms`,
+      }}
+    >
+      {MORPH_WORDS[index]}
+    </span>
+  )
+}
 
 const NAV_LINKS = [
   { label: 'Home', active: true },
@@ -95,14 +137,14 @@ export default function RobinFundHero() {
             </span>
           </div>
 
-          {/* Headline — la tesis del protocolo (SPEC D3) */}
+          {/* Headline — abstracto y filosófico; la tercera palabra muta */}
           <h1 className="animate-fade-rise font-bold text-5xl sm:text-6xl md:text-[4.9rem] leading-[0.95] tracking-[-1.5px] text-gray-900 max-w-5xl">
-            Stocks. Social. Skin in the game.
+            Finance. Freedom. <MorphingWord />
           </h1>
 
           {/* Subtexto */}
           <p className="animate-fade-rise-delay text-base sm:text-lg text-gray-800 max-w-2xl mt-6 leading-relaxed">
-            Social funds on tokenized stocks. Your first losses come out of the manager's stake.
+            Invest together. Real stocks, shared wins, protected losses.
           </p>
 
           {/* CTA */}
