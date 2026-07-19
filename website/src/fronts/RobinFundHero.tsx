@@ -1,4 +1,4 @@
-import { useRef, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { GooeyText } from '@/components/ui/gooey-text-morphing'
 import { MagneticButton } from '@/components/ui/magnetic-button'
 
@@ -45,17 +45,38 @@ type Phase = 'hero' | 'transition' | 'vista'
 export default function RobinFundHero() {
   const [phase, setPhase] = useState<Phase>('hero')
   const [zoomed, setZoomed] = useState(false)
+  const [blurPulse, setBlurPulse] = useState(false)
   const [par, setPar] = useState({ x: 0, y: 0 })
   const transVidRef = useRef<HTMLVideoElement>(null)
+  const phaseRef = useRef<Phase>('hero')
+
+  useEffect(() => {
+    phaseRef.current = phase
+  }, [phase])
 
   const startTransition = () => {
     if (phase !== 'hero') return
     const v = transVidRef.current
+    // El video arranca YA; el contenido del hero hace fade-off por encima y un pulso
+    // de blur enmascara la costura entre el frame del fondo y el primer frame del clip.
     setPhase('transition')
+    setBlurPulse(true)
+    setTimeout(() => setBlurPulse(false), 1200)
     if (v) {
       v.currentTime = 0
       v.play().catch(() => handleEnded()) // si autoplay falla, saltamos directo a la vista final
     }
+    // Red de seguridad: si el navegador pausa el video a mitad (cambio de pestaña,
+    // ahorro de energía) y nunca llega el 'ended', forzamos la vista final.
+    setTimeout(() => {
+      if (phaseRef.current === 'transition') handleEnded()
+    }, 8000)
+  }
+
+  // Si el navegador auto-pausa el video durante la transición, intentamos reanudar.
+  const handlePause = () => {
+    const v = transVidRef.current
+    if (v && phaseRef.current === 'transition' && !v.ended) v.play().catch(() => {})
   }
 
   const handleEnded = () => {
@@ -88,50 +109,62 @@ export default function RobinFundHero() {
       style={{ backgroundColor: 'hsl(201 100% 13%)' }}
       onMouseMove={onMouseMove}
     >
-      {/* Vídeo de fondo del hero */}
-      <video
-        className="absolute inset-0 w-full h-full object-cover transition-opacity duration-500"
-        style={{ opacity: showTransitionLayer ? 0 : 1 }}
-        src={VIDEO_URL}
-        autoPlay
-        loop
-        muted
-        playsInline
-      />
+      {/* Capa de vídeos — recibe el pulso de blur que tapa la intersección de frames */}
+      <div className={`absolute inset-0 ${blurPulse ? 'animate-blur-pulse' : ''}`}>
+        {/* Vídeo de fondo del hero */}
+        <video
+          className="absolute inset-0 w-full h-full object-cover transition-opacity duration-700"
+          style={{ opacity: showTransitionLayer ? 0 : 1 }}
+          src={VIDEO_URL}
+          autoPlay
+          loop
+          muted
+          playsInline
+        />
 
-      {/* Capa de transición: zoom lento de asentamiento (wrapper exterior) + parallax de ratón (interior) */}
-      <div
-        className="absolute inset-0"
-        style={{
-          transform: zoomed ? 'scale(1.07)' : 'scale(1)',
-          transition: 'transform 2200ms cubic-bezier(0.16, 1, 0.3, 1)',
-          pointerEvents: 'none',
-        }}
-      >
+        {/* Capa de transición: zoom lento de asentamiento (wrapper exterior) + parallax de ratón (interior) */}
         <div
           className="absolute inset-0"
           style={{
-            transform: `translate(${par.x * -16}px, ${par.y * -12}px)`,
-            transition: 'transform 350ms ease-out',
+            transform: zoomed ? 'scale(1.07)' : 'scale(1)',
+            transition: 'transform 2200ms cubic-bezier(0.16, 1, 0.3, 1)',
+            pointerEvents: 'none',
           }}
         >
-          {/* Siempre montado (preload); visible solo fuera del hero. Al terminar queda pausado en el último frame. */}
-          <video
-            ref={transVidRef}
-            className="absolute inset-0 w-full h-full object-cover transition-opacity duration-300"
-            style={{ opacity: showTransitionLayer ? 1 : 0 }}
-            src={TRANSITION_VIDEO}
-            preload="auto"
-            muted
-            playsInline
-            onEnded={handleEnded}
-          />
+          <div
+            className="absolute inset-0"
+            style={{
+              transform: `translate(${par.x * -16}px, ${par.y * -12}px)`,
+              transition: 'transform 350ms ease-out',
+            }}
+          >
+            {/* Siempre montado (preload); visible solo fuera del hero. Al terminar queda pausado en el último frame. */}
+            <video
+              ref={transVidRef}
+              className="absolute inset-0 w-full h-full object-cover transition-opacity duration-700"
+              style={{ opacity: showTransitionLayer ? 1 : 0 }}
+              src={TRANSITION_VIDEO}
+              preload="auto"
+              muted
+              playsInline
+              onEnded={handleEnded}
+              onPause={handlePause}
+            />
+          </div>
         </div>
       </div>
 
-      {/* ---------- HERO ---------- */}
-      {phase === 'hero' && (
-        <div className="relative z-10 min-h-screen">
+      {/* ---------- HERO (montado durante la transición para el fade-off suave) ---------- */}
+      {phase !== 'vista' && (
+        <div
+          className="relative z-10 min-h-screen"
+          style={{
+            opacity: phase === 'hero' ? 1 : 0,
+            transform: phase === 'hero' ? 'scale(1)' : 'scale(1.04)',
+            transition: 'opacity 600ms ease, transform 900ms ease',
+            pointerEvents: phase === 'hero' ? 'auto' : 'none',
+          }}
+        >
           <nav className="max-w-7xl mx-auto px-6 pt-6 flex items-center justify-between">
             <div
               className="h-10 w-10 rounded-full flex items-center justify-center select-none"

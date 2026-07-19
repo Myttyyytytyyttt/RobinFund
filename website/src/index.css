@@ -27,6 +27,14 @@ body {
 .animate-fade-rise-delay { animation: fade-rise 0.8s ease-out 0.2s both; }
 .animate-fade-rise-delay-2 { animation: fade-rise 0.8s ease-out 0.4s both; }
 
+/* Pulso de blur que enmascara la costura entre el frame del hero y el primer frame del video de transición */
+@keyframes blur-pulse {
+  0% { filter: blur(0); }
+  35% { filter: blur(10px); }
+  100% { filter: blur(0); }
+}
+.animate-blur-pulse { animation: blur-pulse 1.1s ease-out both; }
+
 .liquid-glass::before {
   content: '';
   position: absolute;
