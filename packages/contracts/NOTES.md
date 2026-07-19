@@ -11,7 +11,7 @@ Estado y decisiones que no viven en el código ni en la spec. Para retomar sin r
 | 1.2 | `FundShare`, `QueueEscrow`, `StakeEscrow`, `CompensationReserve` | 63 | ✅ revisado |
 | 1.3a | `Fund` núcleo (sin trading) | 93 (26 core+ataques, 4 inv, +escrows/nav) | ✅ revisado (3 lentes) |
 | 1.3b | Flecos: true-up del collar in-kind, fill parcial del cap (C19), Frozen completo, cash-queue reorder | — | pendiente |
-| 1.4 | Adapters de trading (Uniswap v4 + 0x), guardarraíl de slippage, liquidación keeper-asistida | — | pendiente |
+| 1.4a | Adapters de trading: AdapterRegistry + UniswapV4Adapter + fund.execute con guardarraíl + presupuesto | 96 (+3 fork trading) | ✅ (falta 0x RFQ, liquidación keeper-asistida) |
 | 1.5 | `EligibilityGate` (EIP-712), `FeeSplitter`, `Guardian`, `FundFactory` | — | pendiente |
 
 ## Diferido explícitamente en Fund.sol 1.3a (buscar "1.3a" / "TODO" / "DIFERIDO" en el header)

@@ -4,6 +4,7 @@ pragma solidity ^0.8.26;
 import {Test} from "forge-std/Test.sol";
 import {Fund} from "../../src/Fund.sol";
 import {TokenRegistry} from "../../src/TokenRegistry.sol";
+import {AdapterRegistry} from "../../src/AdapterRegistry.sol";
 import {NAVLib} from "../../src/libraries/NAVLib.sol";
 import {IEligibilityGate} from "../../src/interfaces/IEligibilityGate.sol";
 import {IERC20} from "../../src/interfaces/IERC20.sol";
@@ -17,6 +18,7 @@ contract FundCoreTest is Test {
     MockFeed tslaFeed;
     MockGate gate;
     TokenRegistry reg;
+    AdapterRegistry adapters;
     Fund fund;
 
     address manager = address(0x4A4A);
@@ -40,9 +42,11 @@ contract FundCoreTest is Test {
         reg = new TokenRegistry(address(usdg));
         reg.list(address(tsla), address(tslaFeed), STALENESS, 1_00000000, 10000_00000000, address(0xBEEF));
 
+        adapters = new AdapterRegistry();
         fund = new Fund(
             reg,
             IEligibilityGate(address(gate)),
+            adapters,
             manager,
             keeper,
             feeSplitter,
@@ -170,6 +174,7 @@ contract FundCoreTest is Test {
         Fund f2 = new Fund(
             reg,
             IEligibilityGate(address(gate)),
+            adapters,
             manager,
             keeper,
             feeSplitter,

@@ -4,6 +4,7 @@ pragma solidity ^0.8.26;
 import {Test} from "forge-std/Test.sol";
 import {Fund} from "../../src/Fund.sol";
 import {TokenRegistry} from "../../src/TokenRegistry.sol";
+import {AdapterRegistry} from "../../src/AdapterRegistry.sol";
 import {IEligibilityGate} from "../../src/interfaces/IEligibilityGate.sol";
 import {StakeEscrow} from "../../src/StakeEscrow.sol";
 import {MockAccessRegistry, MockStockToken, MockUSDG, MockFeed, MockGate} from "../mocks/Mocks.sol";
@@ -16,6 +17,7 @@ contract FundAttacksTest is Test {
     MockFeed feed;
     MockGate gate;
     TokenRegistry reg;
+    AdapterRegistry adapters;
     Fund fund;
 
     address manager = address(0x4A4A);
@@ -37,8 +39,10 @@ contract FundAttacksTest is Test {
         gate = new MockGate();
         reg = new TokenRegistry(address(usdg));
         reg.list(address(tsla), address(feed), 90000, 1_00000000, 10000_00000000, address(0xBEEF));
+        adapters = new AdapterRegistry();
         fund = new Fund(
-            reg, IEligibilityGate(address(gate)), manager, keeper, feeSplitter, treasury,
+            reg,
+            IEligibilityGate(address(gate)), adapters, manager, keeper, feeSplitter, treasury,
             Fund.Config({perfFeeBps: 2000, feeMinBps: 0, feeMaxBps: 0, managerEntryShareBps: 5000, kFactor: 25, period: PERIOD, withdrawCooldown: COOLDOWN}),
             "A", "A"
         );

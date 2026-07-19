@@ -11,6 +11,8 @@ import {FundShare} from "./FundShare.sol";
 import {QueueEscrow} from "./QueueEscrow.sol";
 import {StakeEscrow} from "./StakeEscrow.sol";
 import {CompensationReserve} from "./CompensationReserve.sol";
+import {AdapterRegistry} from "./AdapterRegistry.sol";
+import {ITradeAdapter} from "./interfaces/ITradeAdapter.sol";
 
 /// @title Fund — núcleo del mecanismo RobinFund (SPEC v0.9 §4–§10; Fase 1.3a)
 /// @notice Esta pasada implementa: estados, colas con forward pricing estricto, secuencia canónica
@@ -88,6 +90,12 @@ contract Fund {
     uint256 internal constant MIN_DEPOSIT_6 = 50_000000; // 50 USDG
     uint256 internal constant MAX_ORDERS_PER_TX = 50;
     uint8 internal constant MAX_PENDING_PER_LP = 8;
+    // Guardarraíl y presupuesto de slippage (§8, §13)
+    uint256 internal constant MAX_SLIPPAGE_BPS = 100; // 1% por trade vs cruce Chainlink
+    uint256 internal constant SLIPPAGE_BUDGET_DAY_BPS = 50; // 0.5% del AUM por ventana rodante de 24h
+    uint256 internal constant SLIPPAGE_BUDGET_PERIOD_BPS = 5000; // 50% del stake por período
+    uint256 internal constant MAX_TRADES_PER_DAY = 200;
+    uint48 internal constant WASH_WINDOW = 1 hours;
     // Offset virtual anti-inflation (§14.9): assets y shares con el MISMO offset para que el
     // precio seed sea exactamente 1.0 (navWad y shares comparten espacio de 18 decimales).
     uint256 internal constant VIRT_SHARES = 1e6;
@@ -102,6 +110,7 @@ contract Fund {
     StakeEscrow public stakeEscrow;
     CompensationReserve public reserve;
     IEligibilityGate public immutable GATE;
+    AdapterRegistry public immutable ADAPTERS;
     address public immutable MANAGER;
     address public immutable KEEPER; // publica grossClaims en settle (confianza v1, §15)
     address public immutable FEE_SPLITTER; // excluido de la contabilidad NI (§7.3)
@@ -134,6 +143,15 @@ contract Fund {
     mapping(address => uint8) public pendingOrders;
     uint256 public queuedDeposits6; // total USDG vivo en el QueueEscrow
 
+    // Contabilidad de slippage (§8)
+    uint48 public slippageDayStart; // inicio del bucket de 24h
+    uint256 public slippageDayWad; // slippage adverso acumulado en el bucket
+    uint256 public slippagePeriodWad; // acumulado en el período contable (reset en settlement)
+    uint256 public tradesInDay;
+    address public lastTradeIn;
+    address public lastTradeOut;
+    uint48 public lastTradeTime;
+
     // ---------- Eventos ----------
 
     event DepositRequested(uint256 indexed orderId, address indexed lp, uint256 amount6);
@@ -152,6 +170,7 @@ contract Fund {
     event ForcedRedemption(address indexed lp, uint256 shares);
     event ConvertedToInKind(uint256 indexed orderId);
     event AssetRegistered(address indexed token);
+    event Traded(uint256 indexed adapterId, address tokenIn, address tokenOut, uint256 spent, uint256 received, uint256 adverseWad);
 
     // ---------- Errores ----------
 
@@ -171,6 +190,9 @@ contract Fund {
     error StillEligible();
     error SharesLocked();
     error Reentrancy();
+    error SlippageExceeded();
+    error TradeLimit();
+    error BudgetExceeded();
 
     modifier nonReentrant() {
         if (_lock != 1) revert Reentrancy();
@@ -184,6 +206,7 @@ contract Fund {
     constructor(
         TokenRegistry registry_,
         IEligibilityGate gate_,
+        AdapterRegistry adapters_,
         address manager_,
         address keeper_,
         address feeSplitter_,
@@ -200,6 +223,7 @@ contract Fund {
         REGISTRY = registry_;
         USDG = IERC20(registry_.USDG());
         GATE = gate_;
+        ADAPTERS = adapters_;
         MANAGER = manager_;
         KEEPER = keeper_;
         FEE_SPLITTER = feeSplitter_;
@@ -722,6 +746,7 @@ contract Fund {
 
     /// @dev Transiciones post-settlement comunes (§4, §6).
     function _postSettle(uint256 navWad) internal {
+        slippagePeriodWad = 0; // reset del presupuesto de slippage por período (§8)
         if (state == State.PendingWinding) {
             state = State.Winding;
             _voidAllDeposits();
@@ -804,6 +829,135 @@ contract Fund {
             }
         }
         depositHead = depositQueue.length;
+    }
+
+    // ---------- Trading (§8) ----------
+
+    /// @notice El manager opera vía un adapter whitelisteado. El Fund transfiere `amountIn` al adapter,
+    /// éste devuelve `tokenOut`, y el Fund mide sus PROPIOS deltas y aplica el guardarraíl de slippage
+    /// contra el cruce Chainlink + el presupuesto acumulado (día + período). La seguridad NO depende
+    /// del adapter (que solo se whitelistea para no permitir calldata a contratos cualesquiera).
+    function execute(uint256 adapterId, address tokenIn, address tokenOut, uint256 amountIn, bytes calldata data)
+        external
+        nonReentrant
+    {
+        if (msg.sender != MANAGER) revert NotManager();
+        if (tradingFrozen()) revert FrozenFund();
+        if (tokenIn == tokenOut || amountIn == 0) revert BadOrder();
+        _requireTradable(tokenIn);
+        _requireTradable(tokenOut);
+
+        address adapter = ADAPTERS.get(adapterId);
+        uint256 inBefore = IERC20(tokenIn).balanceOf(address(this));
+        uint256 outBefore = IERC20(tokenOut).balanceOf(address(this));
+        if (amountIn > inBefore) revert BadOrder();
+
+        IERC20(tokenIn).safeTransfer(adapter, amountIn);
+        ITradeAdapter(adapter).swap(tokenIn, tokenOut, amountIn, address(this), data);
+
+        // Deltas reales medidos por el Fund (revisión: no confiar en el adapter)
+        uint256 spent = inBefore - IERC20(tokenIn).balanceOf(address(this));
+        uint256 received = IERC20(tokenOut).balanceOf(address(this)) - outBefore;
+        if (spent > amountIn || spent == 0) revert BadOrder();
+
+        uint256 spentValueWad = _valueWad(tokenIn, spent);
+        uint256 recvValueWad = _valueWad(tokenOut, received);
+
+        // Guardarraíl por trade: la pérdida vs el cruce oráculo ≤ maxSlippageBps del valor entregado.
+        uint256 adverseWad = spentValueWad > recvValueWad ? spentValueWad - recvValueWad : 0;
+        if (adverseWad * 10000 > spentValueWad * MAX_SLIPPAGE_BPS) revert SlippageExceeded();
+
+        _accrueSlippage(tokenIn, tokenOut, adverseWad);
+
+        // registrar el activo comprado (si es un Stock Token nuevo en cartera)
+        if (tokenOut != address(USDG) && IERC20(tokenOut).balanceOf(address(this)) > 0) {
+            _ensureAssetRegistered(tokenOut);
+        }
+        emit Traded(adapterId, tokenIn, tokenOut, spent, received, adverseWad);
+    }
+
+    function _requireTradable(address token) internal view {
+        if (token == address(USDG)) return;
+        if (!REGISTRY.isActive(token)) revert BadOrder();
+    }
+
+    /// @dev Valor WAD de `amount` de `token` al precio oráculo (USDG 6-dec; Stock Tokens 18-dec/feed 8-dec).
+    function _valueWad(address token, uint256 amount) internal view returns (uint256) {
+        if (token == address(USDG)) {
+            uint256 balWad = amount * USDG_TO_WAD;
+            address uFeed = REGISTRY.usdgFeed();
+            if (uFeed == address(0)) return balWad;
+            (bool ok, int256 px) = _tryPrice(uFeed);
+            return ok ? balWad * uint256(px) / 1e8 : balWad;
+        }
+        (bool ok2, int256 px2) = _tryPrice(REGISTRY.getAsset(token).feed);
+        if (!ok2) revert SlippageExceeded(); // sin precio no se puede validar el slippage
+        return amount * uint256(px2) / 1e8;
+    }
+
+    function _tryPrice(address feed) internal view returns (bool, int256) {
+        if (feed == address(0)) return (false, 0);
+        try IAggregatorV3(feed).latestRoundData() returns (uint80, int256 px, uint256, uint256, uint80) {
+            return (px > 0, px);
+        } catch {
+            return (false, 0);
+        }
+    }
+
+    /// @dev Acumula el slippage adverso contra los presupuestos diario y de período (§8). Una reversión
+    /// del mismo par dentro de WASH_WINDOW computa doble (anti wash trading).
+    function _accrueSlippage(address tokenIn, address tokenOut, uint256 adverseWad) internal {
+        // bucket diario rodante (fijo de 24h por simplicidad de gas)
+        if (block.timestamp >= slippageDayStart + 1 days) {
+            slippageDayStart = uint48(block.timestamp);
+            slippageDayWad = 0;
+            tradesInDay = 0;
+        }
+        if (++tradesInDay > MAX_TRADES_PER_DAY) revert TradeLimit();
+
+        uint256 charge = adverseWad;
+        // reversión del par anterior dentro de la ventana → doble
+        if (
+            lastTradeIn == tokenOut && lastTradeOut == tokenIn
+                && block.timestamp < lastTradeTime + WASH_WINDOW
+        ) {
+            charge = adverseWad * 2;
+        }
+        slippageDayWad += charge;
+        slippagePeriodWad += charge;
+
+        uint256 aumWad = nav().navWad;
+        if (slippageDayWad * 10000 > aumWad * SLIPPAGE_BUDGET_DAY_BPS) revert BudgetExceeded();
+        uint256 stakeWad = stakeEscrow.stakeAvailable() * USDG_TO_WAD;
+        if (slippagePeriodWad * 10000 > stakeWad * SLIPPAGE_BUDGET_PERIOD_BPS) revert BudgetExceeded();
+
+        lastTradeIn = tokenIn;
+        lastTradeOut = tokenOut;
+        lastTradeTime = uint48(block.timestamp);
+    }
+
+    function _ensureAssetRegistered(address token) internal {
+        uint256 n = assets.length;
+        for (uint256 i; i < n; ++i) {
+            if (assets[i] == token) return;
+        }
+        if (n >= 32) revert BadOrder();
+        // inserción ordenada (F13)
+        if (n > 0 && token < assets[n - 1]) {
+            for (uint256 i; i < n; ++i) {
+                if (token < assets[i]) {
+                    assets.push(assets[n - 1]);
+                    for (uint256 j = n - 1; j > i; --j) {
+                        assets[j] = assets[j - 1];
+                    }
+                    assets[i] = token;
+                    emit AssetRegistered(token);
+                    return;
+                }
+            }
+        }
+        assets.push(token);
+        emit AssetRegistered(token);
     }
 
     // ---------- Activos ----------

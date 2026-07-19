@@ -4,6 +4,7 @@ pragma solidity ^0.8.26;
 import {Test} from "forge-std/Test.sol";
 import {Fund} from "../../src/Fund.sol";
 import {TokenRegistry} from "../../src/TokenRegistry.sol";
+import {AdapterRegistry} from "../../src/AdapterRegistry.sol";
 import {IEligibilityGate} from "../../src/interfaces/IEligibilityGate.sol";
 import {MockAccessRegistry, MockStockToken, MockUSDG, MockFeed, MockGate} from "../mocks/Mocks.sol";
 
@@ -116,9 +117,11 @@ contract FundInvariantsTest is Test {
         reg = new TokenRegistry(address(usdg));
         reg.list(address(tsla), address(feed), 90000, 1_00000000, 10000_00000000, address(0xBEEF));
 
+        AdapterRegistry adapters = new AdapterRegistry();
         fund = new Fund(
             reg,
             IEligibilityGate(address(gate)),
+            adapters,
             address(0x4A4A),
             keeper,
             feeSplitter,
