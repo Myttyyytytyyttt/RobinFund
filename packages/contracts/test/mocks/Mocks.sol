@@ -172,6 +172,25 @@ contract MockUSDG {
     }
 }
 
+/// @notice Mock del EligibilityGate (implementación real en Fase 1.5).
+contract MockGate {
+    mapping(address => bool) internal _ineligible;
+    mapping(address => uint48) internal _since;
+
+    function isEligible(address a) external view returns (bool) {
+        return !_ineligible[a];
+    }
+
+    function ineligibleSince(address a) external view returns (uint48) {
+        return _since[a];
+    }
+
+    function setIneligible(address a, bool v) external {
+        _ineligible[a] = v;
+        _since[a] = v ? uint48(block.timestamp) : 0;
+    }
+}
+
 /// @notice Mock de feed Chainlink 8 dec con precio/timestamp controlables e interruptor de revert.
 contract MockFeed {
     uint8 public constant decimals = 8;
