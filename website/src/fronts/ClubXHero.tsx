@@ -40,7 +40,8 @@ export default function ClubXHero() {
         playsInline
       />
 
-      <div className="relative z-10">
+      {/* min-h-screen: el bottom-8 de la barra de stats debe anclar al fondo del viewport, no al del contenido */}
+      <div className="relative z-10 min-h-screen">
         {/* Navegación */}
         <nav className="max-w-7xl mx-auto px-6 pt-6 flex items-center justify-between">
           {/* Logo: círculo naranja-rojo con letra blanca estilizada */}
