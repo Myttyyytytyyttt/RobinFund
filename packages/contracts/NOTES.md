@@ -11,7 +11,7 @@ Estado y decisiones que no viven en el código ni en la spec. Para retomar sin r
 | 1.2 | `FundShare`, `QueueEscrow`, `StakeEscrow`, `CompensationReserve` | 63 | ✅ revisado |
 | 1.3a | `Fund` núcleo (sin trading) | 93 (26 core+ataques, 4 inv, +escrows/nav) | ✅ revisado (3 lentes) |
 | 1.3b | Flecos: true-up del collar in-kind, fill parcial del cap (C19), Frozen completo, cash-queue reorder | — | pendiente |
-| 1.4a | Adapters de trading: AdapterRegistry + UniswapV4Adapter + fund.execute con guardarraíl + presupuesto | 96 (+3 fork trading) | ✅ (falta 0x RFQ, liquidación keeper-asistida) |
+| 1.4a | Trading: AdapterRegistry + UniswapV4Adapter + fund.execute con guardarraíl + presupuesto | 103 | ✅ revisado (falta 0x RFQ, liquidación keeper-asistida) |
 | 1.5 | `EligibilityGate` (EIP-712), `FeeSplitter`, `Guardian`, `FundFactory` | — | pendiente |
 
 ## Diferido explícitamente en Fund.sol 1.3a (buscar "1.3a" / "TODO" / "DIFERIDO" en el header)
@@ -37,7 +37,7 @@ Highs: **S3** funding keeper-independiente (`min(stake,netted)`, λ=min(1,fundin
 - `Σ claims de por vida del LP ≤ capital neto aportado`
 - reserva: caja ≥ `totalFunded − totalPaid`
 - `queue.balance() == queuedDeposits6`
-- `funding = min(stake, neteado, grossClaims)` — el neteado es el techo (Sybil-inmune); grossClaims solo baja λ
+- `funding = min(stake, neteado)` keeper-independiente (S3); `λ = min(1, funding/grossClaims)` — grossClaims solo baja λ, jamás la salida del stake
 
 ## Obligaciones del Fund que los escrows delegan (revisión 1.2, deben ser invariant tests)
 
@@ -55,3 +55,8 @@ Highs: **S3** funding keeper-independiente (`min(stake,netted)`, λ=min(1,fundin
 - Direcciones solo del `AddressBook` (hay tokens impostores en la chain).
 - Tests: unit con mocks (`test/unit`), fork con estado real (`test/fork`), fuzzing (`test/invariant`).
 - Correr fork tests: `set -a && source ../../.env && set +a && forge test`.
+
+
+## Revisión 1.4a (trading) — hallazgos aplicados
+
+**T1 (HIGH)**: `_valueWad`/`_tryPrice` del path de trading solo comprobaban `px>0` (no frescura ni banda como NAVLib) → un feed stale-pero-positivo (finde, o durante un split ERC-8056) cegaba a la vez el guardarraíl Y los presupuestos → extracción ilimitada. Fix: `_validPrice` con la MISMA disciplina que NAVLib (frescura ≤ maxStaleness, banda min/max, no futuro), revierte si inválido; USDG igual (T6). Mediums: T7 (vender token suspendido permitido, solo comprar prohibido), T8 (wash por par vía `dirTradeTime` mapping, inmune a interleaving), T4 (denominador stake = min(vivo, snapshot@settlement); register-before-accrue), T5 (adapter debe quedar con balance cero tras el trade), T9 (`deregisterAsset` de posiciones cero), T10 (nonReentrant defense-in-depth). T11: ventana diaria fija (no rodante) — documentado en SPEC como aceptado. Tests: +7 unit (Trading.t.sol). El fork test de trading amplía maxStaleness a 10d porque el fork es en finde (en prod el trading de finde queda bloqueado — comportamiento correcto).

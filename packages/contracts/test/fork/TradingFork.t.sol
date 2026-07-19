@@ -15,7 +15,10 @@ import {MockGate} from "../mocks/Mocks.sol";
 /// @notice Fase 1.4: el manager tradea USDG↔TSLA por el Uniswap v4 REAL de la chain, con el
 /// guardarraíl de slippage midiendo contra el feed Chainlink REAL. Contra fork de mainnet 4663.
 contract TradingForkTest is Test {
-    uint48 constant STALENESS = 90000;
+    // El fork está en fin de semana (feeds ~34h stale). En producción maxStaleness = 86400+margen y
+    // el trading de finde queda BLOQUEADO por el guardarraíl (comportamiento correcto, T1). Para
+    // testear la MECÁNICA del trade ampliamos la tolerancia al staleness del fork.
+    uint48 constant STALENESS = 10 days;
     address constant DONOR = 0x000000000000000000000000000000000000dEaD;
 
     TokenRegistry reg;

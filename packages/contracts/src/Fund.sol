@@ -144,13 +144,12 @@ contract Fund {
     uint256 public queuedDeposits6; // total USDG vivo en el QueueEscrow
 
     // Contabilidad de slippage (§8)
-    uint48 public slippageDayStart; // inicio del bucket de 24h
+    uint48 public slippageDayStart; // inicio del bucket de 24h (fijo, no rodante — §8/T11)
     uint256 public slippageDayWad; // slippage adverso acumulado en el bucket
     uint256 public slippagePeriodWad; // acumulado en el período contable (reset en settlement)
     uint256 public tradesInDay;
-    address public lastTradeIn;
-    address public lastTradeOut;
-    uint48 public lastTradeTime;
+    uint256 public budgetStakeWad; // snapshot del stake al último settlement (denominador no pumpeable, T4)
+    mapping(bytes32 => uint48) public dirTradeTime; // keccak(tokenIn,tokenOut) → último trade en esa dirección
 
     // ---------- Eventos ----------
 
@@ -360,7 +359,7 @@ contract Fund {
     }
 
     /// @notice Convierte un retiro cash pendiente a in-kind (válvula §5.6.5).
-    function convertToInKind(uint256 orderId) external {
+    function convertToInKind(uint256 orderId) external nonReentrant {
         WithdrawOrder storage o = withdrawQueue[orderId];
         if (o.lp != msg.sender || o.cancelled || orderId < withdrawHead) revert BadOrder();
         o.inKind = true;
@@ -747,6 +746,7 @@ contract Fund {
     /// @dev Transiciones post-settlement comunes (§4, §6).
     function _postSettle(uint256 navWad) internal {
         slippagePeriodWad = 0; // reset del presupuesto de slippage por período (§8)
+        budgetStakeWad = stakeEscrow.stakeAvailable() * USDG_TO_WAD; // snapshot no pumpeable (T4)
         if (state == State.PendingWinding) {
             state = State.Winding;
             _voidAllDeposits();
@@ -763,7 +763,7 @@ contract Fund {
 
     // ---------- Estados (§4, §10.2, §10.3) ----------
 
-    function requestWinding() external {
+    function requestWinding() external nonReentrant {
         if (msg.sender != MANAGER) revert NotManager();
         if (state != State.Active) revert WrongState();
         state = State.PendingWinding;
@@ -772,7 +772,7 @@ contract Fund {
     }
 
     /// @notice Cierre: todo liquidado a USDG (assets vacíos en 1.3a) + settlement final ejecutado.
-    function close() external {
+    function close() external nonReentrant {
         if (msg.sender != MANAGER) revert NotManager();
         if (state != State.Winding) revert WrongState();
         for (uint256 i; i < assets.length; ++i) {
@@ -793,7 +793,7 @@ contract Fund {
     }
 
     /// @notice Declarable por cualquiera si RHJ bloqueó el fondo (§10.3).
-    function declareFrozen() external {
+    function declareFrozen() external nonReentrant {
         if (!REGISTRY.accessRegistry().isBlocked(address(this))) revert WrongState();
         frozen = true;
         _voidAllDeposits();
@@ -844,8 +844,8 @@ contract Fund {
         if (msg.sender != MANAGER) revert NotManager();
         if (tradingFrozen()) revert FrozenFund();
         if (tokenIn == tokenOut || amountIn == 0) revert BadOrder();
-        _requireTradable(tokenIn);
-        _requireTradable(tokenOut);
+        _requireTradableIn(tokenIn);
+        _requireTradableOut(tokenOut);
 
         address adapter = ADAPTERS.get(adapterId);
         uint256 inBefore = IERC20(tokenIn).balanceOf(address(this));
@@ -859,6 +859,8 @@ contract Fund {
         uint256 spent = inBefore - IERC20(tokenIn).balanceOf(address(this));
         uint256 received = IERC20(tokenOut).balanceOf(address(this)) - outBefore;
         if (spent > amountIn || spent == 0) revert BadOrder();
+        // El adapter no debe retener nada de ninguno de los dos tokens (T5: sin residuos drenables)
+        if (IERC20(tokenIn).balanceOf(adapter) != 0 || IERC20(tokenOut).balanceOf(adapter) != 0) revert BadOrder();
 
         uint256 spentValueWad = _valueWad(tokenIn, spent);
         uint256 recvValueWad = _valueWad(tokenOut, received);
@@ -867,47 +869,64 @@ contract Fund {
         uint256 adverseWad = spentValueWad > recvValueWad ? spentValueWad - recvValueWad : 0;
         if (adverseWad * 10000 > spentValueWad * MAX_SLIPPAGE_BPS) revert SlippageExceeded();
 
-        _accrueSlippage(tokenIn, tokenOut, adverseWad);
-
-        // registrar el activo comprado (si es un Stock Token nuevo en cartera)
+        // registrar el activo comprado ANTES de acumular (T4: el denominador AUM incluye tokenOut)
         if (tokenOut != address(USDG) && IERC20(tokenOut).balanceOf(address(this)) > 0) {
             _ensureAssetRegistered(tokenOut);
         }
+        _accrueSlippage(tokenIn, tokenOut, adverseWad);
         emit Traded(adapterId, tokenIn, tokenOut, spent, received, adverseWad);
     }
 
-    function _requireTradable(address token) internal view {
+    /// @dev El lado COMPRADO (tokenOut) debe estar activo (listado y no suspendido). El lado VENDIDO
+    /// (tokenIn) solo necesita estar listado — así el manager puede DES-arriesgarse de un token
+    /// suspendido por drift de beacon (§8/C29: "prohibido comprar", no prohibido vender) (T7).
+    function _requireTradableIn(address token) internal view {
+        if (token == address(USDG)) return;
+        if (!REGISTRY.getAsset(token).listed) revert BadOrder();
+    }
+
+    function _requireTradableOut(address token) internal view {
         if (token == address(USDG)) return;
         if (!REGISTRY.isActive(token)) revert BadOrder();
     }
 
-    /// @dev Valor WAD de `amount` de `token` al precio oráculo (USDG 6-dec; Stock Tokens 18-dec/feed 8-dec).
+    /// @dev Valor WAD de `amount` de `token` al precio oráculo, con la MISMA disciplina que NAVLib
+    /// (T1/T2/T6): revierte si el feed está stale, fuera de banda, roto o `updatedAt` en el futuro.
+    /// Un precio stale-pero-positivo cegaba el guardarraíl y los presupuestos → extracción ilimitada.
     function _valueWad(address token, uint256 amount) internal view returns (uint256) {
         if (token == address(USDG)) {
             uint256 balWad = amount * USDG_TO_WAD;
             address uFeed = REGISTRY.usdgFeed();
-            if (uFeed == address(0)) return balWad;
-            (bool ok, int256 px) = _tryPrice(uFeed);
-            return ok ? balWad * uint256(px) / 1e8 : balWad;
+            if (uFeed == address(0)) return balWad; // solo modo degradado de deploy de prueba (§5.5)
+            int256 px = _validPrice(uFeed, REGISTRY.usdgMaxStaleness(), REGISTRY.usdgMinAnswer(), REGISTRY.usdgMaxAnswer());
+            return balWad * uint256(px) / 1e8;
         }
-        (bool ok2, int256 px2) = _tryPrice(REGISTRY.getAsset(token).feed);
-        if (!ok2) revert SlippageExceeded(); // sin precio no se puede validar el slippage
+        TokenRegistry.Asset memory a = REGISTRY.getAsset(token);
+        int256 px2 = _validPrice(a.feed, a.maxStaleness, a.minAnswer, a.maxAnswer);
         return amount * uint256(px2) / 1e8;
     }
 
-    function _tryPrice(address feed) internal view returns (bool, int256) {
-        if (feed == address(0)) return (false, 0);
-        try IAggregatorV3(feed).latestRoundData() returns (uint80, int256 px, uint256, uint256, uint80) {
-            return (px > 0, px);
+    /// @dev Devuelve el precio si es válido (fresco, en banda, > 0); revierte si no.
+    function _validPrice(address feed, uint48 maxStaleness, int256 minAnswer, int256 maxAnswer)
+        internal
+        view
+        returns (int256)
+    {
+        if (feed == address(0)) revert SlippageExceeded();
+        try IAggregatorV3(feed).latestRoundData() returns (uint80, int256 px, uint256, uint256 upd, uint80) {
+            if (px <= 0 || px < minAnswer || px > maxAnswer) revert SlippageExceeded();
+            if (upd > block.timestamp || block.timestamp - upd > maxStaleness) revert SlippageExceeded();
+            return px;
         } catch {
-            return (false, 0);
+            revert SlippageExceeded();
         }
     }
 
     /// @dev Acumula el slippage adverso contra los presupuestos diario y de período (§8). Una reversión
-    /// del mismo par dentro de WASH_WINDOW computa doble (anti wash trading).
+    /// del mismo par dentro de WASH_WINDOW computa doble — detectada por par (no solo el trade anterior),
+    /// así que interleaving no la esquiva (T3/T8).
     function _accrueSlippage(address tokenIn, address tokenOut, uint256 adverseWad) internal {
-        // bucket diario rodante (fijo de 24h por simplicidad de gas)
+        // bucket diario de ventana FIJA de 24h (no rodante; §8/T11)
         if (block.timestamp >= slippageDayStart + 1 days) {
             slippageDayStart = uint48(block.timestamp);
             slippageDayWad = 0;
@@ -916,24 +935,23 @@ contract Fund {
         if (++tradesInDay > MAX_TRADES_PER_DAY) revert TradeLimit();
 
         uint256 charge = adverseWad;
-        // reversión del par anterior dentro de la ventana → doble
-        if (
-            lastTradeIn == tokenOut && lastTradeOut == tokenIn
-                && block.timestamp < lastTradeTime + WASH_WINDOW
-        ) {
+        // ¿hubo un trade en la dirección INVERSA de este par dentro de la ventana? → doble (T8)
+        bytes32 reverseKey = keccak256(abi.encodePacked(tokenOut, tokenIn));
+        if (dirTradeTime[reverseKey] != 0 && block.timestamp < dirTradeTime[reverseKey] + WASH_WINDOW) {
             charge = adverseWad * 2;
         }
         slippageDayWad += charge;
         slippagePeriodWad += charge;
 
+        // Denominador AUM: vivo (donar para inflarlo no es rentable). Denominador stake: min(vivo,
+        // snapshot al settlement) para que un top-up mid-período no suba el techo (T4).
         uint256 aumWad = nav().navWad;
         if (slippageDayWad * 10000 > aumWad * SLIPPAGE_BUDGET_DAY_BPS) revert BudgetExceeded();
-        uint256 stakeWad = stakeEscrow.stakeAvailable() * USDG_TO_WAD;
+        uint256 liveStakeWad = stakeEscrow.stakeAvailable() * USDG_TO_WAD;
+        uint256 stakeWad = budgetStakeWad == 0 ? liveStakeWad : (liveStakeWad < budgetStakeWad ? liveStakeWad : budgetStakeWad);
         if (slippagePeriodWad * 10000 > stakeWad * SLIPPAGE_BUDGET_PERIOD_BPS) revert BudgetExceeded();
 
-        lastTradeIn = tokenIn;
-        lastTradeOut = tokenOut;
-        lastTradeTime = uint48(block.timestamp);
+        dirTradeTime[keccak256(abi.encodePacked(tokenIn, tokenOut))] = uint48(block.timestamp);
     }
 
     function _ensureAssetRegistered(address token) internal {
@@ -965,7 +983,7 @@ contract Fund {
     /// @notice Registra un activo en la cartera (orden estricto ascendente, F13). Restringido a
     /// manager/keeper (S8: permissionless permitía inflar `assets[]` con polvo de muchos tokens hasta
     /// hacer que los loops de NAV superaran el gas límite). Cap de longitud como backstop.
-    function registerAsset(address token) external {
+    function registerAsset(address token) external nonReentrant {
         if (msg.sender != MANAGER && msg.sender != KEEPER) revert NotManager();
         if (assets.length >= 32) revert BadOrder(); // cap de cartera (§10, backstop de gas)
         if (!REGISTRY.isActive(token) || IERC20(token).balanceOf(address(this)) == 0) revert BadOrder();
@@ -990,6 +1008,24 @@ contract Fund {
 
     function assetCount() external view returns (uint256) {
         return assets.length;
+    }
+
+    /// @notice Elimina de la cartera un activo con balance cero (T9: evita que 32 slots se agoten
+    /// con posiciones muertas y que los loops de NAV crezcan sin cota). Manager/keeper.
+    function deregisterAsset(address token) external nonReentrant {
+        if (msg.sender != MANAGER && msg.sender != KEEPER) revert NotManager();
+        if (IERC20(token).balanceOf(address(this)) != 0) revert BadOrder();
+        uint256 n = assets.length;
+        for (uint256 i; i < n; ++i) {
+            if (assets[i] == token) {
+                for (uint256 j = i; j + 1 < n; ++j) {
+                    assets[j] = assets[j + 1]; // preserva el orden ascendente (F13)
+                }
+                assets.pop();
+                return;
+            }
+        }
+        revert BadOrder();
     }
 
     // ---------- Vistas ----------
