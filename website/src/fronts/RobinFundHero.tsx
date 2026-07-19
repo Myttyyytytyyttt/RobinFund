@@ -4,7 +4,7 @@ import { MagneticButton } from '@/components/ui/magnetic-button'
 
 const VIDEO_URL =
   'https://d8j0ntlcm91z4.cloudfront.net/user_38xzZboKViGWJOttwIXH07lWA1P/hf_20260323_071151_38c3924f-c312-48af-a196-3fbb80e4226f.mp4'
-const TRANSITION_VIDEO = '/ctavid.mp4'
+const TRANSITION_VIDEO = '/ctavid2.mp4'
 
 const NAV_LINKS = [
   { label: 'Home', active: true },
@@ -68,9 +68,11 @@ export default function RobinFundHero() {
     }
     // Red de seguridad: si el navegador pausa el video a mitad (cambio de pestaña,
     // ahorro de energía) y nunca llega el 'ended', forzamos la vista final.
+    // Dinámico sobre la duración real del clip para sobrevivir a cambios de video.
+    const safetyMs = (v && isFinite(v.duration) && v.duration > 0 ? v.duration + 3 : 12) * 1000
     setTimeout(() => {
       if (phaseRef.current === 'transition') handleEnded()
-    }, 8000)
+    }, safetyMs)
   }
 
   // Si el navegador auto-pausa el video durante la transición, intentamos reanudar.
