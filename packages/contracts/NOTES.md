@@ -12,7 +12,7 @@ Estado y decisiones que no viven en el código ni en la spec. Para retomar sin r
 | 1.3a | `Fund` núcleo (sin trading) | 93 (26 core+ataques, 4 inv, +escrows/nav) | ✅ revisado (3 lentes) |
 | 1.3b | Flecos: true-up del collar in-kind, fill parcial del cap (C19), Frozen completo, cash-queue reorder | — | pendiente |
 | 1.4a | Trading: AdapterRegistry + UniswapV4Adapter + fund.execute con guardarraíl + presupuesto | 103 | ✅ revisado (falta 0x RFQ, liquidación keeper-asistida) |
-| 1.5 | `EligibilityGate` (EIP-712), `FeeSplitter`, `Guardian` (timelock), `FundFactory` | 114 | ✅ (review pendiente) |
+| 1.5 | `EligibilityGate` (EIP-712), `FeeSplitter`, `Guardian` (timelock), `FundFactory` | 117 | ✅ revisado (G1 HIGH cerrado) |
 
 ## Diferido explícitamente en Fund.sol 1.3a (buscar "1.3a" / "TODO" / "DIFERIDO" en el header)
 
@@ -69,3 +69,8 @@ Highs: **S3** funding keeper-independiente (`min(stake,netted)`, λ=min(1,fundin
 - **Guardian**: dos velocidades — `pauseFund`/`unpauseFund` instantáneo (freno de emergencia, nunca toca retiros), y `queue`/`execute` con DELAY (2d) para gestión de registries. Owner = multisig externo (Safe). Ostenta ownership de TokenRegistry+AdapterRegistry.
 - **FundFactory**: `createFund` gatea al manager por elegibilidad, inyecta params de protocolo (registries/gate/guardian/keeper/treasury) para que el manager no cablee los suyos. Deploy directo con `new` (no clones ERC-1167: el Fund despliega 5 sub-contratos en constructor; divergencia con spec documentada).
 - **Cambio en Fund.sol**: constructor pierde `feeSplitter` (interno) y gana `GUARDIAN`; `guardianPaused` gatea depósitos+trading (nunca retiros, D12); `setGuardianPaused` solo GUARDIAN. Orden nuevo: (reg, gate, adapters, guardian, manager, keeper, treasury, cfg, name, symbol).
+
+
+## Revisión 1.5 (gobernanza) — hallazgos aplicados
+
+**G1 (HIGH)**: la revocación del EligibilityGate era evadible — `revoke()` no avanzaba el nonce y `attest()` limpiaba `revokedAt`, así que una firma pre-emitida (renovación/atestación inicial no enviada) re-habilitaba a un usuario revocado, deshaciendo el control de compliance. Fix: `revoke()` avanza el nonce → re-habilitar exige firma posterior a la revocación. Mediums: G2 (Guardian gana GRACE_PERIOD 14d + MIN_DELAY 1d). Lows: G3 (domain separator recomputado en fork), G4 (FeeSplitter: code-check USDG, `redeem(inKind)` + `distributeToken` genérico), G5/G7 (trading del manager gateado por elegibilidad ongoing, fail-safe: no gatea winding/retiros), G12 (error `NotGuardian`). Docs: nonce en atestación, ERC-1167 (usamos `new`), FeeSplitter solo perf fee, depeg = pauseFund. **El manager que devenga inelegible no puede tradear pero SÍ cerrar ordenadamente; los LPs siempre salen.**
