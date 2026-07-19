@@ -6,23 +6,27 @@ import {IStockToken, IAccessControlledRegistry} from "../interfaces/IStockToken.
 import {IAggregatorV3} from "../interfaces/IAggregatorV3.sol";
 import {IERC20} from "../interfaces/IERC20.sol";
 
-/// @title NAVLib — valoración WAD y validez del NAV (SPEC §5.1–§5.2, v0.8)
-/// @notice Reglas verificadas on-chain en Fase 0:
-///  · USDG tiene 6 decimales → ×1e12 a WAD; su feed (si existe) va en 8 dec.
-///  · Los feeds de Stock Tokens son 8 dec y YA incluyen el uiMultiplier — nunca aplicarlo encima.
-///  · No existe sequencer uptime feed en chain 4663 — la validez no lo comprueba (SPEC §5.2.3).
-///  · `oraclePaused()`/`tokenPaused()`/`paused()` viven en el propio token.
+/// @title NAVLib — valoración WAD y validez del NAV (SPEC §5.1–§5.2, v0.8 + revisión 1.1)
+/// @notice Principio de diseño (revisión F1): NINGUNA llamada externa puede revertir el cálculo.
+/// Los Stock Tokens son beacon proxies upgradeables por el emisor y los feeds pueden morir —
+/// todo fallo externo degrada a `valid = false`, jamás a revert. El estado de oráculo malo
+/// produce un NAV INVÁLIDO, nunca un NAV indisponible.
+/// Hechos verificados on-chain (Fase 0 + revisión): USDG 6 dec; feeds 8 dec multiplier-inclusive;
+/// sin sequencer uptime feed; el ACCESS_CONTROLLED_REGISTRY es el beacon ERC-1967 de los tokens.
 library NAVLib {
-    /// @dev Posiciones con valor ≤ $10 (WAD) se valoran a cero y no invalidan el NAV (SPEC §5.2.4, C17).
+    /// @dev Posiciones con valor ≤ $10 (WAD) se valoran a cero y no invalidan el NAV (§5.2, C17).
     uint256 internal constant DUST_THRESHOLD_WAD = 10e18;
     uint256 internal constant USDG_TO_WAD = 1e12; // 6 dec → 18 dec
     uint256 internal constant FEED_UNIT = 1e8; // feeds 8 dec
 
+    /// @dev La lista de tokens del Fund debe venir estrictamente ordenada (sin duplicados, F13).
+    error UnsortedTokens();
+
     struct AssetView {
         address token;
         uint256 rawBalance;
-        uint256 valueWad; // con el último precio disponible (aunque sea stale)
-        bool dust; // valor ≤ DUST: suma 0 y no invalida
+        uint256 valueWad; // mejor esfuerzo con el último precio en-banda (para reporting)
+        bool dust; // valor ≤ DUST con precio sano: suma 0 y no invalida
         bool ok; // contribuye a un NAV válido
     }
 
@@ -31,74 +35,151 @@ library NAVLib {
         bool valid; // isNavValid() del SPEC §5.2
     }
 
-    /// @notice Calcula NAV y validez para `fund` sobre `tokens` + su sleeve de USDG.
-    /// @dev `tokens` es la lista de activos del fondo (el Fund la mantiene); el escrow de colas
-    /// y la CompensationReserve viven en contratos separados y por construcción no entran aquí.
+    /// @notice Calcula NAV y validez para `fund` sobre `tokens` (estrictamente ordenada) + sleeve USDG.
     function compute(TokenRegistry reg, address fund, address[] memory tokens)
         internal
         view
         returns (Snapshot memory s)
     {
         s.valid = true;
-
-        // Condición 1 (SPEC §5.2.1, C30): el fondo no está bloqueado por RHJ y el registry no está en pausa global.
-        IAccessControlledRegistry access = reg.accessRegistry();
-        if (address(access) != address(0)) {
-            if (access.isBlocked(fund) || access.paused()) s.valid = false;
-        }
-
-        // Sleeve USDG (§5.1): 6 dec → WAD, valorado al feed USDG/USD si está configurado.
-        s.navWad += usdgValueWad(reg, IERC20(reg.USDG()).balanceOf(fund), s);
+        bool hasNonDustStock;
 
         for (uint256 i; i < tokens.length; ++i) {
+            if (i > 0 && tokens[i] <= tokens[i - 1]) revert UnsortedTokens(); // invariante del Fund, F13
             AssetView memory av = valueAsset(reg, fund, tokens[i]);
-            s.navWad += av.dust ? 0 : av.valueWad;
-            if (!av.dust && !av.ok) s.valid = false;
+            if (!av.dust) {
+                hasNonDustStock = true;
+                s.navWad += av.valueWad;
+                if (!av.ok) s.valid = false;
+            }
         }
+
+        // Sleeve USDG (§5.1) — puede invalidar si su feed está roto y el sleeve no es dust (§5.2.5).
+        s.navWad += _usdgValueWad(reg, fund, s);
+
+        // Condición §5.2.1 (C30): fondo bloqueado por RHJ ⇒ inválido, incondicionalmente.
+        // Pausa GLOBAL del emisor: solo invalida si hay posición de stock no-dust (F9, dust-exemption).
+        (bool accessOk, bool fundBlocked, bool registryPaused) = _tryAccessStatus(reg, fund);
+        if (!accessOk || fundBlocked) s.valid = false;
+        else if (registryPaused && hasNonDustStock) s.valid = false;
     }
 
-    /// @notice Valora el sleeve USDG. Si hay feed configurado y está stale/roto, invalida el NAV.
-    function usdgValueWad(TokenRegistry reg, uint256 usdgBal6, Snapshot memory s) internal view returns (uint256) {
-        uint256 balWad = usdgBal6 * USDG_TO_WAD;
-        address feed = reg.usdgFeed();
-        if (feed == address(0)) return balWad; // supuesto 1:1 documentado (SPEC §5.5)
-
-        (, int256 px,, uint256 updatedAt,) = IAggregatorV3(feed).latestRoundData();
-        bool broken = px <= 0 || block.timestamp - updatedAt > reg.usdgMaxStaleness();
-        // El USDG es la moneda de denominación: feed roto/stale invalida salvo que el sleeve sea dust.
-        if (broken && balWad > DUST_THRESHOLD_WAD) s.valid = false;
-        if (px <= 0) return balWad; // sin precio utilizable: 1:1 solo para reporting
-        return balWad * uint256(px) / FEED_UNIT;
-    }
-
-    /// @notice Valora una posición y evalúa las condiciones §5.2.2/§5.2.4 para ella.
+    /// @notice Valora una posición evaluando §5.2.2/§5.2.4 para ella. Nunca revierte por fallo externo.
     function valueAsset(TokenRegistry reg, address fund, address token) internal view returns (AssetView memory av) {
         av.token = token;
-        av.rawBalance = IERC20(token).balanceOf(fund);
-        if (av.rawBalance == 0) {
-            av.dust = true; // sin posición: no invalida, no suma
+
+        (bool balOk, uint256 bal) = _tryBalanceOf(token, fund);
+        av.rawBalance = bal;
+        if (!balOk) return av; // balanceOf revierte (upgrade hostil): no-dust, ok=false ⇒ inválido (F1)
+        if (bal == 0) {
+            av.dust = true; // sin posición: no suma ni invalida — aunque el feed esté muerto
             return av;
         }
 
-        (address feed, uint48 maxStaleness) = reg.feedOf(token);
-        int256 px;
-        uint256 updatedAt;
-        if (feed != address(0)) {
-            (, px,, updatedAt,) = IAggregatorV3(feed).latestRoundData();
+        TokenRegistry.Asset memory a = reg.getAsset(token);
+        (bool feedOk, int256 px, uint256 updatedAt) = _tryLatest(a.feed);
+
+        // Banda de cordura del precio (F2): fuera de banda NO se valora ni clasifica dust.
+        bool inBand = feedOk && px >= a.minAnswer && px <= a.maxAnswer;
+        if (inBand) {
+            av.valueWad = bal * uint256(px) / FEED_UNIT;
+            if (av.valueWad <= DUST_THRESHOLD_WAD) {
+                av.dust = true; // §5.2.4 — la clasificación dust exige precio EN BANDA (F2)
+                return av;
+            }
         }
 
-        // Valor con el último precio disponible — también sirve para la decisión de dust.
-        av.valueWad = px > 0 ? av.rawBalance * uint256(px) / FEED_UNIT : 0;
-        if (px > 0 && av.valueWad <= DUST_THRESHOLD_WAD) {
-            av.dust = true; // §5.2.4: dust se valora a cero y no invalida
-            return av;
-        }
+        // No-dust: todas las condiciones. updatedAt futuro = roto, no underflow (F7/F12).
+        bool fresh = feedOk && updatedAt <= block.timestamp && block.timestamp - updatedAt <= a.maxStaleness;
+        (bool pauseOk, bool anyPaused) = _tryPauses(token);
 
-        // No-dust: todas las condiciones deben cumplirse.
-        av.ok = reg.isActive(token) // listado y sin suspensión (drift de beacon, C29)
-            && px > 0 // sin precio no hay dust-decision fiable: inválido
-            && !IStockToken(token).paused() // §5.2.2: pausa por token o global del emisor
-            && !IStockToken(token).oraclePaused() // corporate action en proceso (§3, verificado en token)
-            && block.timestamp - updatedAt <= maxStaleness; // §5.2.4, heartbeat real 86400s + margen
+        av.ok = a.listed && !a.suspended // condición 5 (suspensión por drift de beacon, C29/F10)
+            && inBand && fresh // §5.2.4 + bandas F2
+            && pauseOk && !anyPaused; // §5.2.2: paused() ∪ tokenPaused() ∪ oraclePaused() (F3)
+    }
+
+    // ---------- Llamadas externas blindadas (F1): fallo ⇒ degradación, nunca revert ----------
+
+    function _tryBalanceOf(address t, address a) private view returns (bool, uint256) {
+        try IERC20(t).balanceOf(a) returns (uint256 b) {
+            return (true, b);
+        } catch {
+            return (false, 0);
+        }
+    }
+
+    function _tryLatest(address feed) private view returns (bool, int256, uint256) {
+        if (feed == address(0)) return (false, 0, 0);
+        try IAggregatorV3(feed).latestRoundData() returns (uint80, int256 px, uint256, uint256 upd, uint80) {
+            return (px > 0, px, upd);
+        } catch {
+            return (false, 0, 0);
+        }
+    }
+
+    /// @dev paused() ya combina tokenPaused ∪ pausa global en el contrato real, pero comprobamos
+    /// también tokenPaused() y oraclePaused() explícitamente (F3): un upgrade podría separarlos.
+    function _tryPauses(address token) private view returns (bool ok, bool anyPaused) {
+        IStockToken t = IStockToken(token);
+        bool p1;
+        bool p2;
+        bool p3;
+        try t.paused() returns (bool v) {
+            p1 = v;
+        } catch {
+            return (false, true);
+        }
+        try t.tokenPaused() returns (bool v) {
+            p2 = v;
+        } catch {
+            return (false, true);
+        }
+        try t.oraclePaused() returns (bool v) {
+            p3 = v;
+        } catch {
+            return (false, true);
+        }
+        return (true, p1 || p2 || p3);
+    }
+
+    function _tryAccessStatus(TokenRegistry reg, address fund)
+        private
+        view
+        returns (bool ok, bool blocked, bool paused_)
+    {
+        IAccessControlledRegistry access = reg.accessRegistry();
+        if (address(access) == address(0)) return (true, false, false); // registry sin activos listados
+        try access.isBlocked(fund) returns (bool b) {
+            blocked = b;
+        } catch {
+            return (false, true, true);
+        }
+        try access.paused() returns (bool p) {
+            paused_ = p;
+        } catch {
+            return (false, true, true);
+        }
+        ok = true;
+    }
+
+    /// @dev USDG es la moneda de denominación (proxy de Paxos — también upgradeable: try/catch).
+    function _usdgValueWad(TokenRegistry reg, address fund, Snapshot memory s) private view returns (uint256) {
+        (bool balOk, uint256 bal6) = _tryBalanceOf(reg.USDG(), fund);
+        if (!balOk) {
+            s.valid = false; // USDG.balanceOf revirtiendo: inválido, reporta 0
+            return 0;
+        }
+        uint256 balWad = bal6 * USDG_TO_WAD;
+        address feed = reg.usdgFeed();
+        if (feed == address(0)) return balWad; // modo degradado 1:1 (§5.5 — el deploy debe configurar el feed)
+
+        (bool feedOk, int256 px, uint256 updatedAt) = _tryLatest(feed);
+        bool fresh = feedOk && updatedAt <= block.timestamp && block.timestamp - updatedAt <= reg.usdgMaxStaleness();
+        bool inBand = feedOk && px >= reg.usdgMinAnswer() && px <= reg.usdgMaxAnswer();
+        if (!(fresh && inBand)) {
+            if (balWad > DUST_THRESHOLD_WAD) s.valid = false; // §5.2.5 (F17): feed del numerario roto
+            return balWad; // reporting 1:1
+        }
+        return balWad * uint256(px) / FEED_UNIT;
     }
 }

@@ -44,7 +44,7 @@ RobinFund permite a cualquier persona elegible crear un **fondo abierto (evergre
 
 - **USDG** — `0x5fc5360D0400a0Fd4f2af552ADD042D716F1d168` en chain 4663, **6 decimales** (verificado en Blockscout; re-verificar checksum al integrar).
 - **Stock Tokens RHJ**: ERC-20 18 dec, ERC-8056, beacon proxies upgradeables por el emisor. Contabilidad solo con **balances raw**; valoración solo con el **feed Chainlink del token** (8 dec, ya incluye `uiMultiplier`) — nunca aplicar el multiplicador sobre el feed.
-- **Chainlink**: feed por activo + `oraclePaused()`; **feed de uptime del sequencer** (existe en la chain) con regla de gracia (§5.2); feed USDG/USD si existe en 4663 (§5.5, TBD).
+- **Chainlink**: feed por activo (8 dec, heartbeat 86400s, deviation 0.5%, 24/5) + `oraclePaused()` en el token; **feed USDG/USD existe** en 4663 (`0x61B7...9aD2`) y se usa (§5.5). No existe sequencer uptime feed (v0.8).
 - **Venues**: router Uniswap (v3/v4 dedicado) y settler 0x, vía adapters que **miden deltas de balance reales** (§8).
 - **Access controls RHJ**: cada Stock Token expone su contrato de accessControls (registry compartido, `0xe10b6f6B275de231345c20D14Ab812db62151b00` — **obtener del puntero on-chain del token, no hardcodear**, y verificar la firma real de `isBlocked(address)` contra el código verificado antes de integrar). Se lee on-chain como precondición (§5.2).
 
@@ -89,20 +89,23 @@ NAV = usdg_wad × pUSDG / 1e8 + Σ_i ( raw_i × price_i / 1e8 )        [WAD]
 sharePrice = NAV / totalShares                                       (offset de shares virtuales, §14.9)
 ```
 
-- `usdg_wad` = balance USDG del fondo × 1e12. `pUSDG` = precio 8-dec del feed USDG/USD si existe en la chain; si no, `1e8` (§5.5).
+- `usdg_wad` = balance USDG del fondo × 1e12. `pUSDG` = precio 8-dec del feed USDG/USD (existe y se usa, §5.5); `1e8` solo en modo degradado.
 - El **escrow de colas se excluye** del NAV y del AUM usado para cap y fees (C8). La `CompensationReserve` (§6) también queda **fuera del NAV**.
 - Las shares de retiros bloqueados cuentan en `totalShares` hasta quemarse.
 
 ### 5.2 Validez del NAV (`isNavValid()`)
 
+**Principio (revisión 1.1, F1)**: ninguna llamada externa puede revertir el cálculo — los Stock Tokens son upgradeables por el emisor y los feeds pueden morir; todo fallo externo degrada a `valid = false` (try/catch), jamás a un NAV indisponible.
+
 Todas las condiciones, evaluadas en vivo en la transacción:
 
-1. Fondo **no bloqueado**: `accessControls.isBlocked(fund) == false` on-chain (C30).
-2. Ningún token en cartera con valor > `DUST_THRESHOLD` está **pausado** (pausa por token o global de RHJ). Un token pausado con valor ≤ dust se valora a cero y se ignora (C17, coherencia).
-3. ~~Sequencer uptime feed~~ **No existe** tal feed en chain 4663 (verificado contra Chainlink, Fase 0). La protección post-caída del sequencer la da el forward pricing (§5.3): un batch exige rondas con `updatedAt > cutoff`, así que tras una caída espera a la primera publicación fresca; el keeper monitorea la salud del RPC/sequencer off-chain.
-4. Para cada activo con valor > `DUST_THRESHOLD`: feed no pausado, `price > 0`, `updatedAt` dentro del `maxStaleness` por activo. Los activos ≤ dust se valoran a cero y no invalidan el NAV (C17).
+1. Fondo **no bloqueado**: `accessControls.isBlocked(fund) == false` on-chain (C30). Incondicional.
+2. Ningún token en cartera con valor > `DUST_THRESHOLD` está **pausado** — `paused() ∪ tokenPaused() ∪ oraclePaused()`, los tres flags explícitos (F3: un upgrade podría desacoplarlos). La **pausa global** del registry RHJ solo invalida si hay posición de stock no-dust — un fondo solo-USDG no se congela por ella (F9). Un token pausado con valor ≤ dust se valora a cero y se ignora (C17).
+3. ~~Sequencer uptime feed~~ **No existe** tal feed en chain 4663 (verificado). La protección post-caída la da el forward pricing (§5.3); el keeper monitorea la salud del sequencer off-chain.
+4. Para cada activo con valor > `DUST_THRESHOLD`: activo **listado y no suspendido** en el TokenRegistry (condición añadida por F10 — la suspensión por drift de beacon invalida), precio **dentro de la banda de cordura por feed** (`minAnswer ≤ px ≤ maxAnswer`, F2 — un precio fresh-but-wrong no puede ni valorar ni reclasificar como dust una posición), y `updatedAt ≤ now` (un timestamp futuro es feed roto, no underflow, F7) dentro del `maxStaleness` por activo. Los activos ≤ dust —clasificación que **exige precio en banda**— se valoran a cero y no invalidan (C17).
+5. **Feed del USDG** (F17): stale, fuera de banda o roto invalida el NAV salvo que el sleeve sea ≤ dust. El sleeve dust-USDG se valora a su balance 1:1 (es el numerario), a diferencia de los tokens dust que cuentan cero. `usdgFeed` sin configurar = modo degradado 1:1, solo aceptable en despliegues de prueba (F16).
 
-`maxStaleness` se calibra en el **listado** de cada activo: se registran heartbeat y deviation threshold publicados del feed y se fija `maxStaleness = heartbeat + margen`; un feed cuyos parámetros no puedan confirmarse no se lista (C26).
+`maxStaleness` se calibra en el **listado** de cada activo (heartbeat + margen; real en 4663: 86400s + 1h) y está acotado por protocolo (`≥ 1h`, `≤ 30d`) para que un typo no brickee los flujos (F18). El listado y la re-aprobación exigen el **commit explícito de la implementación revisada** (`expectedImpl`) — un front-run del emisor con un segundo upgrade revierte en vez de bendecirse (F5). El registry compartido se fuerza en el listado y es re-sincronizable desde el puntero vivo de un token (F6/F11). Hecho verificado (revisión): el `ACCESS_CONTROLLED_REGISTRY` **es** el beacon ERC-1967 de los tokens (slot comprobado on-chain en TSLA y NVDA).
 
 ### 5.3 Colas y batches
 
@@ -124,7 +127,7 @@ Todas las condiciones, evaluadas en vivo en la transacción:
 
 ### 5.5 USDG y depeg (C23)
 
-- Si existe feed USDG/USD en chain 4663 (TBD): valora el sleeve USDG y convierte a términos USDG las referencias del guardarraíl de trading.
+- El feed USDG/USD **existe** en 4663 (`0x61B7e5650328764B076A108EFF5fa7282a1B9aD2`, verificado en Fase 0) y **se usa**: valora el sleeve USDG y convierte a términos USDG las referencias del guardarraíl de trading. El fallback 1:1 con `usdgFeed` sin configurar es modo degradado de prueba, no de producción (F16).
 - Si no existe: supuesto 1:1 documentado como riesgo + **circuit breaker de depeg** del Guardian: pausa depósitos y trading; retiros cash contra el USDG disponible y retiros in-kind siempre abiertos.
 
 ### 5.6 Liquidación para retiros cash (C7, C16)
@@ -246,7 +249,7 @@ si no:  P_final = Pe   (HWM intacto)
 ## 8. Trading del manager
 
 - `fund.execute(adapterId, calldata)` — solo manager, solo adapters del registry, solo pares del `TokenRegistry` + USDG.
-- **Guardarraíl por trade**: precio efectivo dentro de `maxSlippageBps` (100) del cruce de feeds de ambos activos (en términos USDG vía feed si existe, §5.5); revert si algún feed es inválido o si falla la condición de sequencer (§5.2.3). Los adapters **miden deltas de balance reales** (C29).
+- **Guardarraíl por trade**: precio efectivo dentro de `maxSlippageBps` (100) del cruce de feeds de ambos activos (en términos USDG vía feed si existe, §5.5); revert si algún feed es inválido (sin condición de sequencer — el feed no existe, v0.8/F15). Los adapters **miden deltas de balance reales** (C29).
 - **Presupuesto acumulado de slippage** (C5): el slippage adverso realizado se acumula y no puede superar **ni** `SLIPPAGE_BUDGET_DAY` (50 bps del AUM por ventana rodante de 24h) **ni** `SLIPPAGE_BUDGET_PERIOD` (**50% del stake por período contable**). Alcance honesto del segundo tope: la extracción que empuje `Pe` por debajo del capital invertido vivo la cobra el first-loss del stake **1:1 en agregado mientras el stake disponible cubra el neto** (el reparto individual puede quedar en λ < 1 si otros LPs realizaron ganancias, §6); con el stake agotado la cota marginal efectiva pasa a ser el propio presupuesto (≤ 0.5 × stake por período). El *skimming* de ganancias no realizadas intra-período sigue siendo posible pero queda acotado por el mismo presupuesto, gravado por la perf fee no devengada y visible en el track record. Reversión del mismo par dentro de `WASH_WINDOW` (1h) computa doble. `MAX_TRADES_PER_DAY` = 200.
 - **Freeze pre-settlement** (C14): trading deshabilitado desde `settlementDue` (ordinario o ad-hoc de Winding, §4) hasta ejecutar el settlement.
 - **Vigilancia de beacon** (C29): cambio de implementación del beacon de un token → `TokenRegistry` auto-suspende el activo (prohibido comprar; "en revisión" en NAV) hasta re-aprobación del Guardian vía timelock.
@@ -365,4 +368,4 @@ si no:  P_final = Pe   (HWM intacto)
 
 ## 15. Fuera de alcance v1 y pendientes
 
-Apalancamiento y shorts (Morpho loops), cestas/índices, shares transferibles y mercado secundario, keys tradeables con fee-share, token del protocolo, keeper descentralizado con incentivos, app móvil nativa. **Confianza residual v1**: el escalar `grossClaims` del settlement lo publica el keeper del protocolo; desde v0.5 solo afecta al reparto λ entre claimants — la salida del stake (`funding`) es exacta y 100% on-chain — así que un keeper malicioso puede desviar compensación entre LPs pero no extraer del stake (verificable off-chain; disputa social/gobernanza en v1, challenge window en v2). Pendientes de verificación en integración: feed USDG/USD en chain 4663, checksums y firma exacta de `isBlocked`, heartbeats reales de los feeds. Estructura legal (AIFMD sub-umbral / MiFID II): requiere opinión legal externa antes de mainnet — esta spec no es asesoría legal.
+Apalancamiento y shorts (Morpho loops), cestas/índices, shares transferibles y mercado secundario, keys tradeables con fee-share, token del protocolo, keeper descentralizado con incentivos, app móvil nativa. **Confianza residual v1**: el escalar `grossClaims` del settlement lo publica el keeper del protocolo; desde v0.5 solo afecta al reparto λ entre claimants — la salida del stake (`funding`) es exacta y 100% on-chain — así que un keeper malicioso puede desviar compensación entre LPs pero no extraer del stake (verificable off-chain; disputa social/gobernanza en v1, challenge window en v2). **Gobernanza interina (F19)**: el `TokenRegistry` opera con owner 2-pasos durante la Fase 1; antes de mainnet la ownership se transfiere al Guardian con timelock (§12) — hasta entonces, el owner puede re-aprobar drifts sin delay (mitigado por el commit `expectedImpl`). Pendientes de verificación resueltos en Fase 0: feed USDG/USD (existe), firma de `isBlocked` (verificada), heartbeats (86400s/0.5%), beacon = access registry (slot ERC-1967 comprobado). Estructura legal (AIFMD sub-umbral / MiFID II): requiere opinión legal externa antes de mainnet — esta spec no es asesoría legal.

@@ -5,7 +5,7 @@ import {Test, console2} from "forge-std/Test.sol";
 import {AddressBook} from "../../src/AddressBook.sol";
 import {TokenRegistry} from "../../src/TokenRegistry.sol";
 import {NAVLib} from "../../src/libraries/NAVLib.sol";
-import {IAggregatorV3} from "../../src/interfaces/IAggregatorV3.sol";
+import {IAggregatorV3, IBeacon} from "../../src/interfaces/IAggregatorV3.sol";
 import {IERC20} from "../../src/interfaces/IERC20.sol";
 
 contract NavHarnessFork {
@@ -29,9 +29,11 @@ contract NavForkTest is Test {
     function setUp() public {
         vm.createSelectFork(vm.envString("RH_RPC_MAINNET"));
         reg = new TokenRegistry(AddressBook.USDG);
-        reg.list(AddressBook.TSLA, AddressBook.TSLA_FEED, STALENESS);
-        reg.list(AddressBook.NVDA, AddressBook.NVDA_FEED, STALENESS);
-        reg.setUsdgFeed(AddressBook.USDG_FEED, STALENESS);
+        // Commit de la impl real vigente (F5) — leída del beacon verificado
+        address impl = IBeacon(AddressBook.ACCESS_REGISTRY).implementation();
+        reg.list(AddressBook.TSLA, AddressBook.TSLA_FEED, STALENESS, 1_00000000, 100_000_00000000, impl);
+        reg.list(AddressBook.NVDA, AddressBook.NVDA_FEED, STALENESS, 1_00000000, 100_000_00000000, impl);
+        reg.setUsdgFeed(AddressBook.USDG_FEED, STALENESS, 90000000, 110000000);
         nav = new NavHarnessFork();
     }
 
