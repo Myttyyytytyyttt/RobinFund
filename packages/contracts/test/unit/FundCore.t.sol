@@ -23,7 +23,7 @@ contract FundCoreTest is Test {
 
     address manager = address(0x4A4A);
     address keeper = address(0x6E6E);
-    address feeSplitter = address(0xFEE5);
+    address guardian = address(0x6DAD);
     address treasury = address(0x7EA5);
     address alice = address(0xA11CE);
     address bob = address(0xB0B);
@@ -47,9 +47,9 @@ contract FundCoreTest is Test {
             reg,
             IEligibilityGate(address(gate)),
             adapters,
+            guardian,
             manager,
             keeper,
-            feeSplitter,
             treasury,
             Fund.Config({
                 perfFeeBps: 2000, // 20%
@@ -175,9 +175,9 @@ contract FundCoreTest is Test {
             reg,
             IEligibilityGate(address(gate)),
             adapters,
+            guardian,
             manager,
             keeper,
-            feeSplitter,
             treasury,
             Fund.Config({
                 perfFeeBps: 2000,
@@ -350,7 +350,7 @@ contract FundCoreTest is Test {
         fund.settle(0);
 
         // fee = 20% × ganancia 2000 = 400 → shares al FeeSplitter, valoradas a P_final (post-dilución)
-        uint256 feeShares = fund.share().balanceOf(feeSplitter);
+        uint256 feeShares = fund.share().balanceOf(fund.FEE_SPLITTER());
         assertGt(feeShares, 0);
         uint256 pFinal = fund.hwmWad(); // HWM := P_final tras cristalizar
         assertApproxEqRel(feeShares * pFinal / 1e18, 400e18, 0.01e18, "valor fee shares a P_final = 400");

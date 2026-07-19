@@ -48,10 +48,10 @@ contract TradingForkTest is Test {
             reg,
             IEligibilityGate(address(gate)),
             adapters,
+            address(0x6DAD), // guardian
             manager,
             keeper,
-            address(0xFEE5),
-            address(0x7EA5),
+            address(0x7EA5), // treasury
             Fund.Config({
                 perfFeeBps: 2000, feeMinBps: 0, feeMaxBps: 0, managerEntryShareBps: 5000,
                 kFactor: 25, period: 30 days, withdrawCooldown: 24 hours

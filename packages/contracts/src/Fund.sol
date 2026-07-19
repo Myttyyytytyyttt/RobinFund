@@ -13,6 +13,7 @@ import {StakeEscrow} from "./StakeEscrow.sol";
 import {CompensationReserve} from "./CompensationReserve.sol";
 import {AdapterRegistry} from "./AdapterRegistry.sol";
 import {ITradeAdapter} from "./interfaces/ITradeAdapter.sol";
+import {FeeSplitter} from "./FeeSplitter.sol";
 
 /// @title Fund — núcleo del mecanismo RobinFund (SPEC v0.9 §4–§10; Fase 1.3a)
 /// @notice Esta pasada implementa: estados, colas con forward pricing estricto, secuencia canónica
@@ -111,6 +112,7 @@ contract Fund {
     CompensationReserve public reserve;
     IEligibilityGate public immutable GATE;
     AdapterRegistry public immutable ADAPTERS;
+    address public immutable GUARDIAN; // pausa depósitos/trading + circuit breaker de depeg (§2, §5.5)
     address public immutable MANAGER;
     address public immutable KEEPER; // publica grossClaims en settle (confianza v1, §15)
     address public immutable FEE_SPLITTER; // excluido de la contabilidad NI (§7.3)
@@ -121,6 +123,7 @@ contract Fund {
 
     State public state;
     bool public frozen; // cacheado; declarable permissionless si isBlocked(fund) (§10.3)
+    bool public guardianPaused; // el Guardian pausó depósitos/trading (nunca retiros, §2/D12)
     uint256 private _lock = 1; // guard de reentrancy (S2)
 
     address[] public assets; // estrictamente ascendente (F13); vacío hasta Fase 1.4
@@ -170,6 +173,7 @@ contract Fund {
     event ConvertedToInKind(uint256 indexed orderId);
     event AssetRegistered(address indexed token);
     event Traded(uint256 indexed adapterId, address tokenIn, address tokenOut, uint256 spent, uint256 received, uint256 adverseWad);
+    event GuardianPauseSet(bool paused);
 
     // ---------- Errores ----------
 
@@ -206,9 +210,9 @@ contract Fund {
         TokenRegistry registry_,
         IEligibilityGate gate_,
         AdapterRegistry adapters_,
+        address guardian_,
         address manager_,
         address keeper_,
-        address feeSplitter_,
         address treasury_,
         Config memory cfg,
         string memory name_,
@@ -219,13 +223,16 @@ contract Fund {
                 || cfg.managerEntryShareBps > 5000 || cfg.kFactor == 0 || cfg.kFactor > 25 || cfg.period < 7 days
                 || cfg.period > 90 days || cfg.withdrawCooldown < 1 hours || cfg.withdrawCooldown > 7 days
         ) revert BadConfig();
+        if (guardian_ == address(0) || manager_ == address(0) || keeper_ == address(0) || treasury_ == address(0)) {
+            revert BadConfig();
+        }
         REGISTRY = registry_;
         USDG = IERC20(registry_.USDG());
         GATE = gate_;
         ADAPTERS = adapters_;
+        GUARDIAN = guardian_;
         MANAGER = manager_;
         KEEPER = keeper_;
-        FEE_SPLITTER = feeSplitter_;
         PROTOCOL_TREASURY = treasury_;
         config = cfg;
 
@@ -233,6 +240,8 @@ contract Fund {
         queue = new QueueEscrow(address(this), USDG);
         reserve = new CompensationReserve(address(this), USDG);
         stakeEscrow = new StakeEscrow(address(this), USDG, manager_, address(reserve), 7 days);
+        // El FeeSplitter se despliega aquí para romper la dependencia circular Fund↔FeeSplitter
+        FEE_SPLITTER = address(new FeeSplitter(address(this), USDG, manager_, treasury_));
 
         lastMarkTime = uint48(block.timestamp);
     }
@@ -257,9 +266,17 @@ contract Fund {
         return lastMarkTime + uint48(config.period);
     }
 
-    /// @notice Freeze de trading (§8) — lo consumirá el adapter layer en 1.4.
+    /// @notice Freeze de trading (§8): estado, block RHJ, pausa del Guardian, o settlement due.
     function tradingFrozen() public view returns (bool) {
-        return frozen || state != State.Active || block.timestamp >= settlementDue();
+        return frozen || guardianPaused || state != State.Active || block.timestamp >= settlementDue();
+    }
+
+    /// @notice El Guardian pausa/reanuda depósitos y trading (circuit breaker de depeg, §5.5). NUNCA
+    /// afecta a retiros (D12): cash e in-kind siguen abiertos.
+    function setGuardianPaused(bool v) external {
+        if (msg.sender != GUARDIAN) revert NotManager();
+        guardianPaused = v;
+        emit GuardianPauseSet(v);
     }
 
     // ---------- Materialización perezosa (§6) ----------
@@ -304,7 +321,7 @@ contract Fund {
 
     function requestDeposit(uint256 amount6) external nonReentrant returns (uint256 orderId) {
         if (state != State.Active) revert WrongState();
-        if (frozen) revert FrozenFund();
+        if (frozen || guardianPaused) revert FrozenFund();
         if (!GATE.isEligible(msg.sender)) revert NotEligible();
         if (amount6 < MIN_DEPOSIT_6) revert BelowMinimum();
         if (pendingOrders[msg.sender] >= MAX_PENDING_PER_LP) revert TooManyPending();
@@ -440,7 +457,7 @@ contract Fund {
     }
 
     function _executeDeposits(NAVLib.Snapshot memory s) internal {
-        if (state != State.Active || frozen) return;
+        if (state != State.Active || frozen || guardianPaused) return;
         uint48 due = settlementDue();
         if (block.timestamp + DEPOSIT_BLACKOUT >= due) return; // blackout pre-settlement (C1)
 

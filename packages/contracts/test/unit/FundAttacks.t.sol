@@ -22,7 +22,7 @@ contract FundAttacksTest is Test {
 
     address manager = address(0x4A4A);
     address keeper = address(0x6E6E);
-    address feeSplitter = address(0xFEE5);
+    address guardian = address(0x6DAD);
     address treasury = address(0x7EA5);
     address alice = address(0xA11CE);
     address bob = address(0xB0B);
@@ -42,7 +42,7 @@ contract FundAttacksTest is Test {
         adapters = new AdapterRegistry();
         fund = new Fund(
             reg,
-            IEligibilityGate(address(gate)), adapters, manager, keeper, feeSplitter, treasury,
+            IEligibilityGate(address(gate)), adapters, guardian, manager, keeper, treasury,
             Fund.Config({perfFeeBps: 2000, feeMinBps: 0, feeMaxBps: 0, managerEntryShareBps: 5000, kFactor: 25, period: PERIOD, withdrawCooldown: COOLDOWN}),
             "A", "A"
         );

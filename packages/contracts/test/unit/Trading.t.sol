@@ -70,7 +70,7 @@ contract TradingTest is Test {
         aid = adapters.add(address(adapter));
 
         fund = new Fund(
-            reg, IEligibilityGate(address(gate)), adapters, manager, keeper, address(0xFEE5), address(0x7EA5),
+            reg, IEligibilityGate(address(gate)), adapters, address(0x6DAD), manager, keeper, address(0x7EA5),
             Fund.Config({perfFeeBps: 2000, feeMinBps: 0, feeMaxBps: 0, managerEntryShareBps: 5000, kFactor: 25, period: 30 days, withdrawCooldown: 24 hours}),
             "T", "T"
         );

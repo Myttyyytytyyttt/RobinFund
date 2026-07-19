@@ -105,7 +105,7 @@ contract FundInvariantsTest is Test {
     TokenRegistry reg;
     FundHandler handler;
     address keeper = address(0x6E6E);
-    address feeSplitter = address(0xFEE5);
+
 
     function setUp() public {
         vm.warp(100_000_000);
@@ -122,9 +122,9 @@ contract FundInvariantsTest is Test {
             reg,
             IEligibilityGate(address(gate)),
             adapters,
+            address(0x6DAD),
             address(0x4A4A),
             keeper,
-            feeSplitter,
             address(0x7EA5),
             Fund.Config({
                 perfFeeBps: 2000,
