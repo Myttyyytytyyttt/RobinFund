@@ -78,6 +78,32 @@ contract EligibilityGateTest is Test {
         assertFalse(gate.isEligible(alice));
         assertEq(gate.ineligibleSince(alice), 0); // no puede forzarse su redención (no tiene shares)
     }
+
+    // G1 (HIGH): una firma pre-emitida NO puede deshacer una revocación
+    function test_G1_revocacion_no_evadible_por_firma_previa() public {
+        uint48 expiry = uint48(block.timestamp + 90 days);
+        // el signer pre-firma una atestación (renovación entregada off-chain) al nonce 0
+        bytes memory preSigned = _sign(alice, expiry, 0);
+        gate.attest(alice, expiry, 0, preSigned); // alice se atesta → nonce ahora 1
+
+        // el signer firma la SIGUIENTE renovación por adelantado (nonce 1), aún no enviada
+        bytes memory preSignedRenewal = _sign(alice, uint48(block.timestamp + 180 days), 1);
+
+        // evento de compliance: el signer revoca (nonce avanza a 2)
+        vm.prank(signer);
+        gate.revoke(alice);
+        assertFalse(gate.isEligible(alice));
+
+        // alice intenta re-habilitarse con la renovación pre-firmada (nonce 1): DEBE fallar
+        vm.expectRevert(EligibilityGate.BadNonce.selector);
+        gate.attest(alice, uint48(block.timestamp + 180 days), 1, preSignedRenewal);
+        assertFalse(gate.isEligible(alice), "la revocacion aguanta");
+
+        // re-habilitar exige que el signer firme el nonce NUEVO (2) tras la revocación
+        uint48 exp2 = uint48(block.timestamp + 90 days);
+        gate.attest(alice, exp2, 2, _sign(alice, exp2, 2));
+        assertTrue(gate.isEligible(alice));
+    }
 }
 
 contract GuardianTest is Test {
@@ -116,6 +142,22 @@ contract GuardianTest is Test {
     function test_solo_owner() public {
         vm.expectRevert(Guardian.NotOwner.selector);
         guardian.queue(address(reg), 0, "");
+    }
+
+    // G2: una acción encolada caduca tras DELAY + GRACE_PERIOD
+    function test_G2_accion_caduca() public {
+        bytes memory data = abi.encodeWithSignature("acceptOwnership()");
+        vm.prank(multisig);
+        guardian.queue(address(reg), 0, data);
+        vm.warp(block.timestamp + 2 days + 14 days + 1);
+        vm.prank(multisig);
+        vm.expectRevert(abi.encodeWithSelector(Guardian.Stale.selector, block.timestamp - 1));
+        guardian.execute(address(reg), 0, data);
+    }
+
+    function test_G2_delay_minimo() public {
+        vm.expectRevert(Guardian.BadDelay.selector);
+        new Guardian(multisig, 12 hours);
     }
 }
 
@@ -226,7 +268,7 @@ contract FactoryE2ETest is Test {
         vm.prank(manager);
         Fund fund = Fund(factory.createFund(cfg, "RF", "RF"));
         vm.prank(address(0xBAD));
-        vm.expectRevert(Fund.NotManager.selector);
+        vm.expectRevert(Fund.NotGuardian.selector);
         fund.setGuardianPaused(true);
     }
 }

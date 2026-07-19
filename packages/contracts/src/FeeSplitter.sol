@@ -35,30 +35,38 @@ contract FeeSplitter {
 
     constructor(address fund_, IERC20 usdg_, address manager_, address treasury_) {
         if (fund_ == address(0) || manager_ == address(0) || treasury_ == address(0)) revert ZeroAddress();
+        if (address(usdg_).code.length == 0) revert ZeroAddress(); // G4
         FUND = fund_;
         USDG = usdg_;
         MANAGER = manager_;
         PROTOCOL_TREASURY = treasury_;
     }
 
-    /// @notice Encola el retiro de las shares de fee acumuladas (permissionless — el manager/keeper
-    /// lo dispara). Retiro cash a NAV: el USDG llega tras el cooldown, y `distribute` lo reparte.
-    function redeem() external returns (uint256 shares) {
+    /// @notice Encola el retiro de las shares de fee acumuladas (permissionless). `inKind=false` = cash
+    /// a NAV (el USDG llega tras el cooldown → `distribute`); `inKind=true` = pro-rata de activos, SIEMPRE
+    /// ejecutable aunque el fondo esté 100% invertido o el NAV inválido (escape del stuck order, G4).
+    function redeem(bool inKind) external returns (uint256 shares) {
         shares = IFundShareLike(IFundLike(FUND).share()).balanceOf(address(this));
         if (shares > 0) {
-            IFundLike(FUND).requestWithdraw(shares, false);
+            IFundLike(FUND).requestWithdraw(shares, inKind);
         }
         emit Redeemed(shares);
     }
 
     /// @notice Reparte el USDG disponible 90/10. Permissionless.
     function distribute() external {
-        uint256 bal = USDG.balanceOf(address(this));
+        distributeToken(address(USDG));
+    }
+
+    /// @notice Reparte 90/10 cualquier token que el splitter tenga — para el USDG del retiro cash o los
+    /// Stock Tokens de un retiro in-kind (G4). Permissionless. Snapshot-then-transfer (sin reentrada útil).
+    function distributeToken(address token) public {
+        uint256 bal = IERC20(token).balanceOf(address(this));
         if (bal == 0) return;
         uint256 toManager = bal * MANAGER_BPS / 10000;
         uint256 toProtocol = bal - toManager;
-        USDG.safeTransfer(MANAGER, toManager);
-        USDG.safeTransfer(PROTOCOL_TREASURY, toProtocol);
-        emit Distributed(toManager, toProtocol);
+        IERC20(token).safeTransfer(MANAGER, toManager);
+        IERC20(token).safeTransfer(PROTOCOL_TREASURY, toProtocol);
+        if (token == address(USDG)) emit Distributed(toManager, toProtocol);
     }
 }

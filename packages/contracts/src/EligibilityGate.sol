@@ -11,7 +11,8 @@ import {IEligibilityGate} from "./interfaces/IEligibilityGate.sol";
 contract EligibilityGate is IEligibilityGate {
     bytes32 public constant ATTESTATION_TYPEHASH =
         keccak256("Attestation(address account,uint48 expiry,uint256 nonce)");
-    bytes32 private immutable _DOMAIN_SEPARATOR;
+    bytes32 private immutable _CACHED_DOMAIN_SEPARATOR;
+    uint256 private immutable _CACHED_CHAIN_ID;
 
     address public signer; // compliance signer (→ rotable por el owner)
     address public owner;
@@ -43,7 +44,18 @@ contract EligibilityGate is IEligibilityGate {
         if (signer_ == address(0)) revert ZeroAddress();
         owner = msg.sender;
         signer = signer_;
-        _DOMAIN_SEPARATOR = keccak256(
+        _CACHED_CHAIN_ID = block.chainid;
+        _CACHED_DOMAIN_SEPARATOR = _buildDomainSeparator();
+    }
+
+    /// @dev Cachea el separator pero lo recomputa si la chain forkeó (patrón OZ, G3): evita replay
+    /// cross-fork de atestaciones manteniendo el camino común barato.
+    function DOMAIN_SEPARATOR() public view returns (bytes32) {
+        return block.chainid == _CACHED_CHAIN_ID ? _CACHED_DOMAIN_SEPARATOR : _buildDomainSeparator();
+    }
+
+    function _buildDomainSeparator() internal view returns (bytes32) {
+        return keccak256(
             abi.encode(
                 keccak256("EIP712Domain(string name,string version,uint256 chainId,address verifyingContract)"),
                 keccak256("RobinFund EligibilityGate"),
@@ -52,10 +64,6 @@ contract EligibilityGate is IEligibilityGate {
                 address(this)
             )
         );
-    }
-
-    function DOMAIN_SEPARATOR() external view returns (bytes32) {
-        return _DOMAIN_SEPARATOR;
     }
 
     // ---------- Atestación ----------
@@ -67,7 +75,7 @@ contract EligibilityGate is IEligibilityGate {
         if (nonce != nonceOf[account]) revert BadNonce();
 
         bytes32 structHash = keccak256(abi.encode(ATTESTATION_TYPEHASH, account, expiry, nonce));
-        bytes32 digest = keccak256(abi.encodePacked("\x19\x01", _DOMAIN_SEPARATOR, structHash));
+        bytes32 digest = keccak256(abi.encodePacked("\x19\x01", DOMAIN_SEPARATOR(), structHash));
         if (_recover(digest, signature) != signer) revert BadSignature();
 
         nonceOf[account] = nonce + 1;
@@ -77,9 +85,14 @@ contract EligibilityGate is IEligibilityGate {
     }
 
     /// @notice El signer revoca una atestación (compromiso, cambio de estatus del titular).
+    /// AVANZA el nonce (G1): toda firma pre-emitida al nonce viejo queda inválida, así que re-habilitar
+    /// exige que el signer firme el nonce NUEVO *después* de la revocación — una re-atestación con una
+    /// firma anterior a la revocación (renovación pre-firmada, atestación inicial no enviada) ya no
+    /// puede deshacer la revocación. Sin esto, cualquier firma viva evadía el control de compliance.
     function revoke(address account) external {
         if (msg.sender != signer) revert NotSigner();
         revokedAt[account] = uint48(block.timestamp);
+        nonceOf[account] += 1;
         emit Revoked(account, uint48(block.timestamp));
     }
 

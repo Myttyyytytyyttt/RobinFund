@@ -130,7 +130,7 @@ Todas las condiciones, evaluadas en vivo en la transacción:
 ### 5.5 USDG y depeg (C23)
 
 - El feed USDG/USD **existe** en 4663 (`0x61B7e5650328764B076A108EFF5fa7282a1B9aD2`, verificado en Fase 0) y **se usa**: valora el sleeve USDG y convierte a términos USDG las referencias del guardarraíl de trading. El fallback 1:1 con `usdgFeed` sin configurar es modo degradado de prueba, no de producción (F16).
-- Si no existe: supuesto 1:1 documentado como riesgo + **circuit breaker de depeg** del Guardian: pausa depósitos y trading; retiros cash contra el USDG disponible y retiros in-kind siempre abiertos.
+- Si no existe: supuesto 1:1 documentado como riesgo + **circuit breaker de depeg** del Guardian: es el mismo `pauseFund` de vía rápida (pausa depósitos y trading, **nunca** retiros — cash e in-kind siguen abiertos, D12). La detección del depeg es una decisión off-chain del multisig; no hay entrypoint dedicado.
 
 ### 5.6 Liquidación para retiros cash (C7, C16)
 
@@ -269,7 +269,7 @@ si no:  P_final = Pe   (HWM intacto)
 
 ### 10.1 Entrada
 
-- Atestaciones EIP-712 `(address, expiry)`, TTL 90 días, revocables. Verifican no-US-person y jurisdicción no restringida (lista RHJ: US + Cuba, Bielorrusia, Irán, Corea del Norte, Rusia, Siria, Ucrania, Sudán del Sur, Sudán, Myanmar, Venezuela; restricciones adicionales Canadá/UK/Suiza).
+- Atestaciones EIP-712 `(address, expiry, nonce)` (el `nonce` monótono por cuenta es anti-replay; el signer debe firmar la terna exacta), TTL 90 días, revocables. **La revocación avanza el nonce** (revisión 1.5/G1): invalida toda firma pre-emitida, así que re-habilitar exige una firma del signer POSTERIOR a la revocación — una renovación pre-firmada no puede deshacer un bloqueo de compliance. Verifican no-US-person y jurisdicción no restringida (lista RHJ: US + Cuba, Bielorrusia, Irán, Corea del Norte, Rusia, Siria, Ucrania, Sudán del Sur, Sudán, Myanmar, Venezuela; restricciones adicionales Canadá/UK/Suiza).
 - **Unicidad**: el compliance signer emite **una sola dirección activa por persona verificada** (cambiar de dirección revoca la anterior). Defensa en profundidad contra Sybil: el mecanismo de first-loss ya es Sybil-inmune en extracción (§6), la unicidad además desactiva el grief de dilución de λ.
 - Requeridas en `createFund` y `requestDeposit`, re-verificadas al ejecutar el batch (inválida: skip + refund, §5.4).
 
@@ -303,7 +303,7 @@ si no:  P_final = Pe   (HWM intacto)
 | `AdapterRegistry` + adapters | Venues whitelisteados, deltas, guardarraíl + presupuestos de slippage |
 | `NAVLib` | Valoración WAD + validez (§5.2) |
 | `EligibilityGate` | Atestaciones, revocación, redención forzosa (C24) |
-| `FeeSplitter` | Split de entry y perf fees |
+| `FeeSplitter` | Split de la **performance fee** 90/10 (la entry fee se reparte dentro del path de depósito del Fund); desplegado por el Fund |
 | `Guardian` | Pausas (nunca retiros), registries, circuit breaker de depeg |
 
 ## 13. Parámetros

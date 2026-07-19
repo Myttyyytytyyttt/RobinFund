@@ -14,6 +14,9 @@ interface IFundPausable {
 ///    de configuración se encola y solo se ejecuta pasado `DELAY`, dando aviso on-chain.
 /// El Guardian ostenta la ownership de los registries (via su transferencia 2-pasos).
 contract Guardian {
+    uint256 public constant GRACE_PERIOD = 14 days; // ventana de ejecución tras madurar (G2)
+    uint256 public constant MIN_DELAY = 1 days;
+
     uint256 public immutable DELAY; // p. ej. 2 días
     address public owner; // multisig
     address public pendingOwner;
@@ -32,6 +35,8 @@ contract Guardian {
     error AlreadyQueued();
     error NotQueued();
     error TimelockActive(uint256 executableAt);
+    error Stale(uint256 expiredAt);
+    error BadDelay();
     error CallFailed();
 
     modifier onlyOwner() {
@@ -41,6 +46,7 @@ contract Guardian {
 
     constructor(address owner_, uint256 delay_) {
         if (owner_ == address(0)) revert ZeroAddress();
+        if (delay_ < MIN_DELAY) revert BadDelay(); // un delay 0 anularía el timelock (G2)
         owner = owner_;
         DELAY = delay_;
     }
@@ -76,6 +82,7 @@ contract Guardian {
         uint256 qat = queuedAt[id];
         if (qat == 0) revert NotQueued();
         if (block.timestamp < qat + DELAY) revert TimelockActive(qat + DELAY);
+        if (block.timestamp > qat + DELAY + GRACE_PERIOD) revert Stale(qat + DELAY + GRACE_PERIOD); // G2: caduca
         queuedAt[id] = 0;
         (bool ok, bytes memory r) = target.call{value: value}(data);
         if (!ok) revert CallFailed();

@@ -196,6 +196,7 @@ contract Fund {
     error SlippageExceeded();
     error TradeLimit();
     error BudgetExceeded();
+    error NotGuardian();
 
     modifier nonReentrant() {
         if (_lock != 1) revert Reentrancy();
@@ -274,7 +275,7 @@ contract Fund {
     /// @notice El Guardian pausa/reanuda depósitos y trading (circuit breaker de depeg, §5.5). NUNCA
     /// afecta a retiros (D12): cash e in-kind siguen abiertos.
     function setGuardianPaused(bool v) external {
-        if (msg.sender != GUARDIAN) revert NotManager();
+        if (msg.sender != GUARDIAN) revert NotGuardian();
         guardianPaused = v;
         emit GuardianPauseSet(v);
     }
@@ -859,6 +860,10 @@ contract Fund {
         nonReentrant
     {
         if (msg.sender != MANAGER) revert NotManager();
+        // Elegibilidad ONGOING del manager (G5/G7): un manager que devenga prohibido no puede tomar
+        // riesgo nuevo. Fail-safe: NO gatea winding/close/retiros (puede cerrar ordenadamente y los LPs
+        // siempre salen). Si el signer cae, el trading se pausa — aceptable (mismo efecto que el Guardian).
+        if (!GATE.isEligible(MANAGER)) revert NotEligible();
         if (tradingFrozen()) revert FrozenFund();
         if (tokenIn == tokenOut || amountIn == 0) revert BadOrder();
         _requireTradableIn(tokenIn);
