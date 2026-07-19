@@ -18,6 +18,7 @@ contract FundShare {
 
     error NotFund();
     error NonTransferable();
+    error ZeroAddress();
 
     modifier onlyFund() {
         if (msg.sender != FUND) revert NotFund();
@@ -25,6 +26,7 @@ contract FundShare {
     }
 
     constructor(string memory name_, string memory symbol_, address fund_) {
+        if (fund_ == address(0)) revert ZeroAddress();
         name = name_;
         symbol = symbol_;
         FUND = fund_;

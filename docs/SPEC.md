@@ -1,4 +1,4 @@
-# RobinFund — Especificación de mecanismo v0.7
+# RobinFund — Especificación de mecanismo v0.9
 
 > Protocolo de fondos sociales sobre Stock Tokens en Robinhood Chain (chain ID 4663, testnet 46630).
 > Estado: borrador para discusión, pre-implementación. Fecha: 2026-07-19.
@@ -10,6 +10,7 @@
 > **Changelog v0.6**: el replay de v0.5 encontró el fallo raíz de toda la familia: **el reset del baseline por período** (heredado desde v0.2) re-basaba el capital asegurado a la marca de cada settlement, convirtiendo el first-loss en una **put gratuita re-emitida cada período desde el pico** — un holder pasivo en un mercado 1→2→1 extraía +100% drenando el stake entero, sin Sybil ni timing; y el reset además borraba los `NI` negativos de cuentas salidas, resucitando el bucketing en versión cross-período. v0.6 elimina el reset: **el NI es capital invertido de por vida** (mints suman cash real, sin cap por P0; los claims pagados reducen el capital asegurado; los negativos de cuentas salidas persisten para siempre), con los invariantes `claim ≤ pérdida real`, `Σ claims de por vida ≤ capital aportado` y `salida del stake ≤ pérdida neta agregada`. También: `grossClaims ≥ funding` exigido por contrato (sin funding varado), `FeeSplitter` excluido de la contabilidad NI, y ajustes de redacción del "1:1" (§8) y `stakeDisponible` (§14.21).
 > **Changelog v0.7**: la ronda 5 dio **closed = true** — la contabilidad NI aguantó un fuzzer de 200k secuencias con los tres invariantes intactos. v0.7 endurece el único residuo económico señalado (la **captura cubierta del seguro**: fund-long al cap + short externo cobra el stake sin riesgo de precio si el seguro es gratis): **vesting de cobertura** (`cobertura = min(1, antigüedad_ponderada / COVERAGE_VESTING)`, default 1 período — impone coste de carry al hedger y cierra el whipsaw de depósito reciente), guía de pricing del entry fee como prima, y corrección del texto sobre-prometedor ("nunca le da beneficio"). Más 9 precisiones de coherencia: funding sobre shares de LPs (excluyendo las del FeeSplitter), cristalización vs cobro del claim, materialización perezosa obligatoria antes de cualquier mutación, rollover del residual de la reserva, invariante (1) como pérdida acumulada, y filas de tabla que faltaban.
 > **Changelog v0.8 (verificación on-chain, Fase 0, 2026-07-19)**: hechos confirmados contra chain 4663 con fork tests (6/6 PASS): USDG = 6 dec; `isBlocked(address)` y puntero `ACCESS_CONTROLLED_REGISTRY()` verificados; `oraclePaused()`/`tokenPaused()` viven en el token; custodia por contrato arbitrario probada con TSLA real; swap real v4 ejecutado vía `unlockCallback` propio. Correcciones de supuestos: (1) **no existe L2 Sequencer Uptime Feed** en esta chain — la condición §5.2.3 se sustituye por el forward pricing (las rondas deben ser posteriores al cutoff ⇒ un batch post-caída espera a la primera ronda fresca) + monitoreo del keeper; `SEQ_GRACE_PERIOD` eliminado. (2) Heartbeat real de los feeds = **86400s** con deviation 0.5% (24/5) ⇒ `maxStaleness ≈ 86400s + margen` y la protección económica real intra-semana es la banda del 0.5%; el staleness de fin de semana confirmado en vivo (~34h). (3) El feed **USDG/USD existe** (`0x61B7...9aD2`) — §5.5 resuelto: se usa. (4) La liquidez real vive en **Uniswap v4** (el pool v3 TSLA/USDG está vacío) ⇒ el adapter primario opera el PoolManager v4 directamente. (5) Existen **tokens impostores** en la chain (NVDA y USDG falsos) — direcciones solo desde el AddressBook verificado.
+> **Changelog v0.9 (revisión Fase 1.2)**: el rollover de v0.7 era incomputable con claims perezosos (G2) — sustituido por **residuo-en-Closed**: `sweep` solo con `totalShares == 0`, cuando todo claim ha materializado por construcción. Endurecimientos del StakeEscrow ahora garantizados por el propio escrow: slash SOLO hacia la CompensationReserve, solicitud de retiro con ventana de ejecución de 30d (sin opción de salida permanente), los slashes reducen lo solicitado (el stake fresco no hereda timelocks viejos), y liberación final two-step con `STAKE_RELEASE_GRACE` en el escrow. Decisiones documentadas: `MIN_STAKE` es solo de creación (el suelo operativo post-creación es `k × stake ≥ AUM`); sub-declaración del keeper detectable ex-post, sin re-creación de claims cortados; el entrypoint de cobro de claims del Fund no puede depender de estado/NAV/atestación/pausas (espejo de D12); el bloqueo de shares de retiros es contabilidad interna del Fund (las shares bloqueadas permanecen en `balanceOf` para §5.1 y §11).
 
 ## 0. Resumen
 
@@ -76,7 +77,7 @@ stateDiagram-v2
 
 **Transición a Winding** (manager o maturity): iniciar Winding fija un **settlementDue ad-hoc = timestamp de la solicitud**: desde ese instante aplica el freeze de trading (§8) y el settlement se valora con la regla de marca de §9 contra ese due — el manager no puede tradear hacia la transición ni elegir el pico (C6/C14; queda la discreción residual e inherente de *cuándo* cerrar el fondo, documentada en §14.7). Ejecutado ese settlement: (1) las órdenes de depósito pendientes quedan **anuladas con refund automático** desde el escrow (C11); (2) los retiros pendientes conservan posición y su **cooldown queda anulado**; (3) el reloj de `PERIOD` se reinicia desde la marca ejecutada y los settlements continúan durante el Winding.
 
-**Cierre (Closed)**: tras convertir a USDG todo lo convertible y ejecutar el **settlement final**, los claims de los LPs restantes se fijan: en USDG al sharePrice final para lo líquido, y como claims in-kind pro-rata para los tokens invendibles. Reclamables indefinidamente. Pasados `STAKE_RELEASE_GRACE` (30 días), el stake se libera al manager aunque queden holders sin reclamar: los claims cash están íntegramente fondeados y los in-kind respaldados por sus tokens — la liberación del stake solo exige que los claims cash estén fondeados (C22). `minWithdrawShares` reduce posiciones residuales; la liberación del stake no depende de ello.
+**Cierre (Closed)**: tras convertir a USDG todo lo convertible y ejecutar el **settlement final**, los claims de los LPs restantes se fijan: en USDG al sharePrice final para lo líquido, y como claims in-kind pro-rata para los tokens invendibles. Reclamables indefinidamente. La liberación del stake es **two-step en el propio escrow** (G1): el Fund llama `startRelease` al entrar en Closed y `releaseAll` solo ejecuta pasados `STAKE_RELEASE_GRACE` (30 días) — aviso on-chain para LPs aunque la lógica de Closed tuviera un bug. Puede liberarse aunque queden holders sin reclamar: los claims cash están íntegramente fondeados (C22). Cuando `totalShares == 0`, el residuo de la CompensationReserve se barre al manager (v0.9). `minWithdrawShares` reduce posiciones residuales; la liberación del stake no depende de ello.
 
 **Frozen** (§10.3): mecánica explícita más abajo (C25).
 
@@ -109,8 +110,8 @@ Todas las condiciones, evaluadas en vivo en la transacción:
 
 ### 5.3 Colas y batches
 
-- `requestDeposit(D)`: requiere atestación vigente, `D ≥ minDeposit`, < `maxPendingOrders` órdenes vivas del LP. El USDG va al **`QueueEscrow` (contrato separado del Fund)** (C11). Cancelable hasta que su batch abre.
-- `requestWithdraw(S)`: `S ≥ minWithdrawShares` (o el saldo completo); bloquea las shares. **Cancelable solo hasta madurar el cooldown**; después queda comprometida (C20). Cancelar desbloquea las shares. Varias órdenes concurrentes permitidas, cooldowns independientes, bajo el cap por address. Ni solicitar ni ejecutar un retiro requiere atestación (D12).
+- `requestDeposit(D)`: requiere atestación vigente, `D ≥ minDeposit`, < `maxPendingOrders` órdenes vivas del LP. El USDG va al **`QueueEscrow` (contrato separado del Fund)** (C11). Cancelable hasta que su batch abre. Alcance honesto de C11 (G14): el escrow protege contra bloqueos del address del Fund por emisor/Paxos (el Fund bloqueado sigue pudiendo *llamar* `release`); no protege contra un bug del propio Fund — por eso la ruta de cancelación/refund del Fund debe ser libre de dependencias (sin NAV, sin atestación, sin pausas).
+- `requestWithdraw(S)`: `S ≥ minWithdrawShares` (o el saldo completo); bloquea las shares. **Cancelable solo hasta madurar el cooldown**; después queda comprometida (C20). Cancelar desbloquea las shares. El bloqueo es contabilidad interna del Fund (`FundShare` no expone lock); las shares bloqueadas permanecen en `balanceOf` a efectos de §5.1 y §11 hasta la quema (G16). Varias órdenes concurrentes permitidas, cooldowns independientes, bajo el cap por address. Ni solicitar ni ejecutar un retiro requiere atestación (D12).
 - Retiro **in-kind**: pro-rata raw de cada token + USDG, mismo cooldown. **No requiere NAV válido** — válvula de escape normativa en pausas, depeg y Frozen (C23).
 
 **Forward pricing estricto** (C13): un batch fija un cutoff `T_c` y solo ejecuta cuando, para cada activo relevante, la ronda usada cumple `updatedAt > T_c`. Latencia mínima `MIN_QUEUE_LATENCY` (10 min); `withdrawCooldown ≥ 1h`.
@@ -177,7 +178,7 @@ La regla de burn hace dos cosas: la rama `pro-rata` hace que **salir forfeit-ea 
 
 ```
 totalShares_LP = totalShares − balanceOf(FeeSplitter)     // el FeeSplitter está fuera de la contabilidad NI
-funding     = min( stakeDisponible , max(0, NI − Pe × totalShares_LP) ) + rollover     → CompensationReserve
+funding     = min( stakeDisponible , max(0, NI − Pe × totalShares_LP) )     → CompensationReserve
 cobertura_lp = min( 1 , (t_marca − vestTime_lp) / COVERAGE_VESTING )                    // vesting v0.7
 loss_lp     = max(0, NI_lp − shares_lp × Pe) × cobertura_lp
 grossClaims = Σ_lp loss_lp        (publicado por el keeper; el contrato exige grossClaims ≥ funding)
@@ -188,7 +189,8 @@ Post:        NI_lp −= claim_lp  (perezoso)  ·  el agregado NI se decrementa e
 ```
 
 - **Vesting de cobertura** (v0.7): la cobertura de un depósito madura linealmente durante `COVERAGE_VESTING` (default 1 período). Cierra las dos capturas señaladas en la ronda 5: el *hedged capture* (fund-long al cap + short externo del mismo Stock Token cobraba el stake sin riesgo de precio) pasa a exigir ≥ 1 período de coste de carry del short, y el *whipsaw* de depósito reciente pierde la cobertura que aún no ha madurado. El vesting solo **reduce** claims — no abre superficie nueva. Complemento recomendado al manager: **precio del seguro vía entry fee** (`feeMin > 0` como prima; con fee 0 el seguro es gratis y es esperable que lo arbitren hasta agotar el stake).
-- **Rollover** (v0.7): el residuo de la `CompensationReserve` no adjudicado (por sobre-declaración de `grossClaims`) **rueda como funding adicional del siguiente settlement** — nunca vuelve al manager (evita la colusión keeper-manager de sobre-declarar para recuperar stake) ni queda varado.
+- **Residuo de la reserva** (v0.9, sustituye al rollover de v0.7 — hallazgo G2 de la revisión 1.2: con claims perezosos e indefinidos, el residuo seguro NO es computable en el siguiente settlement): el residuo `funded − paid` de cada período permanece en la `CompensationReserve` durante toda la vida del fondo y **solo sale vía `sweep` en Closed cuando `totalShares == 0`** — en ese punto todo LP ha materializado (el burn es un touch obligatorio), así que el residuo es *provablemente* inreclamable y vuelve al manager junto con la liberación del stake. Nunca antes, nunca entre períodos.
+- **Sub-declaración del keeper** (v0.9): un `grossClaims` publicado por debajo de `Σ loss_lp` real deja cortos a los últimos en materializar (`Σ claims ≤ funding` del contrato). Es **detectable ex-post** (Σ materializado > grossClaims publicado = prueba on-chain de la sub-declaración) y se trata como incidente del keeper (confianza v1, §15); los claims cortados **no** se re-crean contra períodos futuros.
 - **Materialización obligatoria**: cualquier operación que mute `NI_lp` o `shares_lp` (mint, burn, redención forzosa, cristalización) **materializa primero, en orden, todos los `(Pe_k, λ_k)` pendientes** del LP, aplicando `NI_lp −= claim_k` entre uno y el siguiente — la rama pro-rata del burn nunca opera sobre un `NI_lp` obsoleto.
 
 - **`funding` es exacto y 100% on-chain** (`NI` y `totalShares` son estado del contrato): el stake nunca paga más que la pérdida neta del fondo frente al capital invertido vivo. El agregado incluye los `NI` negativos de cuentas salidas **para siempre** — ni el bucketing intra-período (v0.4) ni el cross-período (v0.5) pueden aumentar el funding.
@@ -201,7 +203,7 @@ Post:        NI_lp −= claim_lp  (perezoso)  ·  el agregado NI se decrementa e
 - La compensación **nunca entra al NAV ni al sharePrice**: pago lateral desde la `CompensationReserve`. Invariantes económicos (verificados por fuzzing de 200k secuencias en la ronda 5): (1) `claim_lp ≤ pérdida real acumulada no compensada` bajo cualquier secuencia de flujos; (2) `Σ claims de por vida del LP ≤ capital neto aportado por el LP`; (3) `salida del stake por settlement ≤ pérdida neta agregada frente al NI vivo de los LPs`. Una maniobra neutra a mercado reclama 0 — dentro de una cuenta, repartida en varias, y a través de fronteras de período.
 - Las shares de retiros bloqueados aún no quemados sí generan claim (aguantaron hasta la marca). La redención forzosa de compliance (§10.2) es un burn normal: sin claim extra.
 - Tras un slash, `aumCap` cae a `k × stakeRestante`; el manager puede reponer.
-- **Retiro de stake**: `STAKE_WITHDRAW_TIMELOCK` (7 días) + solo en settlement + solo si el cap resultante ≥ AUM. Liberación final: regla de Closed (§4).
+- **Retiro de stake**: `STAKE_WITHDRAW_TIMELOCK` (7 días) + **ventana de ejecución de 30 días** (una solicitud madurada y no ejecutada caduca — sin opción de salida permanente, G3) + solo en settlement + solo si el cap resultante ≥ AUM. Los slashes posteriores a la solicitud **reducen lo solicitado**: el stake añadido después no hereda el timelock viejo (G3). Sin suelo `MIN_STAKE` post-creación — el suelo operativo es `aumCap = k × stake ≥ AUM` (decisión G17). Liberación final: two-step con gracia en el escrow (§4).
 - En **Frozen** el first-loss queda **suspendido**: la pérdida causada por el emisor no es del manager (§10.3).
 
 ## 7. Fees
@@ -277,7 +279,7 @@ si no:  P_final = Pe   (HWM intacto)
 ### 10.3 Frozen (C25, C30)
 
 - **Detección**: además del monitoreo, `isNavValid()` y los batches leen `isBlocked(fund)` y pausas por token **on-chain como precondición** (C30).
-- **En Frozen**: (1) depósitos pendientes anulados con refund (el `QueueEscrow` no está bloqueado); (2) trading off; (3) **redención USDG-only** pro-rata del sleeve líquido con quema parcial proporcional; (4) in-kind por token, saltando los que reviertan (residual como claim); (5) valoración de activos bloqueados: último precio válido 72h → haircut progresivo → cero tras `adminBurn` observado; (6) **first-loss suspendido** (§6); (7) stake liberado tras distribuir el USDG recuperable. La `CompensationReserve` de períodos anteriores no está bloqueada: los claims ya adjudicados siguen pagándose.
+- **En Frozen**: (1) depósitos pendientes anulados con refund (el `QueueEscrow` no está bloqueado); (2) trading off; (3) **redención USDG-only** pro-rata del sleeve líquido con quema parcial proporcional; (4) in-kind por token, saltando los que reviertan (residual como claim); (5) valoración de activos bloqueados: último precio válido 72h → haircut progresivo → cero tras `adminBurn` observado; (6) **first-loss suspendido** (§6); (7) stake liberado tras distribuir el USDG recuperable. La `CompensationReserve` de períodos anteriores no está bloqueada: los claims ya adjudicados siguen pagándose. **Invariante (G15)**: el entrypoint de cobro de claims del Fund no depende de estado del fondo, NAV válido, atestación ni pausas — espejo de D12; un `whenNotFrozen` en esa ruta sería un bug de spec.
 - Disclosure permanente del riesgo emisor (block/burn/upgrade) por fondo.
 
 ## 11. Capa social (off-chain)
@@ -292,9 +294,9 @@ si no:  P_final = Pe   (HWM intacto)
 | `FundFactory` | Clones ERC-1167, registro global |
 | `Fund` | NAV, settlement, `NI` por LP, trading, estados |
 | `QueueEscrow` | **Separado**: USDG de depósitos pendientes y refunds (C11) |
-| `CompensationReserve` | **Separado**: funding de first-loss por período, claims pull por LP (§6) |
+| `CompensationReserve` | **Separado**: funding/claims por período con invariantes de caja; `sweep` del residuo solo en Closed con totalShares=0 (v0.9). Pagable en cualquier estado del fondo (§10.3) |
 | `FundShare` | ERC-20 no transferible (mint/burn solo por `Fund`) |
-| `StakeEscrow` | Stake por fondo, timelocks, suspensión en Frozen |
+| `StakeEscrow` | Stake por fondo; timelock + ventana de retiro, two-step release con gracia, slash solo→reserve — todo forzado en el escrow. La suspensión del first-loss en Frozen la aplica el Fund (no invoca slash) (G4) |
 | `TokenRegistry` | Activos + feed + `maxStaleness` calibrado (C26) + auto-suspensión por beacon (C29) |
 | `AdapterRegistry` + adapters | Venues whitelisteados, deltas, guardarraíl + presupuestos de slippage |
 | `NAVLib` | Valoración WAD + validez (§5.2) |
@@ -333,6 +335,7 @@ si no:  P_final = Pe   (HWM intacto)
 | `COMPLIANCE_GRACE` | 30 d | — | protocolo |
 | `STAKE_RELEASE_GRACE` | 30 d | — | protocolo |
 | `STAKE_WITHDRAW_TIMELOCK` | 7 d | — | protocolo |
+| `STAKE_WITHDRAW_EXECUTION_WINDOW` | 30 d | — | protocolo |
 | `COVERAGE_VESTING` | 1 × PERIOD | — | protocolo |
 | `minAccessShares` | por fondo | ≥ 0 | manager |
 | TTL atestación | 90 d | — | protocolo |

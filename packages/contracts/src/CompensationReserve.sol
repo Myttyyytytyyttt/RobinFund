@@ -4,14 +4,17 @@ pragma solidity ^0.8.26;
 import {IERC20} from "./interfaces/IERC20.sol";
 import {SafeTransferLib} from "./libraries/SafeTransferLib.sol";
 
-/// @title CompensationReserve — funding y claims pull del first-loss, por período (SPEC §6)
-/// @notice Contrato separado del Fund (§10.3: los claims ya adjudicados siguen pagándose aunque
-/// el Fund quede Frozen). Contabilidad mecánica: el Fund decide CUÁNTO se fondea (funding neteado
-/// exacto on-chain) y CUÁNTO cobra cada LP (claims con λ, materialización perezosa); este contrato
-/// hace cumplir los invariantes de caja:
-///  · `Σ pagado(período) ≤ fondeado(período)` — "Σ claims ≤ funding forzado por contrato" (§6)
-///  · el rollover (v0.7) solo mueve el no-pagado, y NUNCA hacia el manager
-///  · la caja total cubre siempre lo fondeado no pagado
+/// @title CompensationReserve — funding y claims pull del first-loss, por período (SPEC §6, rev. 1.2)
+/// @notice Contrato separado del Fund (§10.3: los claims ya adjudicados siguen pagándose en Frozen —
+/// el Fund bloqueado sigue pudiendo LLAMAR aunque sus tokens estén congelados). Invariantes de caja:
+///  · `Σ pagado(período) ≤ fondeado(período)` — forzado on-chain (§6)
+///  · el funding registrado debe estar respaldado por caja real
+///  · el residuo solo sale vía `sweep`, cuya única invocación legítima es el estado Closed del Fund
+///    con `totalShares == 0`: en ese punto todo LP ha materializado (el burn es un touch), así que
+///    `funded − paid` es PROVABLEMENTE inreclamable y vuelve al manager (política v0.9 — sustituye
+///    al rollover de v0.7, que era incomputable con claims perezosos; hallazgo G2 de la revisión).
+/// El destinatario de `pay` no se restringe (el manager puede ser LP legítimo); la honestidad de la
+/// materialización es responsabilidad del Fund (G10 — documentado, no exigible aquí).
 contract CompensationReserve {
     using SafeTransferLib for IERC20;
 
@@ -25,8 +28,9 @@ contract CompensationReserve {
 
     event PeriodFunded(uint64 indexed period, uint256 amount);
     event ClaimPaid(uint64 indexed period, address indexed lp, uint256 amount);
-    event RolledOver(uint64 indexed fromPeriod, uint64 indexed toPeriod, uint256 amount);
+    event ResidualSwept(uint64 indexed period, address indexed to, uint256 amount);
 
+    error ZeroAddress();
     error NotFund();
     error ExceedsFunding();
     error UnderCollateralized();
@@ -37,12 +41,14 @@ contract CompensationReserve {
     }
 
     constructor(address fund_, IERC20 usdg_) {
+        if (fund_ == address(0)) revert ZeroAddress();
+        if (address(usdg_).code.length == 0) revert ZeroAddress();
         FUND = fund_;
         USDG = usdg_;
     }
 
-    /// @notice Registra el funding de un settlement. El USDG llega directamente desde el
-    /// StakeEscrow (`slash(amount, reserve)`); este método exige que la caja lo respalde.
+    /// @notice Registra el funding de un settlement (el USDG llega del StakeEscrow.slash, que solo
+    /// puede pagar aquí). Exige que la caja respalde todo lo fondeado no pagado.
     function creditPeriod(uint64 period, uint256 amount) external onlyFund {
         funded[period] += amount;
         totalFunded += amount;
@@ -50,7 +56,7 @@ contract CompensationReserve {
         emit PeriodFunded(period, amount);
     }
 
-    /// @notice Paga un claim materializado por el Fund. Invariante: nunca más que el funding del período.
+    /// @notice Paga un claim materializado por el Fund. Nunca más que el funding del período.
     function pay(uint64 period, address lp, uint256 amount) external onlyFund {
         uint256 newPaid = paid[period] + amount;
         if (newPaid > funded[period]) revert ExceedsFunding();
@@ -60,15 +66,15 @@ contract CompensationReserve {
         emit ClaimPaid(period, lp, amount);
     }
 
-    /// @notice Rollover v0.7: el residuo no adjudicado de un período rueda como funding de otro
-    /// posterior — jamás vuelve al manager (anti colusión keeper-manager). La política de CUÁNTO
-    /// es seguro rodar (claims perezosos aún no materializados) vive en el Fund.
-    function rollover(uint64 fromPeriod, uint64 toPeriod, uint256 amount) external onlyFund {
-        if (toPeriod <= fromPeriod) revert ExceedsFunding();
-        if (amount > funded[fromPeriod] - paid[fromPeriod]) revert ExceedsFunding();
-        funded[fromPeriod] -= amount;
-        funded[toPeriod] += amount;
-        emit RolledOver(fromPeriod, toPeriod, amount);
+    /// @notice Barre el residuo de un período. Única invocación legítima: Closed con totalShares = 0
+    /// (residuo provablemente inreclamable → manager). La disciplina del call-site es del Fund y
+    /// debe cubrirse con un invariant test (SPEC §6 v0.9).
+    function sweep(uint64 period, address to) external onlyFund returns (uint256 amount) {
+        amount = funded[period] - paid[period];
+        paid[period] = funded[period];
+        totalPaid += amount;
+        USDG.safeTransfer(to, amount);
+        emit ResidualSwept(period, to, amount);
     }
 
     function unclaimed(uint64 period) external view returns (uint256) {

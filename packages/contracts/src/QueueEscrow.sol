@@ -19,6 +19,7 @@ contract QueueEscrow {
     event Released(address indexed to, uint256 amount);
 
     error NotFund();
+    error ZeroAddress();
 
     modifier onlyFund() {
         if (msg.sender != FUND) revert NotFund();
@@ -26,6 +27,8 @@ contract QueueEscrow {
     }
 
     constructor(address fund_, IERC20 usdg_) {
+        if (fund_ == address(0)) revert ZeroAddress();
+        if (address(usdg_).code.length == 0) revert ZeroAddress();
         FUND = fund_;
         USDG = usdg_;
     }
