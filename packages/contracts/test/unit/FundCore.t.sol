@@ -87,6 +87,7 @@ contract FundCoreTest is Test {
 
     function _seedFundWithTsla(uint256 tslaAmount) internal {
         tsla.mint(address(fund), tslaAmount);
+        vm.prank(keeper); // el adapter (1.4) registra; en 1.3a lo simula el keeper
         fund.registerAsset(address(tsla));
     }
 

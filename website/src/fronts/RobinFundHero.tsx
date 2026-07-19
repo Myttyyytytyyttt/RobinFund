@@ -1,4 +1,5 @@
 import { GooeyText } from '@/components/ui/gooey-text-morphing'
+import { MagneticButton } from '@/components/ui/magnetic-button'
 
 const VIDEO_URL =
   'https://d8j0ntlcm91z4.cloudfront.net/user_38xzZboKViGWJOttwIXH07lWA1P/hf_20260323_071151_38c3924f-c312-48af-a196-3fbb80e4226f.mp4'
@@ -117,10 +118,14 @@ export default function RobinFundHero() {
             Invest together. Real stocks, shared wins, protected losses.
           </p>
 
-          {/* CTA */}
-          <button className="animate-fade-rise-delay-2 mt-9 bg-gray-900 text-white rounded-full px-12 py-4 text-sm cursor-pointer transition-transform hover:scale-[1.03] active:scale-[0.97]">
-            Explore Funds
-          </button>
+          {/* CTA — magnet sutil (el fade-rise va en el wrapper: framer pisa el transform del mismo nodo) */}
+          <div className="animate-fade-rise-delay-2 mt-9">
+            <MagneticButton distance={0.25}>
+              <button className="bg-gray-900/90 text-white rounded-full px-12 py-4 text-sm cursor-pointer transition-transform hover:scale-[1.03] active:scale-[0.97]">
+                Explore Funds
+              </button>
+            </MagneticButton>
+          </div>
         </main>
 
         {/* Barra de stats */}

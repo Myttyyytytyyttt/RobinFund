@@ -20,10 +20,11 @@ import {CompensationReserve} from "./CompensationReserve.sol";
 /// los valora si se le transfieren); liquidación keeper-asistida de retiros cash (1.4 — un retiro
 /// cash solo ejecuta si el USDG del fondo lo cubre; el LP puede convertirlo a in-kind); mecánica
 /// Frozen completa y true-up al alza del collar in-kind (1.3b).
-/// FIX DE SPEC (v0.9.1, detectado aquí): el vesting reduce grossClaims pero la fórmula de funding
-/// no lo sabía — con cobertura parcial `grossClaims ≥ funding` era insatisfacible con datos
-/// honestos. Corregido: `funding = min(stake, neteado, grossClaims)` — el neteado sigue siendo el
-/// techo (inmunidad Sybil intacta) y λ ≤ 1 por construcción.
+/// FUNDING (§6, revisión 1.3a S3): `funding = min(stake, neteado)` — 100% on-chain y
+/// KEEPER-INDEPENDIENTE. El vesting per-LP hace que grossClaims (vesteado) < neteado (no vesteado),
+/// así que grossClaims NO puede gatear el funding (lo haría reducible por un keeper sub-declarante);
+/// vive solo en el reparto vía `λ = min(1, funding/grossClaims)`. El residuo (funding − Σ claims)
+/// queda en la reserva y se barre al manager en Closed (v0.9).
 contract Fund {
     using SafeTransferLib for IERC20;
 
@@ -239,7 +240,7 @@ contract Fund {
     // ---------- Materialización perezosa (§6) ----------
 
     /// @notice Entrypoint de cobro: SIN dependencias de estado/NAV/atestación/pausas (G15, espejo D12).
-    function claim() external {
+    function claim() external nonReentrant {
         _touch(msg.sender);
     }
 
@@ -276,7 +277,7 @@ contract Fund {
 
     // ---------- Colas (§5.3) ----------
 
-    function requestDeposit(uint256 amount6) external returns (uint256 orderId) {
+    function requestDeposit(uint256 amount6) external nonReentrant returns (uint256 orderId) {
         if (state != State.Active) revert WrongState();
         if (frozen) revert FrozenFund();
         if (!GATE.isEligible(msg.sender)) revert NotEligible();
@@ -293,14 +294,14 @@ contract Fund {
         emit DepositRequested(orderId, msg.sender, amount6);
     }
 
-    function cancelDeposit(uint256 orderId) external {
+    function cancelDeposit(uint256 orderId) external nonReentrant {
         DepositOrder storage o = depositQueue[orderId];
         if (o.lp != msg.sender || o.cancelled || orderId < depositHead) revert BadOrder();
         o.cancelled = true;
         _refundDeposit(orderId, o, "cancelada");
     }
 
-    function requestWithdraw(uint256 shares_, bool inKind) external returns (uint256 orderId) {
+    function requestWithdraw(uint256 shares_, bool inKind) external nonReentrant returns (uint256 orderId) {
         if (shares_ == 0) revert BelowMinimum();
         _touch(msg.sender);
         if (share.balanceOf(msg.sender) - lockedShares[msg.sender] < shares_) revert SharesLocked();
@@ -322,7 +323,7 @@ contract Fund {
     }
 
     /// @notice Cancelable solo hasta madurar el cooldown (C20).
-    function cancelWithdraw(uint256 orderId) external {
+    function cancelWithdraw(uint256 orderId) external nonReentrant {
         WithdrawOrder storage o = withdrawQueue[orderId];
         if (o.lp != msg.sender || o.cancelled || orderId < withdrawHead) revert BadOrder();
         if (block.timestamp >= o.requestTime + config.withdrawCooldown) revert CooldownActive();
@@ -343,7 +344,7 @@ contract Fund {
 
     /// @notice Ejecuta la secuencia canónica en una ventana válida: settlement si due →
     /// depósitos FIFO → retiros FIFO. Permissionless.
-    function executeBatch(uint256 grossClaimsWad) external {
+    function executeBatch(uint256 grossClaimsWad) external nonReentrant {
         // 1. settlement si está due (necesita grossClaims del keeper si lo llama el keeper;
         //    cualquier otro caller solo puede ejecutar batches si no hay settlement pendiente)
         if (block.timestamp >= settlementDue() && state != State.Closed) {
@@ -354,6 +355,37 @@ contract Fund {
         _executeDeposits(s);
         s = nav(); // los depósitos cambian el NAV (fee al fondo + USDG entrante)
         _executeWithdrawals(s);
+    }
+
+    /// @notice Procesa SOLO retiros in-kind, SIN requerir NAV válido (S4: válvula de escape §5.3/§10.3/
+    /// D12 — funciona con feed muerto, pausa, depeg o Frozen; el in-kind es pro-rata raw, no necesita
+    /// precio). Permissionless. Es la única salida garantizada cuando el fondo no tiene NAV válido.
+    function executeInKindWithdrawals() external nonReentrant {
+        uint48 cutoff = _freshnessCutoff();
+        uint256 processed;
+        // Sin NAV válido no hay precio de referencia fiable: el collar usa lastValidSharePrice.
+        uint256 priceRef = lastValidSharePriceWad;
+        bool overdue = block.timestamp >= settlementDue() && state != State.Closed;
+
+        while (withdrawHead < withdrawQueue.length && processed < MAX_ORDERS_PER_TX) {
+            WithdrawOrder storage o = withdrawQueue[withdrawHead];
+            if (o.cancelled) {
+                withdrawHead++;
+                continue;
+            }
+            if (!o.inKind) break; // el cash espera al batch normal; el in-kind no lo bloquea aquí
+            bool cooldownOver = block.timestamp >= o.requestTime + config.withdrawCooldown
+                || state == State.Winding || state == State.Closed;
+            // en Frozen/pausa el cooldown de un in-kind sigue aplicando salvo estados terminales;
+            // la frescura del cutoff no aplica al in-kind (no usa precio de mercado)
+            if (!cooldownOver) break;
+            overdue; // el overdue no bloquea el in-kind (es la válvula)
+            cutoff;
+            processed++;
+            _touch(o.lp);
+            _executeInKind(withdrawHead, o, priceRef);
+            withdrawHead++;
+        }
     }
 
     function _freshnessCutoff() internal view returns (uint48 cutoff) {
@@ -418,12 +450,16 @@ contract Fund {
             uint256 netWad = (uint256(o.amount6) - fee6) * USDG_TO_WAD;
             uint256 feeFondoWad = _entryFeeFondo6(fee6) * USDG_TO_WAD;
 
-            // fee-fondo sube el NAV y ajusta el HWM ANTES del mint (§5.4.iv, C4)
+            // fee-fondo sube el NAV y ajusta el HWM ANTES del mint (§5.4.iv, C4) — pero SOLO con LPs
+            // existentes a beneficiar. Con supply==0 no hay "LPs existentes": añadirlo al NAV pre-mint
+            // dispararía el precio seed contra el propio primer depositante (bug detectado en 1.3a).
+            // Con supply==0 el USDG del fee-fondo entra igual al fondo y respalda sus shares (justo:
+            // es el único holder), pero no se cuenta en el precio de su mint.
             uint256 supply = share.totalSupply();
             if (supply > 0 && feeFondoWad > 0) {
                 hwmWad += feeFondoWad * WAD / supply; // HWM += crédito por share (aporte, no performance)
+                navWad += feeFondoWad;
             }
-            navWad += feeFondoWad;
 
             uint256 price = _sharePrice(navWad);
             uint256 minted = netWad * WAD / price;
@@ -524,8 +560,7 @@ contract Fund {
             uint256 bal = IERC20(assets[i]).balanceOf(address(this));
             uint256 slice = bal * shares / supply;
             if (slice > 0) {
-                (address feed,) = REGISTRY.feedOf(assets[i]);
-                removedWad += _valueSliceWad(feed, slice);
+                removedWad += _valueSliceWad(REGISTRY.getAsset(assets[i]).feed, slice);
                 (bool ok,) = assets[i].call(abi.encodeCall(IERC20.transfer, (lp, slice)));
                 ok; // residual de tokens intransferibles: TODO 1.3b (claim in-kind)
             }
@@ -592,7 +627,7 @@ contract Fund {
 
     /// @notice El keeper publica grossClaims (WAD). Ejecutable en la primera ventana válida ≥ due;
     /// degradado pasados MAX_SETTLEMENT_DELAY sin ventana válida (§9).
-    function settle(uint256 grossClaimsWad) external {
+    function settle(uint256 grossClaimsWad) external nonReentrant {
         if (msg.sender != KEEPER) revert NotKeeper();
         if (block.timestamp < settlementDue()) revert NothingExecutable();
         _settle(grossClaimsWad);
@@ -721,7 +756,7 @@ contract Fund {
     }
 
     /// @notice Con totalShares == 0 todo claim ha materializado: residuo → manager (v0.9) y stake.
-    function finalizeClosure(uint64[] calldata periodsToSweep) external {
+    function finalizeClosure(uint64[] calldata periodsToSweep) external nonReentrant {
         if (state != State.Closed || share.totalSupply() != 0) revert WrongState();
         for (uint256 i; i < periodsToSweep.length; ++i) {
             reserve.sweep(periodsToSweep[i], MANAGER);
@@ -739,7 +774,7 @@ contract Fund {
 
     /// @notice Redención forzosa por compliance (§10.2): inelegible > 30 días ⇒ cualquiera la encola
     /// como retiro in-kind sin cooldown (burn normal: sin claim extra).
-    function forceRedeem(address lp) external {
+    function forceRedeem(address lp) external nonReentrant {
         uint48 since = GATE.ineligibleSince(lp);
         if (since == 0 || block.timestamp < since + COMPLIANCE_GRACE) revert StillEligible();
         _touch(lp);
@@ -770,10 +805,12 @@ contract Fund {
 
     // ---------- Activos ----------
 
-    /// @notice Registra un activo en la cartera (orden estricto ascendente, F13). Permissionless:
-    /// solo puede añadir activos listados que el fondo realmente posee — lo usará el adapter (1.4)
-    /// y permite valorar transferencias entrantes directas.
+    /// @notice Registra un activo en la cartera (orden estricto ascendente, F13). Restringido a
+    /// manager/keeper (S8: permissionless permitía inflar `assets[]` con polvo de muchos tokens hasta
+    /// hacer que los loops de NAV superaran el gas límite). Cap de longitud como backstop.
     function registerAsset(address token) external {
+        if (msg.sender != MANAGER && msg.sender != KEEPER) revert NotManager();
+        if (assets.length >= 32) revert BadOrder(); // cap de cartera (§10, backstop de gas)
         if (!REGISTRY.isActive(token) || IERC20(token).balanceOf(address(this)) == 0) revert BadOrder();
         uint256 n = assets.length;
         if (n > 0 && token <= assets[n - 1]) {
