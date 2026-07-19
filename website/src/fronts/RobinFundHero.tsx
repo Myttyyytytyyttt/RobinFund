@@ -140,11 +140,17 @@ export default function RobinFundHero() {
               transition: 'transform 350ms ease-out',
             }}
           >
-            {/* Siempre montado (preload); visible solo fuera del hero. Al terminar queda pausado en el último frame. */}
+            {/* Siempre montado (preload); visible solo fuera del hero. Al terminar queda pausado en el
+                último frame, y con el zoom de asentamiento entra un blur estilo iOS (30% ≈ 6px de ~20px
+                máx.) + saturación leve, para que el mockup flote sobre fondo esmerilado. */}
             <video
               ref={transVidRef}
-              className="absolute inset-0 w-full h-full object-cover transition-opacity duration-700"
-              style={{ opacity: showTransitionLayer ? 1 : 0 }}
+              className="absolute inset-0 w-full h-full object-cover"
+              style={{
+                opacity: showTransitionLayer ? 1 : 0,
+                filter: zoomed ? 'blur(6px) saturate(1.15)' : 'blur(0px) saturate(1)',
+                transition: 'opacity 700ms ease, filter 2000ms ease',
+              }}
               src={TRANSITION_VIDEO}
               preload="auto"
               muted
