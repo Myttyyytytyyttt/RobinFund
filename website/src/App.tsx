@@ -1,77 +1,70 @@
-import AnimatedHeading from './components/AnimatedHeading'
-import FadeIn from './components/FadeIn'
+import { useEffect, useState } from 'react'
+import VexHero from './fronts/VexHero'
+import ClubXHero from './fronts/ClubXHero'
 
-const VIDEO_URL =
-  'https://d8j0ntlcm91z4.cloudfront.net/user_38xzZboKViGWJOttwIXH07lWA1P/hf_20260403_050628_c4e32401-fab4-4a27-b7a8-6e9291cd5959.mp4'
+const FRONTS = {
+  vex: { title: 'VEX', component: VexHero },
+  clubx: { title: 'ClubX', component: ClubXHero },
+} as const
 
+type FrontKey = keyof typeof FRONTS
+const KEYS = Object.keys(FRONTS) as FrontKey[]
+
+function initialFront(): FrontKey {
+  const q = new URLSearchParams(window.location.search).get('front')
+  if (q && q in FRONTS) return q as FrontKey
+  const saved = localStorage.getItem('front')
+  if (saved && saved in FRONTS) return saved as FrontKey
+  return 'vex'
+}
+
+/**
+ * Shell de comparación de fronts: cambia con la tecla F, con el selector
+ * escondido (esquina inferior derecha, aparece al pasar el ratón) o por URL
+ * (?front=vex | ?front=clubx). La elección persiste en localStorage.
+ */
 export default function App() {
+  const [front, setFront] = useState<FrontKey>(initialFront)
+
+  useEffect(() => {
+    localStorage.setItem('front', front)
+    document.title = FRONTS[front].title
+  }, [front])
+
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key.toLowerCase() !== 'f') return
+      const target = e.target as HTMLElement | null
+      if (target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable)) return
+      setFront((f) => KEYS[(KEYS.indexOf(f) + 1) % KEYS.length])
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [])
+
+  const Front = FRONTS[front].component
+
   return (
-    <div className="relative min-h-screen bg-black text-white overflow-hidden">
-      {/* Vídeo de fondo a pantalla completa — sin overlay, sin dimming */}
-      <video
-        className="absolute inset-0 w-full h-full object-cover"
-        src={VIDEO_URL}
-        autoPlay
-        loop
-        muted
-        playsInline
-      />
+    <>
+      <Front key={front} />
 
-      <div className="relative z-10 flex flex-col min-h-screen">
-        {/* Navbar */}
-        <header className="px-6 md:px-12 lg:px-16 pt-6">
-          <nav className="liquid-glass rounded-xl px-4 py-2 flex items-center justify-between">
-            <span className="text-2xl font-semibold tracking-tight">VEX</span>
-            <div className="hidden md:flex items-center gap-8">
-              {['Story', 'Investing', 'Building', 'Advisory'].map((link) => (
-                <a key={link} href="#" className="text-sm hover:text-gray-300 transition-colors">
-                  {link}
-                </a>
-              ))}
-            </div>
-            <button className="bg-white text-black px-6 py-2 rounded-lg text-sm font-medium hover:bg-gray-100 transition-colors">
-              Start a Chat
+      {/* Selector escondido: invisible hasta hover; también tecla F */}
+      <div className="fixed bottom-3 right-3 z-50 opacity-0 hover:opacity-100 transition-opacity duration-200">
+        <div className="flex items-center gap-1 rounded-full bg-black/70 backdrop-blur-sm px-2 py-1.5 border border-white/20">
+          {KEYS.map((k) => (
+            <button
+              key={k}
+              onClick={() => setFront(k)}
+              className={`px-3 py-1 rounded-full text-xs cursor-pointer transition-colors ${
+                k === front ? 'bg-white text-black' : 'text-white/70 hover:text-white'
+              }`}
+            >
+              {FRONTS[k].title}
             </button>
-          </nav>
-        </header>
-
-        {/* Hero — contenido empujado al fondo del viewport */}
-        <main className="px-6 md:px-12 lg:px-16 flex-1 flex flex-col justify-end pb-12 lg:pb-16">
-          <div className="lg:grid lg:grid-cols-2 lg:items-end">
-            {/* Columna izquierda */}
-            <div>
-              <AnimatedHeading
-                text={'Shaping tomorrow\nwith vision and action.'}
-                className="text-4xl md:text-5xl lg:text-6xl xl:text-7xl font-normal mb-4"
-              />
-              <FadeIn delay={800} duration={1000}>
-                <p className="text-base md:text-lg text-gray-300 mb-5">
-                  We back visionaries and craft ventures that define what comes next.
-                </p>
-              </FadeIn>
-              <FadeIn delay={1200} duration={1000}>
-                <div className="flex flex-wrap gap-4">
-                  <button className="bg-white text-black px-8 py-3 rounded-lg font-medium hover:bg-gray-100 transition-colors">
-                    Start a Chat
-                  </button>
-                  <button className="liquid-glass border border-white/20 text-white px-8 py-3 rounded-lg font-medium hover:bg-white hover:text-black transition-colors">
-                    Explore Now
-                  </button>
-                </div>
-              </FadeIn>
-            </div>
-
-            {/* Columna derecha — tag */}
-            <FadeIn delay={1400} duration={1000} className="flex items-end justify-start lg:justify-end">
-              <div className="liquid-glass border border-white/20 px-6 py-3 rounded-xl mt-8 lg:mt-0">
-                <span className="text-lg md:text-xl lg:text-2xl font-light">
-                  Investing. Building. Advisory.
-                </span>
-              </div>
-            </FadeIn>
-          </div>
-        </main>
+          ))}
+          <span className="text-white/40 text-[10px] px-1 select-none">F</span>
+        </div>
       </div>
-    </div>
+    </>
   )
 }
