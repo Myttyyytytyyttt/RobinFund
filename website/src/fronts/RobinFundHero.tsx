@@ -3,10 +3,10 @@ const VIDEO_URL =
 
 const NAV_LINKS = [
   { label: 'Home', active: true },
-  { label: 'Studio', active: false },
-  { label: 'About', active: false },
-  { label: 'Journal', active: false },
-  { label: 'Reach Us', active: false },
+  { label: 'Funds', active: false },
+  { label: 'Managers', active: false },
+  { label: 'How it works', active: false },
+  { label: 'Docs', active: false },
 ]
 
 const AVATARS = [
@@ -17,14 +17,17 @@ const AVATARS = [
   'https://i.pravatar.cc/64?img=68',
 ]
 
+// Datos reales del proyecto (docs/SPEC.md): cap 25× por stake (§13 K_MAX),
+// 120+ países elegibles (emisor RHJ), mercados on-chain self-custody 24/7,
+// performance fee default 20% con high-water mark (§7.2/§13).
 const STATS = [
-  { value: '410+', label: 'Tech professionals' },
-  { value: '€11M', label: 'Invested' },
-  { value: '14', label: 'Deals made' },
-  { value: '2.5', label: 'Years on the market' },
+  { value: '120+', label: 'Eligible countries' },
+  { value: '24/7', label: 'Self-custody markets' },
+  { value: '25×', label: 'Fund cap per manager stake' },
+  { value: '20%', label: 'Performance fee, HWM-gated' },
 ]
 
-export default function ClubXHero() {
+export default function RobinFundHero() {
   return (
     <div
       className="relative min-h-screen overflow-hidden"
@@ -40,17 +43,17 @@ export default function ClubXHero() {
         playsInline
       />
 
-      {/* min-h-screen: el bottom-8 de la barra de stats debe anclar al fondo del viewport, no al del contenido */}
+      {/* min-h-screen: el bottom-8 de la barra de stats ancla al fondo del viewport */}
       <div className="relative z-10 min-h-screen">
         {/* Navegación */}
         <nav className="max-w-7xl mx-auto px-6 pt-6 flex items-center justify-between">
-          {/* Logo: círculo naranja-rojo con letra blanca estilizada */}
+          {/* Logo RobinFund */}
           <div
             className="h-10 w-10 rounded-full flex items-center justify-center select-none"
             style={{ background: 'linear-gradient(135deg, #ff6a3d 0%, #e6382b 100%)' }}
           >
             <span className="text-white font-bold text-lg" style={{ transform: 'skewX(-8deg)' }}>
-              X
+              R
             </span>
           </div>
 
@@ -69,7 +72,7 @@ export default function ClubXHero() {
           </div>
 
           <button className="bg-gray-900 text-white rounded-full px-6 py-2.5 text-sm cursor-pointer transition-transform hover:scale-[1.03] active:scale-[0.97]">
-            Begin Journey
+            Explore Funds
           </button>
         </nav>
 
@@ -82,27 +85,29 @@ export default function ClubXHero() {
                 <img
                   key={i}
                   src={src}
-                  alt={`Investor ${i + 1}`}
+                  alt={`Manager ${i + 1}`}
                   className="w-8 h-8 rounded-full border-2 border-white object-cover"
                 />
               ))}
             </div>
-            <span className="text-sm text-gray-800">400+ tech investors join the club. Join us!</span>
+            <span className="text-sm text-gray-800">
+              Top traders run social funds — backed by their own stake.
+            </span>
           </div>
 
-          {/* Headline */}
+          {/* Headline — la tesis del protocolo (SPEC D3) */}
           <h1 className="animate-fade-rise font-bold text-5xl sm:text-6xl md:text-[4.9rem] leading-[0.95] tracking-[-1.5px] text-gray-900 max-w-5xl">
-            Finance. Freedom. Fellows.
+            Stocks. Social. Skin in the game.
           </h1>
 
           {/* Subtexto */}
           <p className="animate-fade-rise-delay text-base sm:text-lg text-gray-800 max-w-2xl mt-6 leading-relaxed">
-            Private club of top tech investors.
+            Social funds on tokenized stocks. Your first losses come out of the manager's stake.
           </p>
 
           {/* CTA */}
           <button className="animate-fade-rise-delay-2 mt-9 bg-gray-900 text-white rounded-full px-12 py-4 text-sm cursor-pointer transition-transform hover:scale-[1.03] active:scale-[0.97]">
-            Begin Journey
+            Explore Funds
           </button>
         </main>
 

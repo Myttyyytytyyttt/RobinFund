@@ -1,19 +1,20 @@
 import { useEffect, useState } from 'react'
 import VexHero from './fronts/VexHero'
-import ClubXHero from './fronts/ClubXHero'
+import RobinFundHero from './fronts/RobinFundHero'
 
 const FRONTS = {
   vex: { title: 'VEX', component: VexHero },
-  clubx: { title: 'ClubX', component: ClubXHero },
+  robinfund: { title: 'RobinFund', component: RobinFundHero },
 } as const
 
 type FrontKey = keyof typeof FRONTS
 const KEYS = Object.keys(FRONTS) as FrontKey[]
 
 function initialFront(): FrontKey {
-  const q = new URLSearchParams(window.location.search).get('front')
+  const normalize = (v: string | null) => (v === 'clubx' ? 'robinfund' : v) // clave legacy
+  const q = normalize(new URLSearchParams(window.location.search).get('front'))
   if (q && q in FRONTS) return q as FrontKey
-  const saved = localStorage.getItem('front')
+  const saved = normalize(localStorage.getItem('front'))
   if (saved && saved in FRONTS) return saved as FrontKey
   return 'vex'
 }
