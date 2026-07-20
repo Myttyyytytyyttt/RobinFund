@@ -1,4 +1,5 @@
 import { createClient, type User } from '@supabase/supabase-js'
+import type { Database } from './database.types'
 
 const url = import.meta.env.VITE_SUPABASE_URL?.trim()
 const publishableKey = import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY?.trim()
@@ -6,14 +7,17 @@ const publishableKey = import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY?.trim()
 export const isSupabaseConfigured = Boolean(url && publishableKey)
 
 export type EthereumProvider = {
+  address: string
   request<T = unknown>(args: {
     method: string
-    params?: readonly unknown[] | Record<string, unknown>
+    params?: unknown
   }): Promise<T>
+  on(event: string, listener: (...args: unknown[]) => void): unknown
+  removeListener(event: string, listener: (...args: unknown[]) => void): unknown
 }
 
 const supabase = isSupabaseConfigured
-  ? createClient(url!, publishableKey!, {
+  ? createClient<Database>(url!, publishableKey!, {
       auth: {
         storageKey: 'nuvemfund.supabase.auth',
         persistSession: true,
@@ -27,7 +31,13 @@ const normalizeAddress = (address: string) => address.toLowerCase()
 
 function web3Address(user?: User | null): string | null {
   const identity = user?.identities?.find((candidate) => candidate.provider === 'web3')
-  const address = identity?.identity_data?.address
+  const customClaims = identity?.identity_data?.custom_claims
+  const address =
+    identity?.identity_data?.address ??
+    (typeof customClaims === 'object' && customClaims
+      ? (customClaims as Record<string, unknown>).address
+      : undefined) ??
+    (identity?.id?.startsWith('web3:ethereum:') ? identity.id.split(':')[2] : undefined)
   return typeof address === 'string' ? normalizeAddress(address) : null
 }
 

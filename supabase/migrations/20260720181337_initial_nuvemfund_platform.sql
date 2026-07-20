@@ -32,8 +32,10 @@ alter default privileges for role postgres in schema public
   revoke execute on functions from public, anon, authenticated, service_role;
 
 -- Derive the wallet from the immutable Web3 identity created by Supabase SIWE.
--- provider_id has the form web3:ethereum:<address>; identity_data.address is the
--- canonical address verified by Supabase Auth. Never trust editable user metadata.
+-- provider_id has the form web3:ethereum:<address>. GoTrue has moved the same
+-- address between identity_data.address and identity_data.custom_claims.address
+-- across releases, so provider_id is the stable source. Never trust editable
+-- user metadata.
 create or replace function app_private.current_web3_address()
 returns text
 language sql
@@ -41,11 +43,11 @@ stable
 security definer
 set search_path = ''
 as $$
-  select lower(identity.identity_data ->> 'address')
+  select lower(split_part(identity.provider_id, ':', 3))
   from auth.identities as identity
   where identity.user_id = (select auth.uid())
     and identity.provider = 'web3'
-    and identity.identity_data ->> 'chain' = 'ethereum'
+    and identity.provider_id ~ '^web3:ethereum:0x[0-9A-Fa-f]{40}$'
   order by identity.created_at asc
   limit 1
 $$;
@@ -303,13 +305,34 @@ create policy message_reactions_public_read
 on public.message_reactions
 for select
 to anon, authenticated
-using (true);
+using (
+  exists (
+    select 1
+    from public.messages as message
+    join public.fund_channels as channel
+      on channel.fund_address = message.fund_address
+    where message.id = message_reactions.message_id
+      and message.deleted_at is null
+      and channel.is_public
+  )
+);
 
 create policy message_reactions_insert_own
 on public.message_reactions
 for insert
 to authenticated
-with check (reactor_wallet = (select app_private.current_web3_address()));
+with check (
+  reactor_wallet = (select app_private.current_web3_address())
+  and exists (
+    select 1
+    from public.messages as message
+    join public.fund_channels as channel
+      on channel.fund_address = message.fund_address
+    where message.id = message_reactions.message_id
+      and message.deleted_at is null
+      and channel.is_public
+  )
+);
 
 create policy message_reactions_delete_own
 on public.message_reactions

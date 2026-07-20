@@ -1,30 +1,63 @@
 import { useEffect, useId, useMemo, useRef, useState, type MouseEvent } from 'react'
 import type { Profile } from '@/lib/profileStore'
+import {
+  loadPortfolio,
+  type PortfolioData,
+  type PortfolioPosition,
+} from '@/lib/portfolioStore'
 
 const ACCENT = '#6ee7b7'
 const LOSS = '#fca5a5'
 const PROFILE_BACKGROUND = '/ctavid2.mp4'
 
-type Position = {
-  fund: string
-  manager: string
-  invested: number
-  value: number
-  accent: string
-}
-
-// Mock data until the indexer-backed portfolio endpoint is connected.
-const MOCK_POSITIONS: Position[] = [
-  { fund: 'Alpine Alpha', manager: '@sofia.eth', invested: 5000, value: 6180, accent: '#6ee7b7' },
-  { fund: 'Momentum Seven', manager: '@kenji_t', invested: 3000, value: 3890, accent: '#bfdbfe' },
-  { fund: 'Blue Chip Basket', manager: '@marchetti', invested: 4000, value: 4110, accent: '#fde68a' },
-]
-
-const SERIES = [
+const DEMO_SERIES = [
   10000, 10120, 10080, 10250, 10400, 10310, 10180, 10420, 10680, 10590,
   10740, 11020, 10910, 11180, 11450, 11320, 11600, 11880, 11740, 12050,
   12310, 12180, 11990, 12420, 12680, 12540, 12900, 13210, 13080, 14180,
 ]
+
+const DEMO_POSITIONS: PortfolioPosition[] = [
+  {
+    fundAddress: '0x01', fund: 'Alpine Alpha', symbol: 'ALP', manager: '0x01',
+    managerLabel: '@sofia.eth', shares: 0n, invested: 5000, value: 6180,
+    pnl: 1180, pnlPct: 23.6, accent: '#6ee7b7',
+  },
+  {
+    fundAddress: '0x02', fund: 'Momentum Seven', symbol: 'M7', manager: '0x02',
+    managerLabel: '@kenji_t', shares: 0n, invested: 3000, value: 3890,
+    pnl: 890, pnlPct: 29.7, accent: '#bfdbfe',
+  },
+  {
+    fundAddress: '0x03', fund: 'Blue Chip Basket', symbol: 'BCB', manager: '0x03',
+    managerLabel: '@marchetti', shares: 0n, invested: 4000, value: 4110,
+    pnl: 110, pnlPct: 2.8, accent: '#fde68a',
+  },
+]
+
+const DEMO_PORTFOLIO: PortfolioData = {
+  positions: DEMO_POSITIONS,
+  invested: 12000,
+  value: 14180,
+  pnl: 2180,
+  pnlPct: 18.2,
+  series: DEMO_SERIES,
+  seriesLabels: DEMO_SERIES.map((_, index) => {
+    const daysAgo = DEMO_SERIES.length - 1 - index
+    return daysAgo === 0 ? 'Today' : `${daysAgo}d ago`
+  }),
+  hasIndexedHistory: true,
+}
+
+const EMPTY_PORTFOLIO: PortfolioData = {
+  positions: [],
+  invested: 0,
+  value: 0,
+  pnl: 0,
+  pnlPct: 0,
+  series: [0, 0],
+  seriesLabels: ['Now', 'Now'],
+  hasIndexedHistory: false,
+}
 
 const fmtUsd = (value: number) =>
   `$${value.toLocaleString('en-US', { maximumFractionDigits: 0 })}`
@@ -33,27 +66,56 @@ const fmtPct = (value: number) => `${value >= 0 ? '+' : ''}${value.toFixed(1)}%`
 
 const shortAddress = (address: string) => `${address.slice(0, 6)}...${address.slice(-4)}`
 
-function dayLabel(index: number, total: number) {
-  const daysAgo = total - 1 - index
-  return daysAgo === 0 ? 'Today' : `${daysAgo}d ago`
-}
-
 export default function ProfileView({
   profile,
   avatarUrl,
   onClose,
   onConnectTwitter,
+  previewData = false,
 }: {
   profile: Profile
   avatarUrl?: string | null
   onClose: () => void
   onConnectTwitter?: () => unknown
+  previewData?: boolean
 }) {
   const [parallax, setParallax] = useState({ x: 0, y: 0 })
-  const invested = MOCK_POSITIONS.reduce((sum, position) => sum + position.invested, 0)
-  const value = MOCK_POSITIONS.reduce((sum, position) => sum + position.value, 0)
-  const pnl = value - invested
-  const pnlPct = (pnl / invested) * 100
+  const [portfolio, setPortfolio] = useState<PortfolioData>(
+    previewData ? DEMO_PORTFOLIO : EMPTY_PORTFOLIO,
+  )
+  const [portfolioStatus, setPortfolioStatus] = useState<'loading' | 'ready' | 'error'>(
+    previewData ? 'ready' : 'loading',
+  )
+
+  const { positions, invested, value, pnl, pnlPct, series, seriesLabels } = portfolio
+  const trajectoryPct = series[0] === 0 ? 0 : ((series[series.length - 1] - series[0]) / series[0]) * 100
+
+  useEffect(() => {
+    if (previewData) {
+      setPortfolio(DEMO_PORTFOLIO)
+      setPortfolioStatus('ready')
+      return
+    }
+
+    let cancelled = false
+    setPortfolio(EMPTY_PORTFOLIO)
+    setPortfolioStatus('loading')
+    loadPortfolio(profile.address)
+      .then((nextPortfolio) => {
+        if (cancelled) return
+        setPortfolio(nextPortfolio)
+        setPortfolioStatus('ready')
+      })
+      .catch(() => {
+        if (cancelled) return
+        setPortfolio(EMPTY_PORTFOLIO)
+        setPortfolioStatus('error')
+      })
+
+    return () => {
+      cancelled = true
+    }
+  }, [previewData, profile.address])
 
   useEffect(() => {
     const onEscape = (event: KeyboardEvent) => event.key === 'Escape' && onClose()
@@ -144,16 +206,16 @@ export default function ProfileView({
                   </div>
                   <div className="flex items-baseline gap-3">
                     <span className="text-3xl sm:text-4xl font-light tracking-[-0.04em]">{fmtUsd(value)}</span>
-                    <span className="text-sm font-medium" style={{ color: ACCENT }}>
-                      {fmtPct(((SERIES[SERIES.length - 1] - SERIES[0]) / SERIES[0]) * 100)}
+                    <span className="text-sm font-medium" style={{ color: trajectoryPct >= 0 ? ACCENT : LOSS }}>
+                      {fmtPct(trajectoryPct)}
                     </span>
                   </div>
                 </div>
                 <div className="self-start sm:self-auto rounded-full bg-white/10 border border-white/10 px-3 py-1.5 text-white/60 text-xs">
-                  Last 30 days
+                  {portfolio.hasIndexedHistory ? 'Indexed history' : 'Latest indexed NAV'}
                 </div>
               </div>
-              <AreaChart data={SERIES} accent={ACCENT} />
+              <AreaChart data={series} labels={seriesLabels} accent={ACCENT} />
               <div className="flex items-center gap-2 mt-4 pt-4 border-t border-white/10 text-xs text-white/45">
                 <span className="w-1.5 h-1.5 rounded-full bg-emerald-300" />
                 Wallet positions valued at the latest indexed NAV.
@@ -167,14 +229,21 @@ export default function ProfileView({
                   <h2 className="text-xl font-semibold tracking-[-0.025em]">Your positions</h2>
                 </div>
                 <span className="rounded-full bg-white/10 border border-white/10 px-3 py-1 text-xs text-white/65">
-                  {MOCK_POSITIONS.length} active
+                  {positions.length} active
                 </span>
               </div>
 
               <div className="space-y-3">
-                {MOCK_POSITIONS.map((position) => (
-                  <VaultPosition key={position.fund} position={position} />
+                {positions.map((position) => (
+                  <VaultPosition key={position.fundAddress} position={position} />
                 ))}
+                {portfolioStatus === 'loading' && <PortfolioNotice>Loading indexed positions...</PortfolioNotice>}
+                {portfolioStatus === 'error' && (
+                  <PortfolioNotice>The indexer is unavailable. No simulated balances are shown.</PortfolioNotice>
+                )}
+                {portfolioStatus === 'ready' && positions.length === 0 && (
+                  <PortfolioNotice>This wallet has no active fund positions yet.</PortfolioNotice>
+                )}
               </div>
 
               <button
@@ -187,7 +256,11 @@ export default function ProfileView({
           </div>
 
           <p className="animate-fade-rise-delay-2 text-center text-white/40 text-xs mt-6">
-            Preview data. Live positions will be supplied by the Neverless indexer.
+            {previewData
+              ? 'Design preview. Financial values on this screen are simulated.'
+              : portfolioStatus === 'error'
+                ? 'Could not refresh the NuvemFund indexer. Financial values remain hidden.'
+                : 'Live positions valued from the NuvemFund indexer and latest settled NAV.'}
           </p>
         </main>
       </div>
@@ -325,9 +398,7 @@ function PortfolioMetric({
   )
 }
 
-function VaultPosition({ position }: { position: Position }) {
-  const performance = ((position.value - position.invested) / position.invested) * 100
-
+function VaultPosition({ position }: { position: PortfolioPosition }) {
   return (
     <button
       type="button"
@@ -338,19 +409,16 @@ function VaultPosition({ position }: { position: Position }) {
           className="w-10 h-10 rounded-full border border-white/20 flex items-center justify-center font-semibold text-sm text-gray-950 shrink-0"
           style={{ backgroundColor: position.accent }}
         >
-          {position.fund
-            .split(' ')
-            .map((word) => word[0])
-            .join('')}
+          {position.symbol.slice(0, 3).toUpperCase()}
         </div>
         <div className="min-w-0">
           <div className="font-medium truncate">{position.fund}</div>
-          <div className="text-white/45 text-xs mt-0.5">{position.manager}</div>
+          <div className="text-white/45 text-xs mt-0.5">{position.managerLabel}</div>
         </div>
         <div className="ml-auto text-right shrink-0">
           <div className="font-medium">{fmtUsd(position.value)}</div>
-          <div className="text-xs mt-0.5" style={{ color: performance >= 0 ? ACCENT : LOSS }}>
-            {fmtPct(performance)}
+          <div className="text-xs mt-0.5" style={{ color: position.pnlPct >= 0 ? ACCENT : LOSS }}>
+            {fmtPct(position.pnlPct)}
           </div>
         </div>
       </div>
@@ -362,7 +430,25 @@ function VaultPosition({ position }: { position: Position }) {
   )
 }
 
-function AreaChart({ data, accent, height = 272 }: { data: number[]; accent: string; height?: number }) {
+function PortfolioNotice({ children }: { children: string }) {
+  return (
+    <div className="rounded-2xl border border-dashed border-white/15 bg-white/[0.04] px-4 py-8 text-center text-sm text-white/50">
+      {children}
+    </div>
+  )
+}
+
+function AreaChart({
+  data,
+  labels,
+  accent,
+  height = 272,
+}: {
+  data: number[]
+  labels: string[]
+  accent: string
+  height?: number
+}) {
   const wrapRef = useRef<HTMLDivElement>(null)
   const gradientId = useId().replace(/:/g, '')
   const [width, setWidth] = useState(720)
@@ -417,7 +503,7 @@ function AreaChart({ data, accent, height = 272 }: { data: number[]; accent: str
         width={width}
         height={height}
         role="img"
-        aria-label="Portfolio value over the last 30 days"
+        aria-label="Indexed portfolio value over time"
         onMouseMove={onMove}
         onMouseLeave={() => setHover(null)}
       >
@@ -465,7 +551,7 @@ function AreaChart({ data, accent, height = 272 }: { data: number[]; accent: str
             fontSize="10"
             fill="rgba(255,255,255,0.42)"
           >
-            {dayLabel(index, data.length)}
+            {labels[index] ?? 'Indexed'}
           </text>
         ))}
 
@@ -493,7 +579,7 @@ function AreaChart({ data, accent, height = 272 }: { data: number[]; accent: str
           }}
         >
           <div className="text-white font-medium">{fmtUsd(data[hover])}</div>
-          <div className="text-white/50">{dayLabel(hover, data.length)}</div>
+          <div className="text-white/50">{labels[hover] ?? 'Indexed'}</div>
         </div>
       )}
     </div>

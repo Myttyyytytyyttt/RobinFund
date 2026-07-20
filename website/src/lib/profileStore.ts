@@ -12,6 +12,7 @@ import {
   signOutSupabase,
   type EthereumProvider,
 } from './supabase'
+import type { Database } from './database.types'
 
 export type Profile = {
   address: string
@@ -37,13 +38,10 @@ function writeAll(all: Record<string, Profile>) {
 
 const norm = (address: string) => address.toLowerCase()
 
-type ProfileRow = {
-  wallet_address: string
-  username: string
-  twitter_username: string | null
-  twitter_verified: boolean
-  created_at: string
-}
+type ProfileRow = Pick<
+  Database['public']['Tables']['profiles']['Row'],
+  'wallet_address' | 'username' | 'twitter_username' | 'twitter_verified' | 'created_at'
+>
 
 function fromRow(row: ProfileRow): Profile {
   return {
@@ -60,15 +58,23 @@ function normalizeTwitter(twitter?: string): string | undefined {
   return value || undefined
 }
 
-function saveLocal(address: string, data: { username: string; twitter?: string }): Profile {
+function saveLocal(
+  address: string,
+  data: {
+    username: string
+    twitter?: string
+    twitterVerified?: boolean
+    createdAt?: number
+  },
+): Profile {
   const all = readAll()
   const key = norm(address)
   const profile: Profile = {
     address: key,
     username: data.username.trim(),
     twitter: normalizeTwitter(data.twitter),
-    twitterVerified: all[key]?.twitterVerified ?? false,
-    createdAt: all[key]?.createdAt ?? Date.now(),
+    twitterVerified: data.twitterVerified ?? all[key]?.twitterVerified ?? false,
+    createdAt: data.createdAt ?? all[key]?.createdAt ?? Date.now(),
   }
   all[key] = profile
   writeAll(all)

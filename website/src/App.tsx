@@ -56,6 +56,7 @@ export default function App() {
         <ProfileView
           profile={{ address: '0x1234abcd5678ef901234abcd5678ef901234abcd', username: 'mytyty', twitter: 'mytyty', createdAt: Date.now() }}
           onClose={() => { window.location.search = '' }}
+          previewData
         />
       )}
 

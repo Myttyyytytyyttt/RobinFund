@@ -1,6 +1,7 @@
-import { useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { usePrivy, useLogin, useWallets } from '@privy-io/react-auth'
 import { profileStore, validateUsername, type Profile } from '@/lib/profileStore'
+import type { EthereumProvider } from '@/lib/supabase'
 import ProfileView from './ProfileView'
 
 const short = (addr?: string) => (addr ? `${addr.slice(0, 6)}…${addr.slice(-4)}` : '')
@@ -30,6 +31,19 @@ export default function WalletButton() {
   const { wallets } = useWallets()
   const injected = wallets.find((w) => w.walletClientType !== 'privy')
   const activeAddr = injected?.address
+  const profileWallet = wallets.find(
+    (wallet) => wallet.address.toLowerCase() === address?.toLowerCase(),
+  )
+  const getProfileProvider = useCallback(async (): Promise<EthereumProvider> => {
+    if (!profileWallet) throw new Error('The wallet used to sign in is not connected.')
+    const provider = await profileWallet.getEthereumProvider()
+    return {
+      address: profileWallet.address,
+      request: provider.request.bind(provider),
+      on: provider.on.bind(provider),
+      removeListener: provider.removeListener.bind(provider),
+    } as EthereumProvider
+  }, [profileWallet])
   const walletMismatch =
     authenticated && !!activeAddr && !!address && activeAddr.toLowerCase() !== address.toLowerCase()
 
@@ -37,9 +51,16 @@ export default function WalletButton() {
   const [showReg, setShowReg] = useState(false)
   const [firstTime, setFirstTime] = useState(false)
 
-  // Cargar el perfil local cuando cambia la wallet conectada
+  // Pinta la caché primero y reconcilia después con el perfil cross-device.
   useEffect(() => {
+    let cancelled = false
     setProfile(profileStore.get(address))
+    void profileStore.load(address).then((loaded) => {
+      if (!cancelled) setProfile(loaded)
+    })
+    return () => {
+      cancelled = true
+    }
   }, [address])
 
   // Privy is the source of truth for the linked X account. When OAuth finishes
@@ -53,7 +74,23 @@ export default function WalletButton() {
       !twitter ||
       profile.twitter === twitter
     ) return
-    setProfile(profileStore.save(address, { username: profile.username, twitter }))
+    const next = profileStore.saveLocal(address, { username: profile.username, twitter })
+    setProfile(next)
+    let cancelled = false
+    void profileStore
+      .saveIfAuthenticated(address, { username: profile.username, twitter })
+      .then((saved) => {
+        if (!cancelled) setProfile(saved)
+      })
+      .catch((error: unknown) => {
+        console.warn(
+          'NuvemFund X sync will retry after the next authenticated profile write.',
+          error instanceof Error ? error.message : error,
+        )
+      })
+    return () => {
+      cancelled = true
+    }
   }, [address, profile?.address, profile?.twitter, profile?.username, user?.twitter?.username])
 
   // Abre el registro tras el login SOLO si aún no tiene username guardado.
@@ -63,10 +100,13 @@ export default function WalletButton() {
       const addr = user?.wallet?.address
       const existing = profileStore.get(addr)
       setProfile(existing)
-      if (!existing) {
-        setFirstTime(isNewUser)
-        setShowReg(true)
-      }
+      void profileStore.load(addr).then((loaded) => {
+        setProfile(loaded)
+        if (!loaded) {
+          setFirstTime(isNewUser)
+          setShowReg(true)
+        }
+      })
     },
   })
 
@@ -74,7 +114,7 @@ export default function WalletButton() {
   // logout + login: la sesión de Privy pertenece a la wallet que firmó; no es
   // transferible, así que la nueva cuenta debe firmar su propio login.
   const switchToActive = async () => {
-    await logout()
+    await Promise.allSettled([logout(), profileStore.signOut()])
     setProfile(null)
     login()
   }
@@ -125,6 +165,9 @@ export default function WalletButton() {
             address={address!}
             currentTwitter={user?.twitter?.username ?? undefined}
             onLinkTwitter={linkTwitter}
+            onSave={async (data) =>
+              profileStore.save(address!, data, await getProfileProvider())
+            }
             onDone={(p) => {
               setProfile(p)
               setShowReg(false)
@@ -174,7 +217,8 @@ export default function WalletButton() {
           <button
             onClick={() => {
               setMenuOpen(false)
-              logout()
+              setProfile(null)
+              void Promise.allSettled([logout(), profileStore.signOut()])
             }}
             className="w-full flex items-center gap-2.5 px-4 py-2.5 text-sm text-red-300/90 hover:bg-white/5 cursor-pointer transition-colors"
           >
@@ -203,6 +247,7 @@ function RegisterModal({
   address,
   currentTwitter,
   onLinkTwitter,
+  onSave,
   onDone,
   onCancel,
 }: {
@@ -210,12 +255,15 @@ function RegisterModal({
   address: string
   currentTwitter?: string
   onLinkTwitter: () => unknown
+  onSave: (data: { username: string; twitter?: string }) => Promise<Profile>
   onDone: (p: Profile) => void
   onCancel: () => void
 }) {
   const [username, setUsername] = useState('')
   const [twitter, setTwitter] = useState<string | undefined>(currentTwitter)
   const [twitterErr, setTwitterErr] = useState<string | null>(null)
+  const [saving, setSaving] = useState(false)
+  const [saveErr, setSaveErr] = useState<string | null>(null)
   const err = username ? validateUsername(username) : null
   const valid = !err && username.trim().length >= 3
 
@@ -234,6 +282,19 @@ function RegisterModal({
   useEffect(() => {
     if (currentTwitter) setTwitter(currentTwitter)
   }, [currentTwitter])
+
+  const save = async () => {
+    if (!valid || saving) return
+    setSaveErr(null)
+    setSaving(true)
+    try {
+      onDone(await onSave({ username: username.trim(), twitter }))
+    } catch (error) {
+      setSaveErr(error instanceof Error ? error.message : 'Profile could not be saved.')
+    } finally {
+      setSaving(false)
+    }
+  }
 
   return (
     <div className="fixed inset-0 z-[70] flex items-center justify-center p-4">
@@ -283,6 +344,7 @@ function RegisterModal({
           </button>
         )}
         {twitterErr && <div className="text-xs text-amber-300/80 mt-1">{twitterErr}</div>}
+        {saveErr && <div className="text-xs text-red-300 mt-3">{saveErr}</div>}
 
         {/* Acciones */}
         <div className="flex gap-3 mt-7">
@@ -293,11 +355,11 @@ function RegisterModal({
             Later
           </button>
           <button
-            disabled={!valid}
-            onClick={() => onDone(profileStore.save(address, { username: username.trim(), twitter }))}
+            disabled={!valid || saving}
+            onClick={() => void save()}
             className="flex-1 rounded-full bg-white text-gray-900 font-medium py-2.5 text-sm cursor-pointer transition-transform enabled:hover:scale-[1.02] disabled:opacity-40 disabled:cursor-not-allowed"
           >
-            Create profile
+            {saving ? 'Securing profile…' : 'Create profile'}
           </button>
         </div>
       </div>
