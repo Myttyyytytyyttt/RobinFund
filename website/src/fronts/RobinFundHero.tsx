@@ -14,13 +14,8 @@ const NAV_LINKS = [
   { label: 'Docs', active: false },
 ]
 
-const AVATARS = [
-  'https://i.pravatar.cc/64?img=12',
-  'https://i.pravatar.cc/64?img=32',
-  'https://i.pravatar.cc/64?img=45',
-  'https://i.pravatar.cc/64?img=5',
-  'https://i.pravatar.cc/64?img=68',
-]
+// Avatares locales (website/public/twitter1..5.jpg)
+const AVATARS = ['/twitter1.jpg', '/twitter2.jpg', '/twitter3.jpg', '/twitter4.jpg', '/twitter5.jpg']
 
 // Palabras de largo casi idéntico para que el titular centrado no "baile" al mutar
 const MORPH_WORDS = ['Fellows.', 'Fortune.', 'Future.', 'Family.']
