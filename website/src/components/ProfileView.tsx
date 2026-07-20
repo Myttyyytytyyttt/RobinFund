@@ -38,7 +38,15 @@ function dayLabel(index: number, total: number) {
   return daysAgo === 0 ? 'Today' : `${daysAgo}d ago`
 }
 
-export default function ProfileView({ profile, onClose }: { profile: Profile; onClose: () => void }) {
+export default function ProfileView({
+  profile,
+  onClose,
+  onConnectTwitter,
+}: {
+  profile: Profile
+  onClose: () => void
+  onConnectTwitter?: () => unknown
+}) {
   const [parallax, setParallax] = useState({ x: 0, y: 0 })
   const invested = MOCK_POSITIONS.reduce((sum, position) => sum + position.invested, 0)
   const value = MOCK_POSITIONS.reduce((sum, position) => sum + position.value, 0)
@@ -108,13 +116,8 @@ export default function ProfileView({ profile, onClose }: { profile: Profile; on
                   </h1>
                   <div className="flex flex-wrap items-center gap-x-2 gap-y-1 mt-1 text-white/55 text-xs">
                     <span className="font-mono">{shortAddress(profile.address)}</span>
-                    {profile.twitter && (
-                      <>
-                        <span className="text-white/25">/</span>
-                        <span className="text-white/75">X @{profile.twitter}</span>
-                      </>
-                    )}
                   </div>
+                  <TwitterIdentityPill username={profile.twitter} onConnect={onConnectTwitter} />
                 </div>
               </div>
 
@@ -189,6 +192,60 @@ export default function ProfileView({ profile, onClose }: { profile: Profile; on
         </main>
       </div>
     </div>
+  )
+}
+
+function TwitterIdentityPill({
+  username,
+  onConnect,
+}: {
+  username?: string
+  onConnect?: () => unknown
+}) {
+  const [isConnecting, setIsConnecting] = useState(false)
+  const [connectError, setConnectError] = useState(false)
+
+  if (username) {
+    return (
+      <span className="mt-2 inline-flex h-7 items-center gap-1.5 rounded-full bg-[#1d9bf0] px-3 text-[11px] font-medium text-white shadow-[0_6px_18px_rgba(29,155,240,0.2)]">
+        <XMark />
+        @{username}
+      </span>
+    )
+  }
+
+  const connect = async () => {
+    if (!onConnect || isConnecting) return
+    setConnectError(false)
+    setIsConnecting(true)
+    try {
+      await Promise.resolve(onConnect())
+    } catch {
+      setConnectError(true)
+    } finally {
+      setIsConnecting(false)
+    }
+  }
+
+  return (
+    <button
+      type="button"
+      onClick={connect}
+      disabled={!onConnect || isConnecting}
+      title={connectError ? 'X could not be connected. Try again.' : 'Connect your X account'}
+      className="mt-2 inline-flex h-7 items-center gap-1.5 rounded-full bg-[#1d9bf0] px-3 text-[11px] font-medium text-white shadow-[0_6px_18px_rgba(29,155,240,0.2)] cursor-pointer transition-all hover:bg-[#168bd5] hover:scale-[1.02] active:scale-[0.98] disabled:cursor-wait disabled:opacity-70 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#7cc8f8] focus-visible:ring-offset-2 focus-visible:ring-offset-[#2b302c]"
+    >
+      <XMark />
+      {isConnecting ? 'Connecting...' : connectError ? 'Retry X' : 'Connect X'}
+    </button>
+  )
+}
+
+function XMark() {
+  return (
+    <svg viewBox="0 0 24 24" aria-hidden="true" className="h-3 w-3" fill="currentColor">
+      <path d="M18.9 2H22l-6.8 7.8L23.2 22h-6.3l-4.9-6.4L6.4 22H3.2l7.3-8.3L2.8 2h6.4l4.4 5.9L18.9 2zm-1.1 18h1.7L7.6 3.9H5.8L17.8 20z" />
+    </svg>
   )
 }
 

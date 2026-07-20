@@ -41,6 +41,20 @@ export default function WalletButton() {
     setProfile(profileStore.get(address))
   }, [address])
 
+  // Privy is the source of truth for the linked X account. When OAuth finishes
+  // (or an existing Privy user returns), mirror the handle into our app profile.
+  useEffect(() => {
+    const twitter = user?.twitter?.username
+    if (
+      !address ||
+      !profile ||
+      profile.address.toLowerCase() !== address.toLowerCase() ||
+      !twitter ||
+      profile.twitter === twitter
+    ) return
+    setProfile(profileStore.save(address, { username: profile.username, twitter }))
+  }, [address, profile?.address, profile?.twitter, profile?.username, user?.twitter?.username])
+
   // Abre el registro tras el login SOLO si aún no tiene username guardado.
   // `isNewUser` de Privy es la señal cross-device de "¿ya estuvo aquí?".
   const { login } = useLogin({
@@ -171,7 +185,13 @@ export default function WalletButton() {
         </div>
       )}
 
-      {showProfile && <ProfileView profile={profile} onClose={() => setShowProfile(false)} />}
+      {showProfile && (
+        <ProfileView
+          profile={profile}
+          onClose={() => setShowProfile(false)}
+          onConnectTwitter={linkTwitter}
+        />
+      )}
     </div>
   )
 }
