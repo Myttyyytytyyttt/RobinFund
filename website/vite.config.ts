@@ -9,4 +9,8 @@ export default defineConfig({
       '@': path.resolve(__dirname, './src'),
     },
   },
+  server: {
+    // Permite importar los .md reales de ../docs como ?raw (fuente única de verdad)
+    fs: { allow: [path.resolve(__dirname, '..')] },
+  },
 })

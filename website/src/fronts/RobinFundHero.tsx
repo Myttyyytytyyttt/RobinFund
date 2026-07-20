@@ -1,7 +1,10 @@
-import { useEffect, useRef, useState } from 'react'
+import { lazy, Suspense, useEffect, useRef, useState } from 'react'
 import { GooeyText } from '@/components/ui/gooey-text-morphing'
 import { MagneticButton } from '@/components/ui/magnetic-button'
 import ConnectButton from '@/components/ConnectButton'
+
+// Visor de docs lazy: el markdown + react-markdown solo cargan al abrir Docs
+const DocsView = lazy(() => import('@/components/DocsView'))
 
 const VIDEO_URL =
   'https://d8j0ntlcm91z4.cloudfront.net/user_38xzZboKViGWJOttwIXH07lWA1P/hf_20260323_071151_38c3924f-c312-48af-a196-3fbb80e4226f.mp4'
@@ -218,6 +221,7 @@ export default function RobinFundHero() {
   const [zoomed, setZoomed] = useState(false)
   const [blurPulse, setBlurPulse] = useState(false)
   const [par, setPar] = useState({ x: 0, y: 0 })
+  const [showDocs, setShowDocs] = useState(false)
   const transVidRef = useRef<HTMLVideoElement>(null)
   const phaseRef = useRef<Phase>('hero')
 
@@ -365,7 +369,8 @@ export default function RobinFundHero() {
                     href="#"
                     onClick={(e) => {
                       e.preventDefault()
-                      if (target) startTransition(target)
+                      if (label === 'Docs') setShowDocs(true)
+                      else if (target) startTransition(target)
                     }}
                     className={`text-sm transition-colors ${
                       active ? 'text-gray-900 font-medium' : 'text-gray-600 hover:text-gray-900'
@@ -623,6 +628,19 @@ export default function RobinFundHero() {
             )}
           </main>
         </div>
+      )}
+
+      {/* ---------- DOCS (overlay, lazy) ---------- */}
+      {showDocs && (
+        <Suspense
+          fallback={
+            <div className="fixed inset-0 z-[60] bg-[#0d1b24] flex items-center justify-center text-white/60 text-sm">
+              Loading docs…
+            </div>
+          }
+        >
+          <DocsView onClose={() => setShowDocs(false)} />
+        </Suspense>
       )}
     </div>
   )
