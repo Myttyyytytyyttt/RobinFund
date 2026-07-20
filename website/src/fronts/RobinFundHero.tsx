@@ -351,15 +351,12 @@ export default function RobinFundHero() {
         >
           <nav className="max-w-7xl mx-auto px-6 pt-6 flex items-center justify-between">
             {/* Logo Neverless */}
-            <div className="flex items-center gap-2 select-none">
-              <img
-                src="/logo.png"
-                alt="Neverless"
-                className="h-8 w-auto"
-                style={{ filter: 'drop-shadow(0 1px 3px rgba(0,0,0,0.25))' }}
-              />
-              <span className="font-semibold text-lg tracking-tight text-gray-900">Neverless</span>
-            </div>
+            <img
+              src="/logo.png"
+              alt="Neverless"
+              className="h-9 w-auto select-none"
+              style={{ filter: 'drop-shadow(0 1px 3px rgba(0,0,0,0.25))' }}
+            />
 
             <div className="hidden md:flex items-center gap-8">
               {NAV_LINKS.map(({ label, active }) => {

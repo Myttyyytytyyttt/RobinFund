@@ -18,9 +18,8 @@ type Heading = { level: 2 | 3; text: string; slug: string }
 const PAGE_META: Record<string, string> = {
   'SPEC.md': 'Protocol Spec',
   'ROADMAP.md': 'Build Roadmap',
-  'REVIEW.md': 'Security Review',
 }
-const PAGE_ORDER = ['SPEC.md', 'ROADMAP.md', 'REVIEW.md']
+const PAGE_ORDER = ['SPEC.md', 'ROADMAP.md']
 
 function slugify(text: string): string {
   return text
@@ -284,6 +283,10 @@ export default function DocsView({ onClose }: { onClose: () => void }) {
                         {children}
                       </a>
                     )
+                  }
+                  // Enlace a un .md que ya no está en el visor (p. ej. REVIEW.md): texto plano
+                  if (file && /\.md$/i.test(file)) {
+                    return <span className="text-white/80">{children}</span>
                   }
                   return (
                     <a href={href} target="_blank" rel="noreferrer">
