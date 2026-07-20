@@ -90,7 +90,7 @@ function saveLocal(
   return profile
 }
 
-async function upsertRemote(
+async function saveRemote(
   address: string,
   data: { username: string; twitter?: string },
 ): Promise<Profile> {
@@ -98,19 +98,25 @@ async function upsertRemote(
   if (!client) return saveLocal(address, data)
 
   const walletAddress = norm(address)
+  const values = {
+    username: data.username.trim(),
+    twitter_username: normalizeTwitter(data.twitter) ?? null,
+  }
 
-  // Keep the write response minimal. Asking PostgREST to return the upserted
-  // row can require SELECT access to private columns such as owner_id.
-  const { error: writeError } = await client
+  // PostgREST's ON CONFLICT path requires broader table privileges than our
+  // deliberately restricted column grants. Use the separately verified
+  // INSERT/UPDATE paths and keep owner_id private.
+  const { data: existing, error: lookupError } = await client
     .from('profiles')
-    .upsert(
-      {
-        wallet_address: walletAddress,
-        username: data.username.trim(),
-        twitter_username: normalizeTwitter(data.twitter) ?? null,
-      },
-      { onConflict: 'wallet_address' },
-    )
+    .select('wallet_address')
+    .eq('wallet_address', walletAddress)
+    .maybeSingle()
+
+  if (lookupError) throw new Error(lookupError.message)
+
+  const { error: writeError } = existing
+    ? await client.from('profiles').update(values).eq('wallet_address', walletAddress)
+    : await client.from('profiles').insert({ wallet_address: walletAddress, ...values })
 
   if (writeError) {
     if (writeError.code === '23505') throw new Error('That username is already taken.')
@@ -178,7 +184,7 @@ export const profileStore = {
     if (!isSupabaseConfigured) return saveLocal(address, data)
     if (!wallet) throw new Error('The connected wallet provider is unavailable.')
     await ensureSupabaseWalletSession(address, wallet)
-    return upsertRemote(address, data)
+    return saveRemote(address, data)
   },
 
   /** Background OAuth sync: writes only when a matching SIWE session already exists. */
@@ -189,7 +195,7 @@ export const profileStore = {
     const local = saveLocal(address, data)
     if (!isSupabaseConfigured) return local
     if ((await currentSupabaseWalletAddress()) !== norm(address)) return local
-    return upsertRemote(address, data)
+    return saveRemote(address, data)
   },
 
   async signOut(): Promise<void> {
