@@ -30,10 +30,55 @@ const STATS = [
 ]
 
 // Mockup de fondos para la vista post-transición (solo maqueta visual)
-const MOCK_FUNDS = [
-  { name: 'Alpine Alpha', manager: '@sofia.eth', perf: '+12.4%', nav: '$1.248', cover: '$25k first-loss' },
-  { name: 'Blue Chip Basket', manager: '@marchetti', perf: '+7.1%', nav: '$1.091', cover: '$40k first-loss' },
-  { name: 'Momentum Seven', manager: '@kenji_t', perf: '+18.9%', nav: '$1.412', cover: '$12k first-loss' },
+type MockTrade = { side: 'B' | 'S'; ticker: string; size: string; ago: string }
+const MOCK_FUNDS: {
+  name: string
+  manager: string
+  perf7d: string
+  nav: string
+  members: number
+  cover: string
+  trades: MockTrade[]
+}[] = [
+  {
+    name: 'Alpine Alpha',
+    manager: '@sofia.eth',
+    perf7d: '+3.1%',
+    nav: '$1.248',
+    members: 248,
+    cover: '$25k first-loss',
+    trades: [
+      { side: 'B', ticker: 'NVDA', size: '$12.4k', ago: '2h' },
+      { side: 'S', ticker: 'TSLA', size: '$8.2k', ago: '6h' },
+      { side: 'B', ticker: 'AAPL', size: '$5.0k', ago: '1d' },
+    ],
+  },
+  {
+    name: 'Blue Chip Basket',
+    manager: '@marchetti',
+    perf7d: '+1.8%',
+    nav: '$1.091',
+    members: 512,
+    cover: '$40k first-loss',
+    trades: [
+      { side: 'B', ticker: 'MSFT', size: '$22.0k', ago: '4h' },
+      { side: 'B', ticker: 'SPY', size: '$15.5k', ago: '9h' },
+      { side: 'S', ticker: 'NVDA', size: '$6.3k', ago: '2d' },
+    ],
+  },
+  {
+    name: 'Momentum Seven',
+    manager: '@kenji_t',
+    perf7d: '+5.6%',
+    nav: '$1.412',
+    members: 97,
+    cover: '$12k first-loss',
+    trades: [
+      { side: 'B', ticker: 'TSLA', size: '$9.8k', ago: '1h' },
+      { side: 'B', ticker: 'NVDA', size: '$14.1k', ago: '7h' },
+      { side: 'S', ticker: 'MSFT', size: '$4.4k', ago: '1d' },
+    ],
+  },
 ]
 
 type Phase = 'hero' | 'transition' | 'vista'
@@ -269,7 +314,7 @@ export default function RobinFundHero() {
             </span>
           </nav>
 
-          <main className="max-w-6xl mx-auto w-full px-6 flex-1 flex flex-col justify-end pb-14">
+          <main className="max-w-6xl mx-auto w-full px-6 pt-10">
             <h2 className="animate-fade-rise text-white font-bold text-3xl sm:text-4xl md:text-5xl tracking-[-1px] mb-2 drop-shadow-lg">
               Explore Funds
             </h2>
@@ -277,18 +322,44 @@ export default function RobinFundHero() {
               Managers with real skin in the game. Pick one, follow their moves.
             </p>
 
-            <div className="animate-fade-rise-delay-2 grid grid-cols-1 sm:grid-cols-3 gap-4">
+            <div className="animate-fade-rise-delay-2 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-5">
               {MOCK_FUNDS.map((f) => (
                 <div
                   key={f.name}
-                  className="rounded-2xl bg-black/25 backdrop-blur-md border border-white/20 p-5 text-white cursor-pointer transition-transform hover:scale-[1.02]"
+                  className="rounded-2xl bg-black/25 backdrop-blur-md border border-white/20 p-6 text-white cursor-pointer transition-transform hover:scale-[1.02]"
                 >
+                  {/* Cabecera: nombre + perf 7d */}
                   <div className="flex items-baseline justify-between mb-1">
-                    <span className="font-semibold">{f.name}</span>
-                    <span className="text-emerald-300 font-medium text-sm">{f.perf} · 30d</span>
+                    <span className="font-semibold text-lg">{f.name}</span>
+                    <span className="text-emerald-300 font-medium text-sm">{f.perf7d} · 7d</span>
                   </div>
-                  <div className="text-white/60 text-sm mb-4">{f.manager}</div>
-                  <div className="flex items-center justify-between text-sm">
+                  <div className="text-white/60 text-sm mb-5">
+                    {f.manager}
+                    <span className="mx-2 text-white/30">·</span>
+                    {f.members} investors
+                  </div>
+
+                  {/* Trades recientes, en pequeño */}
+                  <div className="text-white/50 text-[11px] uppercase tracking-wide mb-2">Recent trades</div>
+                  <ul className="space-y-1.5 mb-5">
+                    {f.trades.map((t, i) => (
+                      <li key={i} className="flex items-center gap-2 text-xs">
+                        <span
+                          className={`w-4 h-4 rounded-full flex items-center justify-center text-[9px] font-bold ${
+                            t.side === 'B' ? 'bg-emerald-400/25 text-emerald-300' : 'bg-red-400/25 text-red-300'
+                          }`}
+                        >
+                          {t.side}
+                        </span>
+                        <span className="font-medium">{t.ticker}</span>
+                        <span className="text-white/60">{t.size}</span>
+                        <span className="ml-auto text-white/40">{t.ago}</span>
+                      </li>
+                    ))}
+                  </ul>
+
+                  {/* Pie: NAV + cover */}
+                  <div className="flex items-center justify-between text-sm pt-4 border-t border-white/10">
                     <span className="text-white/80">NAV {f.nav}</span>
                     <span className="rounded-full bg-white/15 border border-white/20 px-3 py-1 text-xs">
                       {f.cover}
