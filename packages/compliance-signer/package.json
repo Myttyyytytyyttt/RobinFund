@@ -1,0 +1,24 @@
+{
+  "name": "@robinfund/compliance-signer",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "description": "Servicio de firma de compliance: emite atestaciones EIP-712 para el EligibilityGate (SPEC §10)",
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "start": "pnpm build && node dist/main.js",
+    "test": "vitest run",
+    "test:e2e": "cross-env COMPLIANCE_E2E=1 vitest run src/integration.test.ts",
+    "test:watch": "vitest",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "dependencies": {
+    "viem": "^2.21.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.20.1",
+    "cross-env": "^10.1.0",
+    "typescript": "^5.6.0",
+    "vitest": "^2.1.0"
+  }
+}

@@ -29,8 +29,8 @@ Todos los contratos < 24.5KB (EIP-170); deploy completo simulado OK contra fork 
 **ejercitado end-to-end** por el test de integración del keeper (anvil forkeando mainnet + estos mismos
 scripts + ciclo de vida LP completo — ver `packages/keeper`). **Pendiente** (flecos con fallback seguro,
 ver §Deferidos): Frozen §10.3 completo, liquidación keeper-asistida de retiros cash, 0x RFQ adapter,
-fill parcial del cap. **Off-chain** (Fase 2): keeper completo (Fases 2a+2b, `packages/keeper`);
-pendiente indexer y servicio de firma de compliance.
+fill parcial del cap. **Off-chain** (Fase 2): keeper completo (2a+2b, `packages/keeper`) y compliance
+signer completo (2c, `packages/compliance-signer`, revisado adversarialmente); pendiente indexer.
 
 ---
 

@@ -28,3 +28,6 @@ Thumbs.db
 
 # Logs
 *.log
+
+# Compliance signer — store local (binding persona-direccion; nunca commitear)
+packages/compliance-signer/data/

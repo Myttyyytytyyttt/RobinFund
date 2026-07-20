@@ -66,8 +66,9 @@ mock nos deja publicarlas al warpear.
 ## Estado
 
 **Fase 2a + 2b completas**: cálculo, lector, decisión, runner con firma/envío de tx, y E2E verde.
-**Pendiente (resto de Fase 2)**: indexer (Ponder) para el frontend, servicio de firma de compliance
-(el que emite las atestaciones EIP-712), alertas/telemetría del keeper (hoy: logs JSON a stdout).
+El servicio de firma de compliance vive en `packages/compliance-signer` (Fase 2c). **Pendiente
+(resto de Fase 2)**: indexer (Ponder) para el frontend, alertas/telemetría del keeper (hoy: logs
+JSON a stdout).
 
 > Los cálculos DEBEN mantenerse en sync con `Fund._touch`/`_settle`. Si cambia la matemática del
 > first-loss en el contrato, actualizar `grossClaims.ts` y sus tests.
