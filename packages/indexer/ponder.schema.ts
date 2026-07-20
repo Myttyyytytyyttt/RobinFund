@@ -200,20 +200,13 @@ export const fundAsset = onchainTable(
   }),
 );
 
-export const attestation = onchainTable("attestation", (t) => ({
-  account: t.hex().primaryKey(),
-  expiry: t.bigint().notNull(),
-  revokedAt: t.bigint().notNull(), // 0 = activa
-  updatedAt: t.bigint().notNull(),
-}));
-
 /** Feed unificado de actividad por fondo (la capa social del frontend pinta desde aquí). */
 export const activity = onchainTable(
   "activity",
   (t) => ({
     id: t.text().primaryKey(), // `${txHash}-${logIndex}`
     fund: t.hex().notNull(),
-    kind: t.text().notNull(), // deposit_requested | deposit_executed | deposit_refunded | withdraw_requested | withdraw_executed | fee_redeem_requested | fee_redeem | settled | claim | trade | state_changed | frozen | guardian_pause | forced_redemption | winding_requested | entry_fee
+    kind: t.text().notNull(), // deposit_requested | deposit_executed | deposit_refunded | withdraw_requested | withdraw_executed | fee_redeem_requested | fee_redeem | settled | claim | trade | state_changed | frozen | guardian_pause | winding_requested | entry_fee
     lp: t.hex(), // null en eventos de fondo
     amount: t.bigint(), // magnitud principal del evento (semántica según kind)
     meta: t.text(), // JSON string con el detalle específico (órdenes: incluye orderId)

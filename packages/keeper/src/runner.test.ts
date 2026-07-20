@@ -26,7 +26,6 @@ const base: PlanInput = {
   grossClaimsWad: 0n,
   blocked: false,
   headWithdrawInKindReady: false,
-  redeemables: [],
 };
 
 describe("planActions", () => {
@@ -89,21 +88,6 @@ describe("planActions", () => {
   it("fondo ya Frozen → no re-declara", () => {
     const out = planActions({ ...base, snap: { ...snap, frozen: true }, blocked: true });
     expect(out.find((i) => i.fn === "declareFrozen")).toBeUndefined();
-  });
-
-  it("LPs inelegibles pasada la gracia → forceRedeem por cada uno, al final", () => {
-    const a = "0x00000000000000000000000000000000000000aa" as const;
-    const b = "0x00000000000000000000000000000000000000bb" as const;
-    const out = planActions({
-      ...base,
-      action: { kind: "settle", grossClaimsWad: 0n, reason: "due" },
-      redeemables: [a, b],
-    });
-    expect(out).toEqual([
-      { fn: "executeBatch", args: [0n] },
-      { fn: "forceRedeem", args: [a] },
-      { fn: "forceRedeem", args: [b] },
-    ]);
   });
 
   it("fondo Closed con colas → no executeBatch por colas", () => {

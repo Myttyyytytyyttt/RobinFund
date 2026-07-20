@@ -3,7 +3,7 @@
   "version": "0.0.1",
   "private": true,
   "type": "module",
-  "description": "Indexer Ponder de RobinFund: fondos, depósitos/retiros, settlements, trades, atestaciones — API GraphQL para el frontend",
+  "description": "Indexer Ponder de NuvemFund: fondos, depósitos/retiros, settlements y trades — API GraphQL para el frontend",
   "scripts": {
     "dev": "ponder dev",
     "start": "ponder start",

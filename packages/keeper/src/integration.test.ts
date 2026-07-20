@@ -39,7 +39,7 @@ import {
 } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
 import { loadRootEnv } from "./env.js";
-import { fundAbi, shareAbi, stakeEscrowAbi, gateAbi, fundRegistryAbi } from "./abi.js";
+import { fundAbi, shareAbi, stakeEscrowAbi, fundRegistryAbi } from "./abi.js";
 import { runTick, type KeeperConfig, type FundReport } from "./runner.js";
 import { assessFund } from "./settlement.js";
 import { checkFundBlocked } from "./monitors.js";
@@ -54,7 +54,7 @@ const ACCESS_REGISTRY = "0xe10b6f6B275de231345c20D14Ab812db62151b00" as Address;
 // ---------- cuentas anvil (mnemonic de test estándar) ----------
 const PK = [
   "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80", // 0 deployer/operador
-  "0x59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690d", // 1 compliance signer
+  "0x59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690d", // 1 auxiliar
   "0x5de4111afa1a4b94908f83103eb1f1706367c2e68ca870fc3fb9a804cdab365a", // 2 keeper
   "0x7c852118294e51e653712a81e05800f419141751be58f605c371e15141b007a6", // 3 manager
   "0x47e179ec197488593b187f80a00eb0da91f1b9d0b13f8733639f19c30a34926a", // 4 LP
@@ -274,14 +274,11 @@ beforeAll(async () => {
   forge(
     ["script", "script/Deploy.s.sol", "--rpc-url", ANVIL_URL, "--broadcast", "--private-key", PK[0]],
     {
-      COMPLIANCE_SIGNER: acct[1]!.address,
       GUARDIAN_MULTISIG: acct[6]!.address,
-      KEEPER: acct[2]!.address,
-      PROTOCOL_TREASURY: acct[5]!.address,
     },
   );
   addrs = parseBroadcast("Deploy.s.sol", chainId);
-  for (const name of ["TokenRegistry", "AdapterRegistry", "EligibilityGate", "Guardian", "FundRegistry"]) {
+  for (const name of ["TokenRegistry", "AdapterRegistry", "OpenEligibilityGate", "Guardian", "FundRegistry"]) {
     if (!addrs[name]) throw new Error(`el broadcast del Deploy no contiene ${name}`);
   }
 
@@ -301,42 +298,13 @@ beforeAll(async () => {
   mockFeed = rec.contractAddress!;
   await write(0, addrs.TokenRegistry!, registryAbi, "setUsdgFeed", [mockFeed, 90000, 90000000n, 110000000n]);
 
-  // 4. atestaciones de compliance para manager y LP (EIP-712 firmado por el signer)
-  const expiry = Number((await now()) + BigInt(85 * 24 * 3600));
-  for (const who of [acct[3]!, acct[4]!]) {
-    const nonce = (await pub.readContract({
-      address: addrs.EligibilityGate!,
-      abi: gateAbi,
-      functionName: "nonceOf",
-      args: [who.address],
-    })) as bigint;
-    const signature = await acct[1]!.signTypedData({
-      domain: {
-        name: "RobinFund EligibilityGate",
-        version: "1",
-        chainId,
-        verifyingContract: addrs.EligibilityGate!,
-      },
-      types: {
-        Attestation: [
-          { name: "account", type: "address" },
-          { name: "expiry", type: "uint48" },
-          { name: "nonce", type: "uint256" },
-        ],
-      },
-      primaryType: "Attestation",
-      message: { account: who.address, expiry, nonce },
-    });
-    await write(0, addrs.EligibilityGate!, gateAbi, "attest", [who.address, expiry, nonce, signature]);
-  }
-
-  // 5. crear el fondo con el script REAL del operador
+  // 4. crear el fondo con el script REAL del operador. Manager y LP entran sin onboarding.
   forge(
     ["script", "script/CreateFund.s.sol", "--rpc-url", ANVIL_URL, "--broadcast", "--private-key", PK[0]],
     {
       TOKEN_REGISTRY: addrs.TokenRegistry!,
       ADAPTER_REGISTRY: addrs.AdapterRegistry!,
-      ELIGIBILITY_GATE: addrs.EligibilityGate!,
+      ELIGIBILITY_GATE: addrs.OpenEligibilityGate!,
       FUND_REGISTRY: addrs.FundRegistry!,
       GUARDIAN: addrs.Guardian!,
       FUND_MANAGER: acct[3]!.address,

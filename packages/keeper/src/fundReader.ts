@@ -101,7 +101,7 @@ async function readShare(client: PublicClient, fund: Address, fn: "totalSupply")
   return (await client.readContract({ address: shareAddr as Address, abi: shareAbi, functionName: fn })) as bigint;
 }
 
-/** Estado de un LP con su dirección (el runner la necesita para forceRedeem). */
+/** Estado de un LP con su dirección para calcular grossClaims y observabilidad. */
 export type AddressedLpState = LpState & { address: Address };
 
 /** Lee el estado NI de cada LP (excluyendo el FeeSplitter). */

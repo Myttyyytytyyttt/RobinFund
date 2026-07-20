@@ -54,7 +54,7 @@ const USDG = "0x5fc5360D0400a0Fd4f2af552ADD042D716F1d168" as Address;
 
 const PK = [
   "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80", // 0 deployer
-  "0x59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690d", // 1 compliance signer
+  "0x59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690d", // 1 auxiliar
   "0x5de4111afa1a4b94908f83103eb1f1706367c2e68ca870fc3fb9a804cdab365a", // 2 keeper
   "0x7c852118294e51e653712a81e05800f419141751be58f605c371e15141b007a6", // 3 manager
   "0x47e179ec197488593b187f80a00eb0da91f1b9d0b13f8733639f19c30a34926a", // 4 LP
@@ -81,10 +81,6 @@ const fundAbi = parseAbi([
 const registryViewAbi = parseAbi([
   "function funds(uint256) view returns (address)",
   "function setUsdgFeed(address feed, uint48 maxStaleness, int256 minAnswer, int256 maxAnswer)",
-]);
-const gateAbi = parseAbi([
-  "function nonceOf(address) view returns (uint256)",
-  "function attest(address account, uint48 expiry, uint256 nonce, bytes signature)",
 ]);
 const shareAbi = parseAbi(["function balanceOf(address) view returns (uint256)"]);
 const stakeAbi = parseAbi(["function addStake(uint256 amount)"]);
@@ -223,10 +219,7 @@ beforeAll(async () => {
 
   startBlock = await pub.getBlockNumber();
   forge("script/Deploy.s.sol", {
-    COMPLIANCE_SIGNER: acct[1]!.address,
     GUARDIAN_MULTISIG: acct[6]!.address,
-    KEEPER: acct[2]!.address,
-    PROTOCOL_TREASURY: acct[5]!.address,
   });
   addrs = parseBroadcast("Deploy.s.sol", chainId);
 
@@ -244,34 +237,11 @@ beforeAll(async () => {
   mockFeed = (await pub.waitForTransactionReceipt({ hash: deployHash })).contractAddress!;
   await write(0, addrs.TokenRegistry!, registryViewAbi, "setUsdgFeed", [mockFeed, 90000, 90000000n, 110000000n]);
 
-  // atestaciones manager + LP
-  const expiry = Number((await now()) + BigInt(85 * 24 * 3600));
-  for (const who of [acct[3]!, acct[4]!]) {
-    const nonce = await pub.readContract({
-      address: addrs.EligibilityGate!,
-      abi: gateAbi,
-      functionName: "nonceOf",
-      args: [who.address],
-    });
-    const signature = await acct[1]!.signTypedData({
-      domain: { name: "RobinFund EligibilityGate", version: "1", chainId, verifyingContract: addrs.EligibilityGate! },
-      types: {
-        Attestation: [
-          { name: "account", type: "address" },
-          { name: "expiry", type: "uint48" },
-          { name: "nonce", type: "uint256" },
-        ],
-      },
-      primaryType: "Attestation",
-      message: { account: who.address, expiry, nonce },
-    });
-    await write(0, addrs.EligibilityGate!, gateAbi, "attest", [who.address, expiry, nonce, signature]);
-  }
-
+  // Manager y LP entran directamente: OpenEligibilityGate no requiere onboarding.
   forge("script/CreateFund.s.sol", {
     TOKEN_REGISTRY: addrs.TokenRegistry!,
     ADAPTER_REGISTRY: addrs.AdapterRegistry!,
-    ELIGIBILITY_GATE: addrs.EligibilityGate!,
+    ELIGIBILITY_GATE: addrs.OpenEligibilityGate!,
     FUND_REGISTRY: addrs.FundRegistry!,
     GUARDIAN: addrs.Guardian!,
     FUND_MANAGER: acct[3]!.address,
@@ -366,7 +336,6 @@ beforeAll(async () => {
         INDEXER_RPC_URL: ANVIL_URL,
         INDEXER_CHAIN_ID: String(chainId),
         FUND_REGISTRY: addrs.FundRegistry!,
-        ELIGIBILITY_GATE: addrs.EligibilityGate!,
         INDEXER_START_BLOCK: String(startBlock),
         PONDER_PGLITE_DIR: pgliteDir,
         DATABASE_URL: "",
@@ -494,14 +463,6 @@ describe.skipIf(!RUN)("E2E: indexer Ponder sobre el protocolo real", () => {
     expect(BigInt(p.shares)).toBe(0n);
     expect(BigInt(p.deposited6)).toBe(1_500_000000n);
     expect(BigInt(p.withdrawn6)).toBeGreaterThan(1_400_000000n); // cash + pata USDG del in-kind
-  });
-
-  it("atestaciones del gate indexadas (manager + LP activas)", async () => {
-    const data = await gql(`{ attestations { items { account revokedAt } } }`);
-    const accounts = data.attestations.items.map((a: any) => a.account.toLowerCase());
-    expect(accounts).toContain(acct[3]!.address.toLowerCase());
-    expect(accounts).toContain(acct[4]!.address.toLowerCase());
-    for (const a of data.attestations.items) expect(BigInt(a.revokedAt)).toBe(0n);
   });
 
   it("el feed de actividad tiene el ciclo completo en orden", async () => {

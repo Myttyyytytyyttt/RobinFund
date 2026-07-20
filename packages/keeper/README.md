@@ -1,4 +1,4 @@
-# RobinFund — Keeper
+# NuvemFund — Keeper
 
 Los bots que hacen que el protocolo opere solo. Corren contra Robinhood Chain (4663) leyendo el estado
 on-chain de los `Fund` y disparando las acciones permissionless que nadie más va a disparar.
@@ -10,10 +10,10 @@ on-chain de los `Fund` y disparando las acciones permissionless que nadie más v
 | `grossClaims.ts` | **El cálculo crítico**: suma la pérdida vesteada de cada LP (`Σ loss_lp × cobertura`) para pasarla a `settle()`. Replica bit a bit `Fund._touch`. |
 | `fundReader.ts` | Lee el estado de un fondo: descubre LPs desde eventos `DepositExecuted`, lee su NI/shares/vestTime, el NAV, el stake. |
 | `settlement.ts` | `assessFund` (snapshot + grossClaims + decisión) y la decisión pura de settlear (due + NAV válido, o degradado tras 7d). |
-| `runner.ts` | El orquestador: enumera los fondos del `FundRegistry` y por cada uno **planifica** (`planActions`, pura) y **ejecuta** las tx: `executeBatch`, `settle` degradado, válvula in-kind, `declareFrozen`, `forceRedeem`. |
-| `monitors.ts` | Vigila: fondo bloqueado por RHJ; drift de beacon; LP inelegible pasada la gracia. |
+| `runner.ts` | El orquestador: enumera los fondos del `FundRegistry` y por cada uno **planifica** (`planActions`, pura) y **ejecuta** las tx: `executeBatch`, `settle` degradado, válvula in-kind y `declareFrozen`. |
+| `monitors.ts` | Vigila riesgos técnicos: fondo bloqueado por RHJ y drift de beacon. No procesa identidad de LPs. |
 | `main.ts` | Entry point: bucle de ticks con intervalo configurable, firma con `KEEPER_PK`, logs JSON. |
-| `abi.ts` | ABI mínimo de Fund/share/escrow/gate/registry que el keeper consume. |
+| `abi.ts` | ABI mínimo de Fund/share/escrow/registry que el keeper consume. |
 
 ## Por qué `grossClaims` es lo más importante
 
@@ -39,7 +39,7 @@ contra la fórmula exacta de `_touch`, incluido el caso que verifica la propieda
 
 ```bash
 pnpm install
-pnpm test          # 33 tests unit: grossClaims, settlement, monitors, planner del runner
+pnpm test          # tests unit: grossClaims, settlement, monitores y planner del runner
 pnpm test:e2e      # E2E contra anvil forkeando mainnet (necesita RH_RPC_MAINNET en el .env raíz + foundry)
 pnpm start         # el keeper real (compila y arranca el bucle)
 ```
@@ -53,7 +53,7 @@ Config del runner por env (el `.env` raíz se carga solo): `KEEPER_RPC_URL` (fal
 
 `integration.test.ts` cierra el bucle completo: levanta un **anvil forkeando mainnet**, despliega el
 protocolo con los **mismos scripts** que irán a producción (`Deploy.s.sol` + `CreateFund.s.sol`),
-atesta manager y LP (EIP-712 real contra el `EligibilityGate`), y recorre el ciclo de vida entero
+usa `OpenEligibilityGate` (manager y LP entran directamente, sin KYC), y recorre el ciclo de vida entero
 disparado por el **mismo runner** de producción: depósito → batch (forward pricing) → warp 30d →
 settlement (grossClaims computado off-chain) → retiro cash tras cooldown → monitores contra el
 ACCESS registry real de RHJ.
@@ -65,10 +65,10 @@ mock nos deja publicarlas al warpear.
 
 ## Estado
 
-**Fase 2a + 2b completas**: cálculo, lector, decisión, runner con firma/envío de tx, y E2E verde.
-El servicio de firma de compliance vive en `packages/compliance-signer` (Fase 2c). **Pendiente
-(resto de Fase 2)**: indexer (Ponder) para el frontend, alertas/telemetría del keeper (hoy: logs
-JSON a stdout).
+**Fase 2a + 2b completas**: cálculo, lector, decisión, runner con firma/envío de tx, y E2E. El
+servicio de compliance queda archivado e inactivo; el keeper permissionless no lee ni expulsa LPs.
+El indexer Ponder vive en `packages/indexer`. Pendiente para producción: alertas/telemetría del
+keeper (hoy: logs JSON a stdout) y hosting 24/7.
 
 > Los cálculos DEBEN mantenerse en sync con `Fund._touch`/`_settle`. Si cambia la matemática del
 > first-loss en el contrato, actualizar `grossClaims.ts` y sus tests.

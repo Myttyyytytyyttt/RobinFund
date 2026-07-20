@@ -27,7 +27,6 @@ import {
   claim,
   trade,
   fundAsset,
-  attestation,
   activity,
 } from "ponder:schema";
 import { FundAbi, FundShareAbi } from "../abis/generated";
@@ -348,10 +347,6 @@ ponder.on("Fund:ConvertedToInKind", async ({ event, context }) => {
   if (row) await context.db.update(withdrawal, { id }).set({ inKind: true });
 });
 
-ponder.on("Fund:ForcedRedemption", async ({ event, context }) => {
-  await feed(context, event, "forced_redemption", event.args.lp, event.args.shares);
-});
-
 // ---------- Fund: settlement y first-loss ----------
 
 ponder.on("Fund:Settled", async ({ event, context }) => {
@@ -494,30 +489,4 @@ ponder.on("Fund:WindingRequested", async ({ event, context }) => {
   // sin esto el frontend muestra Active (y ofrece depositar) durante días hasta el settlement
   await context.db.update(fund, { address: event.log.address }).set({ state: 1 });
   await feed(context, event, "winding_requested", null, BigInt(event.args.due));
-});
-
-// ---------- EligibilityGate ----------
-
-ponder.on("EligibilityGate:Attested", async ({ event, context }) => {
-  await context.db
-    .insert(attestation)
-    .values({
-      account: event.args.account,
-      expiry: BigInt(event.args.expiry),
-      revokedAt: 0n,
-      updatedAt: event.block.timestamp,
-    })
-    .onConflictDoUpdate({ expiry: BigInt(event.args.expiry), revokedAt: 0n, updatedAt: event.block.timestamp });
-});
-
-ponder.on("EligibilityGate:Revoked", async ({ event, context }) => {
-  await context.db
-    .insert(attestation)
-    .values({
-      account: event.args.account,
-      expiry: 0n,
-      revokedAt: BigInt(event.args.at),
-      updatedAt: event.block.timestamp,
-    })
-    .onConflictDoUpdate({ revokedAt: BigInt(event.args.at), updatedAt: event.block.timestamp });
 });

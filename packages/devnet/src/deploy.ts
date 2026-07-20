@@ -1,14 +1,14 @@
 /**
  * Deploy del protocolo sobre el fork con los scripts REALES de producción, más las dos piezas
  * devnet-only: feeds USDG/TSLA re-apuntados a MockFeeds controlables (un fork no publica rondas
- * nuevas y el forward pricing las exige) sembrados con los precios reales del momento del fork,
- * y la atestación EIP-712 firmada localmente para el bootstrap del manager.
+ * nuevas y el forward pricing las exige), sembrados con los precios reales del momento del fork.
+ * El acceso es permissionless mediante OpenEligibilityGate: no hay bootstrap ni signer.
  */
 import { spawnSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { encodeAbiParameters, parseAbi, type Address, type Hex } from "viem";
-import { acct, contractsDir, DEPLOYER, MANAGER, PK, TSLA, TSLA_FEED, USDG, write, type Devnet } from "./chain.js";
+import { acct, contractsDir, DEPLOYER, PK, TSLA, TSLA_FEED, USDG, write, type Devnet } from "./chain.js";
 
 export interface Protocol {
   tokenRegistry: Address;
@@ -44,11 +44,6 @@ export const mockFeedAbi = [
   },
   { type: "function", name: "answer", stateMutability: "view", inputs: [], outputs: [{ type: "int256" }] },
 ] as const;
-export const gateAbi = parseAbi([
-  "function nonceOf(address) view returns (uint256)",
-  "function attest(address account, uint48 expiry, uint256 nonce, bytes signature)",
-]);
-
 export function forgeScript(script: string, rpcUrl: string, extraEnv: Record<string, string>): void {
   const res = spawnSync(
     "forge",
@@ -97,41 +92,14 @@ async function realAnswer(d: Devnet, feed: Address): Promise<bigint> {
   return answer;
 }
 
-export async function attest(d: Devnet, gate: Address, who: Address, chainId: number): Promise<void> {
-  const t = (await d.pub.getBlock()).timestamp;
-  const expiry = Number(t + BigInt(85 * 24 * 3600));
-  const nonce = (await d.pub.readContract({
-    address: gate,
-    abi: gateAbi,
-    functionName: "nonceOf",
-    args: [who],
-  })) as bigint;
-  const signature = await acct[1]!.signTypedData({
-    domain: { name: "RobinFund EligibilityGate", version: "1", chainId, verifyingContract: gate },
-    types: {
-      Attestation: [
-        { name: "account", type: "address" },
-        { name: "expiry", type: "uint48" },
-        { name: "nonce", type: "uint256" },
-      ],
-    },
-    primaryType: "Attestation",
-    message: { account: who, expiry, nonce },
-  });
-  await write(d, DEPLOYER, gate, gateAbi, "attest", [who, expiry, nonce, signature]);
-}
-
 export async function deployProtocol(d: Devnet): Promise<Protocol> {
   const deployBlock = await d.pub.getBlockNumber();
 
   forgeScript("script/Deploy.s.sol", d.rpcUrl, {
-    COMPLIANCE_SIGNER: acct[1]!.address,
     GUARDIAN_MULTISIG: acct[8]!.address,
-    KEEPER: acct[2]!.address,
-    PROTOCOL_TREASURY: acct[7]!.address,
   });
   const a = parseBroadcast("Deploy.s.sol", d.chainId);
-  for (const name of ["TokenRegistry", "AdapterRegistry", "EligibilityGate", "Guardian", "FundRegistry"]) {
+  for (const name of ["TokenRegistry", "AdapterRegistry", "OpenEligibilityGate", "Guardian", "FundRegistry"]) {
     if (!a[name]) throw new Error(`el broadcast no contiene ${name}`);
   }
 
@@ -149,14 +117,10 @@ export async function deployProtocol(d: Devnet): Promise<Protocol> {
     100_000_00000000n,
   ]);
 
-  // bootstrap: el manager debe ser elegible ANTES de crear el fondo (su constructor lo exige).
-  // En producción lo atesta el compliance signer; aquí firmamos localmente con la clave del signer.
-  await attest(d, a.EligibilityGate!, acct[MANAGER]!.address, d.chainId);
-
   return {
     tokenRegistry: a.TokenRegistry!,
     adapterRegistry: a.AdapterRegistry!,
-    eligibilityGate: a.EligibilityGate!,
+    eligibilityGate: a.OpenEligibilityGate!,
     guardian: a.Guardian!,
     fundRegistry: a.FundRegistry!,
     usdgMockFeed,

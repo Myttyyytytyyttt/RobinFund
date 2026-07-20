@@ -2,7 +2,6 @@
  * Monitores del keeper (SPEC §10.3, §8, C29). Vigilan condiciones que requieren reacción:
  *  · el fondo fue bloqueado por RHJ → declarar Frozen
  *  · un token de la cartera sufrió drift de beacon → suspender en el TokenRegistry (permissionless)
- *  · un LP inelegible pasó la gracia → encolar redención forzosa
  * Aquí la LÓGICA DE DECISIÓN pura; el runner del keeper la ejecuta y dispara las tx.
  */
 import { type Address, type PublicClient } from "viem";
@@ -10,8 +9,7 @@ import { accessRegistryAbi } from "./abi.js";
 
 export type Alert =
   | { kind: "fund-blocked"; fund: Address }
-  | { kind: "beacon-drift"; token: Address; oldImpl: Address; newImpl: Address }
-  | { kind: "force-redeem"; fund: Address; lp: Address };
+  | { kind: "beacon-drift"; token: Address; oldImpl: Address; newImpl: Address };
 
 /** ¿RHJ bloqueó este fondo? → hay que declararlo Frozen (§10.3). */
 export async function checkFundBlocked(
@@ -48,13 +46,4 @@ export async function checkBeaconDrift(
     return { kind: "beacon-drift", token, oldImpl: knownImpl, newImpl: current };
   }
   return null;
-}
-
-/** ¿Un LP inelegible superó la gracia de compliance? (la lee de EligibilityGate.ineligibleSince) */
-export function shouldForceRedeem(
-  ineligibleSince: bigint,
-  nowSeconds: bigint,
-  graceSeconds = BigInt(30 * 24 * 3600),
-): boolean {
-  return ineligibleSince !== 0n && nowSeconds >= ineligibleSince + graceSeconds;
 }

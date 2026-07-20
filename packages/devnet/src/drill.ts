@@ -1,6 +1,6 @@
 /**
- * DRILL COMPLETO: la vida entera de un fondo, de punta a punta, con keeper + compliance signer +
- * indexer corriendo como PROCESOS REALES. El keeper actúa por sus propios ticks; nosotros solo
+ * DRILL COMPLETO: la vida entera de un fondo permissionless, de punta a punta, con keeper + indexer
+ * corriendo como PROCESOS REALES. El keeper actúa por sus propios ticks; nosotros solo
  * movemos el tiempo, los precios y las tx de usuario, y esperamos a que el sistema reaccione.
  *
  * 9 actos (ver el README). Cada assert suma al scorecard; al final, resumen y teardown.
@@ -25,21 +25,11 @@ import {
   TSLA,
   type Devnet,
 } from "./chain.js";
-import { attest, createFund, deployProtocol, encodePoolKey, gateAbi, pushFeeds, mockFeedAbi, type Protocol } from "./deploy.js";
-import { fundAbi, shareAbi, stakeEscrowAbi, gateRevokeAbi } from "./abis.js";
-import {
-  buildServices,
-  gql,
-  signerAdmit,
-  signerRenew,
-  signerRevoke,
-  startServices,
-  stopServices,
-  type Services,
-} from "./services.js";
+import { createFund, deployProtocol, encodePoolKey, pushFeeds, mockFeedAbi, type Protocol } from "./deploy.js";
+import { fundAbi, openGateAbi, shareAbi, stakeEscrowAbi } from "./abis.js";
+import { buildServices, gql, startServices, stopServices, type Services } from "./services.js";
 
 const PORT = 8600 + (process.pid % 300);
-const SIGNER_PORT = 8700 + (process.pid % 300);
 const INDEXER_PORT = 42300 + (process.pid % 300);
 const DAY = 24n * 3600n;
 
@@ -124,8 +114,8 @@ async function depositAndExecute(d: Devnet, p: Protocol, s: Services, f: Address
 }
 
 async function main(): Promise<void> {
-  console.log("\x1b[1mRobinFund — drill de devnet local\x1b[0m");
-  console.log("Compilando servicios (keeper, signer, indexer)…");
+  console.log("\x1b[1mNuvemFund — drill de devnet local\x1b[0m");
+  console.log("Compilando servicios (keeper, indexer)…");
   buildServices();
   console.log("Levantando anvil (fork de mainnet 4663)…");
   const d = await bootAnvil(PORT);
@@ -138,38 +128,20 @@ async function main(): Promise<void> {
     const { share, stake, feeSplitter } = await fundChildren(d, fund);
     console.log(`  fondo: ${fund}`);
 
-    console.log("Arrancando servicios (keeper + compliance signer + indexer)…");
+    console.log("Arrancando servicios (keeper + indexer; sin KYC)…");
     services = await startServices(d.rpcUrl, d.chainId, p, {
-      signerPort: SIGNER_PORT,
       indexerPort: INDEXER_PORT,
       keeperIntervalS: 3,
     });
     const s = services;
-    console.log(`  signer:  ${s.signerUrl}`);
     console.log(`  graphql: ${s.indexerUrl}/graphql`);
 
-    // ===== Acto 1 — Onboarding vía la API real del signer =====
-    act(1, "Onboarding (compliance signer)");
-    // el manager ya fue atestado por el bootstrap del deploy (createFund lo exige); lo re-verificamos
-    const mgrAtt = await attestViaBootstrap(d, p); // asegura manager elegible en el gate
-    check("manager elegible en el gate", mgrAtt);
-    let onboarded = 0;
-    for (const [i, who] of [[1, LP1], [2, LP2], [3, LP3]] as const) {
-      const r = await signerAdmit(s, {
-        personId: `kyc-lp${i}`,
-        address: acct[who]!.address,
-        usPerson: false,
-        jurisdiction: "ES",
-      });
-      if (r.ok && r.attestation) {
-        const a = r.attestation;
-        await write(d, who, p.eligibilityGate, gateAbi, "attest", [a.account, a.expiry, BigInt(a.nonce), a.signature]);
-        onboarded++;
-      }
-    }
-    check("3 LPs admitidos y atestados on-chain", onboarded === 3, `${onboarded}/3`);
-    const usPerson = await signerAdmit(s, { personId: "kyc-us", address: acct[7]!.address, usPerson: true, jurisdiction: "US" });
-    check("US person rechazado (Condición 28)", !usPerson.ok && usPerson.status === 403);
+    // ===== Acto 1 — Acceso abierto, sin onboarding =====
+    act(1, "Acceso permissionless (sin KYC ni signer)");
+    check("manager elegible sin registro", await isEligible(d, p, acct[MANAGER]!.address));
+    const openLps = await Promise.all([LP1, LP2, LP3].map((who) => isEligible(d, p, acct[who]!.address)));
+    check("3 LPs elegibles sin onboarding", openLps.every(Boolean));
+    check("cualquier otra wallet también entra", await isEligible(d, p, acct[7]!.address));
 
     // ===== Acto 2 — Capital: stake + depósitos + el keeper ejecuta =====
     act(2, "Capital (stake + depósitos, batches por el keeper)");
@@ -253,24 +225,28 @@ async function main(): Promise<void> {
     check("LP3 salió in-kind", lp3Out);
     check("LP3 recibió TSLA en especie", (await rd.tsla(d, acct[LP3]!.address)) > lp3TslaBefore);
 
-    // ===== Acto 7 — Compliance en acción (forceRedeem + G1) =====
-    act(7, "Compliance (revoke → keeper forceRedeem; G1)");
-    // re-depositamos LP1 para tener a quién forzar (ya cobró; sigue con shares del acto 2/5)
+    // ===== Acto 7 — El acceso abierto no tiene revocación ni expulsión =====
+    act(7, "Invariantes permissionless (sin revocación ni forceRedeem)");
     const lp1Shares = await rd.shareBal(d, share, acct[LP1]!.address);
     if (lp1Shares === 0n) {
       await depositAndExecute(d, p, s, fund, LP1, 2_000_000000n);
     }
-    const rev = await signerRevoke(s, acct[LP1]!.address);
-    check("signer revocó a LP1 on-chain", rev.status === 200 && !!rev.txHash);
-    const renew = await signerRenew(s, acct[LP1]!.address);
-    check("G1: renovación del revocado denegada", renew.status === 403);
-    await warpTo(d, (await now(d)) + 31n * DAY); // pasa la gracia de compliance (30d)
-    await pushFeeds(d, p);
-    const forced = await waitFor("keeper detecta inelegible y encola forceRedeem", async () => {
-      const [, wd] = await rd.queues(d, fund);
-      return wd > 0n || (await rd.shareBal(d, share, acct[LP1]!.address)) === 0n;
-    }, 60_000);
-    check("el keeper disparó forceRedeem sobre LP1", forced);
+    const sharesBeforeForce = await rd.shareBal(d, share, acct[LP1]!.address);
+    const since = (await d.pub.readContract({
+      address: p.eligibilityGate,
+      abi: openGateAbi,
+      functionName: "ineligibleSince",
+      args: [acct[LP1]!.address],
+    })) as number;
+    check("ninguna wallet puede quedar inelegible", Number(since) === 0);
+    let forceRejected = false;
+    try {
+      await write(d, DEPLOYER, fund, fundAbi, "forceRedeem", [acct[LP1]!.address]);
+    } catch {
+      forceRejected = true;
+    }
+    check("forceRedeem está desactivado por el gate abierto", forceRejected);
+    check("LP1 conserva sus shares", (await rd.shareBal(d, share, acct[LP1]!.address)) === sharesBeforeForce);
 
     // ===== Acto 8 — Simulacro de crisis: Frozen por RHJ =====
     act(8, "Crisis (RHJ bloquea el fondo → Frozen)");
@@ -325,7 +301,6 @@ async function main(): Promise<void> {
     console.error("\n\x1b[31mDRILL ABORTADO:\x1b[0m", e instanceof Error ? e.stack : e);
     if (services) {
       console.error("\n--- keeper ---\n" + (services.logs.keeper ?? "").slice(-1500));
-      console.error("\n--- signer ---\n" + (services.logs.signer ?? "").slice(-800));
     }
     failed++;
   } finally {
@@ -336,15 +311,14 @@ async function main(): Promise<void> {
   process.exit(failed === 0 ? 0 : 1);
 }
 
-/** Asegura que el manager esté atestado en el gate (createFund ya lo exige, esto es defensa). */
-async function attestViaBootstrap(d: Devnet, p: Protocol): Promise<boolean> {
-  const eligible = (await d.pub.readContract({
+/** Comprueba la propiedad inmutable del OpenEligibilityGate. */
+async function isEligible(d: Devnet, p: Protocol, account: Address): Promise<boolean> {
+  return (await d.pub.readContract({
     address: p.eligibilityGate,
-    abi: [{ type: "function", name: "isEligible", stateMutability: "view", inputs: [{ type: "address" }], outputs: [{ type: "bool" }] }],
+    abi: openGateAbi,
     functionName: "isEligible",
-    args: [acct[MANAGER]!.address],
+    args: [account],
   })) as boolean;
-  return eligible;
 }
 
 /** Saca a los LPs restantes y liquida TSLA→USDG para poder cerrar. Best-effort (el cierre exacto

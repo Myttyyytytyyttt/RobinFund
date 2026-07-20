@@ -2,6 +2,10 @@ import { lazy, Suspense, useEffect, useRef, useState } from 'react'
 import { GooeyText } from '@/components/ui/gooey-text-morphing'
 import { MagneticButton } from '@/components/ui/magnetic-button'
 import WalletButton from '@/components/WalletButton'
+import { MOCK_VAULTS } from '@/features/vaults/mockVaults'
+import { VaultAccessModal } from '@/features/vaults/VaultAccessModal'
+import { VaultCommunityView } from '@/features/vaults/VaultCommunityView'
+import type { Vault } from '@/features/vaults/types'
 
 // Visor de docs lazy: el markdown + react-markdown solo cargan al abrir Docs
 const DocsView = lazy(() => import('@/components/DocsView'))
@@ -26,68 +30,12 @@ const AVATARS = ['/twitter1.jpg', '/twitter2.jpg', '/twitter3.jpg', '/twitter4.j
 // Palabras de largo casi idéntico para que el titular centrado no "baile" al mutar
 const MORPH_WORDS = ['Fellows.', 'Fortune.', 'Future.', 'Family.']
 
-// Datos reales del proyecto (docs/SPEC.md §13, restricciones RHJ)
+// Datos reales del proyecto; el acceso al protocolo es permissionless.
 const STATS = [
-  { value: '120+', label: 'Eligible countries' },
+  { value: 'Open', label: 'Permissionless access' },
   { value: '24/7', label: 'Self-custody markets' },
   { value: '25×', label: 'Fund cap per manager stake' },
   { value: '20%', label: 'Performance fee, HWM-gated' },
-]
-
-// Mockup de fondos para la vista post-transición (solo maqueta visual)
-type MockTrade = { side: 'B' | 'S'; ticker: string; size: string; ago: string }
-const MOCK_FUNDS: {
-  name: string
-  manager: string
-  perfTotal: string
-  perf7d: string
-  nav: string
-  members: number
-  coverK: number // Loss-Protection en miles de $ — decide el tier
-  trades: MockTrade[]
-}[] = [
-  {
-    name: 'Alpine Alpha',
-    manager: '@sofia.eth',
-    perfTotal: '+87%',
-    perf7d: '+3.1%',
-    nav: '$1.248',
-    members: 248,
-    coverK: 8,
-    trades: [
-      { side: 'B', ticker: 'NVDA', size: '$12.4k', ago: '2h' },
-      { side: 'S', ticker: 'TSLA', size: '$8.2k', ago: '6h' },
-      { side: 'B', ticker: 'AAPL', size: '$5.0k', ago: '1d' },
-    ],
-  },
-  {
-    name: 'Blue Chip Basket',
-    manager: '@marchetti',
-    perfTotal: '+34%',
-    perf7d: '+1.8%',
-    nav: '$1.091',
-    members: 512,
-    coverK: 40,
-    trades: [
-      { side: 'B', ticker: 'MSFT', size: '$22.0k', ago: '4h' },
-      { side: 'B', ticker: 'SPY', size: '$15.5k', ago: '9h' },
-      { side: 'S', ticker: 'NVDA', size: '$6.3k', ago: '2d' },
-    ],
-  },
-  {
-    name: 'Momentum Seven',
-    manager: '@kenji_t',
-    perfTotal: '+129%',
-    perf7d: '+5.6%',
-    nav: '$1.412',
-    members: 97,
-    coverK: 12,
-    trades: [
-      { side: 'B', ticker: 'TSLA', size: '$9.8k', ago: '1h' },
-      { side: 'B', ticker: 'NVDA', size: '$14.1k', ago: '7h' },
-      { side: 'S', ticker: 'MSFT', size: '$4.4k', ago: '1d' },
-    ],
-  },
 ]
 
 // Mockup de managers (vista Managers — misma mecánica que Funds)
@@ -229,6 +177,8 @@ export default function NuvemFundHero({ audioDisabled = false }: NuvemFundHeroPr
   const [par, setPar] = useState({ x: 0, y: 0 })
   const [showDocs, setShowDocs] = useState(false)
   const [profileOpen, setProfileOpen] = useState(false)
+  const [selectedVault, setSelectedVault] = useState<Vault | null>(null)
+  const [community, setCommunity] = useState<{ vault: Vault; preview: boolean } | null>(null)
   const transVidRef = useRef<HTMLVideoElement>(null)
   const ambientAudioRef = useRef<HTMLAudioElement>(null)
   const moveAudioRef = useRef<HTMLAudioElement>(null)
@@ -655,12 +605,22 @@ export default function NuvemFundHero({ audioDisabled = false }: NuvemFundHeroPr
 
             {vistaTab === 'funds' && (
             <div className="animate-fade-rise-delay-2 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-5">
-              {MOCK_FUNDS.map((f) => {
+              {MOCK_VAULTS.map((f) => {
                 const tier = coverTier(f.coverK)
                 return (
                   <div
-                    key={f.name}
-                    className="rounded-2xl bg-black/40 backdrop-blur-md border border-white/20 p-6 text-white cursor-pointer transition-transform hover:scale-[1.02] flex flex-col"
+                    key={f.id}
+                    role="button"
+                    tabIndex={0}
+                    aria-label={`Open ${f.name}`}
+                    onClick={() => setSelectedVault(f)}
+                    onKeyDown={(event) => {
+                      if (event.key === 'Enter' || event.key === ' ') {
+                        event.preventDefault()
+                        setSelectedVault(f)
+                      }
+                    }}
+                    className="group rounded-2xl bg-black/40 backdrop-blur-md border border-white/20 p-6 text-white cursor-pointer transition-all hover:scale-[1.02] hover:border-white/35 flex flex-col focus:outline-none focus:ring-2 focus:ring-emerald-200/45"
                   >
                     {/* Cabecera: nombre + % general grande con 7d debajo */}
                     <div className="flex items-start justify-between mb-1">
@@ -673,7 +633,7 @@ export default function NuvemFundHero({ audioDisabled = false }: NuvemFundHeroPr
                       </div>
                     </div>
                     <div className="text-white/60 text-sm mb-5">
-                      {f.manager}
+                      {f.manager.handle}
                       <span className="mx-2 text-white/30">·</span>
                       {f.members} investors
                     </div>
@@ -699,14 +659,21 @@ export default function NuvemFundHero({ audioDisabled = false }: NuvemFundHeroPr
                     </ul>
 
                     {/* Pie: NAV + Loss-Protection con tier — mt-auto: siempre anclado abajo */}
-                    <div className="mt-auto flex items-center justify-between text-sm pt-4 border-t border-white/10">
+                    <div className="mt-auto flex items-center justify-between gap-3 text-sm pt-4 border-t border-white/10">
                       <span className="text-white/80">NAV {f.nav}</span>
-                      <span
-                        className="rounded-full bg-white/10 border px-3 py-1 text-xs font-medium"
-                        style={{ borderColor: tier.border, color: tier.text, boxShadow: tier.glow }}
-                      >
-                        ${f.coverK}k Loss-Protection
-                      </span>
+                      <div className="flex items-center justify-end gap-2">
+                        {f.access.hasAccess && (
+                          <span className="rounded-full border border-emerald-200/20 bg-emerald-200/10 px-2.5 py-1 text-[10px] font-medium text-emerald-100">
+                            Member
+                          </span>
+                        )}
+                        <span
+                          className="rounded-full bg-white/10 border px-3 py-1 text-xs font-medium"
+                          style={{ borderColor: tier.border, color: tier.text, boxShadow: tier.glow }}
+                        >
+                          ${f.coverK}k Loss-Protection
+                        </span>
+                      </div>
                     </div>
                   </div>
                 )
@@ -716,6 +683,21 @@ export default function NuvemFundHero({ audioDisabled = false }: NuvemFundHeroPr
           </main>
         </div>
       )}
+
+      <VaultAccessModal
+        vault={selectedVault}
+        onClose={() => setSelectedVault(null)}
+        onOpenCommunity={(vault, preview) => {
+          setSelectedVault(null)
+          setCommunity({ vault, preview })
+        }}
+      />
+
+      <VaultCommunityView
+        vault={community?.vault ?? null}
+        preview={community?.preview}
+        onClose={() => setCommunity(null)}
+      />
 
       {/* ---------- DOCS (overlay, lazy) ---------- */}
       {showDocs && (

@@ -1,0 +1,16 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="900" viewBox="0 0 1600 900" role="img" aria-label="S&P 500 price returns: 2023 24 percent, 2024 23.3 percent, 2025 17.9 percent">
+  <defs>
+    <linearGradient id="bg" x1="0" x2="1"><stop stop-color="#081426"/><stop offset="1" stop-color="#0b1d35"/></linearGradient>
+    <linearGradient id="bar" x1="0" y1="1" x2="0" y2="0"><stop stop-color="#1b7fff"/><stop offset="1" stop-color="#55e0b1"/></linearGradient>
+  </defs>
+  <rect width="1600" height="900" fill="url(#bg)"/>
+  <text x="120" y="140" fill="#eff7ff" font-family="Arial, Helvetica, sans-serif" font-size="58" font-weight="700">Three years of equity momentum</text>
+  <text x="120" y="200" fill="#8ba9c8" font-family="Arial, Helvetica, sans-serif" font-size="28">S&amp;P 500 price return • historical performance, not a forecast</text>
+  <g stroke="#244260" stroke-width="2"><line x1="180" y1="700" x2="1440" y2="700"/><line x1="180" y1="520" x2="1440" y2="520"/><line x1="180" y1="340" x2="1440" y2="340"/></g>
+  <g font-family="Arial, Helvetica, sans-serif" text-anchor="middle">
+    <rect x="350" y="268" width="210" height="432" rx="18" fill="url(#bar)"/><text x="455" y="245" fill="#eaf6ff" font-size="48" font-weight="700">~24%</text><text x="455" y="770" fill="#a9c3dc" font-size="34">2023</text>
+    <rect x="700" y="281" width="210" height="419" rx="18" fill="url(#bar)"/><text x="805" y="258" fill="#eaf6ff" font-size="48" font-weight="700">23.3%</text><text x="805" y="770" fill="#a9c3dc" font-size="34">2024</text>
+    <rect x="1050" y="378" width="210" height="322" rx="18" fill="url(#bar)"/><text x="1155" y="355" fill="#eaf6ff" font-size="48" font-weight="700">~18%</text><text x="1155" y="770" fill="#a9c3dc" font-size="34">2025</text>
+  </g>
+  <text x="120" y="845" fill="#6986a6" font-family="Arial, Helvetica, sans-serif" font-size="22">Sources: S&amp;P Dow Jones Indices; AP year-end market reports. Past performance is not indicative of future results.</text>
+</svg>

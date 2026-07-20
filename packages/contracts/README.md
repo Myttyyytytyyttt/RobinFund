@@ -1,4 +1,4 @@
-# RobinFund — Contratos
+# NuvemFund — Contratos
 
 Protocolo de **fondos sociales sobre Stock Tokens** en Robinhood Chain (chain ID 4663). Un manager
 crea un fondo, bloquea un **stake first-loss** en USDG, y opera Stock Tokens (NVDA, TSLA, SPY…) con
@@ -10,9 +10,9 @@ capital de terceros. Los LPs entran/salen a NAV; el stake del manager cubre sus 
 
 ---
 
-## Estado (2026-07-19)
+## Estado (2026-07-20)
 
-**Capa de contratos on-chain COMPLETA.** 117 tests en verde (unit con mocks + fork contra estado real
+**Capa de contratos on-chain COMPLETA.** 120 tests en verde (unit con mocks + fork contra estado real
 de mainnet 4663 + fuzzing de invariantes). Cada sub-fase pasó por revisión adversarial y aplicó los
 hallazgos. Tres `HIGH` cerrados en revisión (ver más abajo).
 
@@ -23,14 +23,14 @@ hallazgos. Tres `HIGH` cerrados en revisión (ver más abajo).
 | 1.2 | `FundShare`, `QueueEscrow`, `StakeEscrow`, `CompensationReserve` | 18 | ✅ revisado |
 | 1.3a | `Fund` (núcleo) | +26 | ✅ revisado (3 lentes) |
 | 1.4a | `AdapterRegistry`, `UniswapV4Adapter` + `Fund.execute` | +10 | ✅ revisado |
-| 1.5 | `EligibilityGate`, `FeeSplitter`, `Guardian`, `FundRegistry` + scripts de deploy | +21 | ✅ revisado |
+| 1.5 | `OpenEligibilityGate`, `FeeSplitter`, `Guardian`, `FundRegistry` + scripts de deploy | +23 | ✅ acceso abierto |
 
 Todos los contratos < 24.5KB (EIP-170); deploy completo simulado OK contra fork de mainnet, y
 **ejercitado end-to-end** por el test de integración del keeper (anvil forkeando mainnet + estos mismos
 scripts + ciclo de vida LP completo — ver `packages/keeper`). **Pendiente** (flecos con fallback seguro,
 ver §Deferidos): Frozen §10.3 completo, liquidación keeper-asistida de retiros cash, 0x RFQ adapter,
-fill parcial del cap. **Off-chain** (Fase 2): keeper completo (2a+2b, `packages/keeper`) y compliance
-signer completo (2c, `packages/compliance-signer`, revisado adversarialmente); pendiente indexer.
+fill parcial del cap. **Off-chain** (Fase 2): keeper e indexer completos. El compliance signer existe
+como módulo legado auditado, pero **no se despliega ni participa** mientras NuvemFund sea permissionless.
 
 ---
 
@@ -41,8 +41,8 @@ fondo). Los **registries** y la **gobernanza** son compartidos por todos los fon
 
 ```
                     ┌──────────────────── COMPARTIDO ────────────────────┐
-                    │  TokenRegistry   AdapterRegistry   EligibilityGate  │
-                    │  (activos+feeds) (venues trading)  (EIP-712)        │
+                    │  TokenRegistry   AdapterRegistry  OpenEligibilityGate│
+                    │  (activos+feeds) (venues trading) (siempre abierto)  │
                     │  Guardian (timelock, owner de los registries)       │
                     │  FundRegistry (índice de fondos desplegados)        │
                     └──────────────┬──────────────────────────────────────┘
@@ -75,9 +75,10 @@ fondo). Los **registries** y la **gobernanza** son compartidos por todos los fon
 | **`AddressBook`** | Direcciones verificadas de la chain | ⚠ Hay tokens impostores (NVDA/USDG falsos): direcciones SOLO de aquí. |
 | **`TokenRegistry`** | Universo de activos operables: cada Stock Token con su feed, `maxStaleness` (heartbeat+margen), bandas de cordura de precio | Suspensión permissionless por drift de beacon (C29). Owner → Guardian. |
 | **`AdapterRegistry`** | Whitelist de venues de trading | Owner-gated. |
-| **`EligibilityGate`** | Atestaciones EIP-712 `(account, expiry, nonce)` del compliance signer | `revoke()` avanza el nonce (una firma pre-emitida no deshace la revocación). TTL 90d. |
+| **`OpenEligibilityGate`** | Gate inmutable usado por todos los despliegues actuales | Cualquier wallet es elegible; devuelve siempre `ineligibleSince=0`; no tiene owner, signer ni revocación. |
+| **`EligibilityGate`** | Módulo EIP-712 legado, conservado para referencia/regresión | **Inactivo y no desplegado** en el producto permissionless. |
 | **`Guardian`** | Gobernanza de 2 velocidades | `pauseFund` instantáneo (freno, nunca retiros) + `queue/execute` timelockeado (delay ≥1d, gracia 14d). Owner = multisig externo. |
-| **`FundRegistry`** | Índice de fondos desplegados | Los fondos se despliegan directos (script) y se registran; el gate de elegibilidad del manager vive en el constructor del Fund. Factory con clones → v2. |
+| **`FundRegistry`** | Índice de fondos desplegados | Los fondos se despliegan directos (script) y se registran; el constructor recibe el gate abierto inmutable. Factory con clones → v2. |
 
 ### Librerías
 
@@ -91,7 +92,7 @@ fondo). Los **registries** y la **gobernanza** son compartidos por todos los fon
 | Contrato | Qué hace | Puntos clave |
 |---|---|---|
 | **`Fund`** | El núcleo (942 líneas). Colas con forward pricing, contabilidad NI de por vida, first-loss, fees, settlement, estados, trading | Ver §Fund abajo. |
-| **`FundShare`** | Shares del fondo, **NO transferibles** (D7) | Solo mint/burn por el Fund. Garantía de la Condición 28 del prospecto. |
+| **`FundShare`** | Shares del fondo, **NO transferibles** (D7) | Solo mint/burn por el Fund: simplifica NI/first-loss y liga el acceso social a la posición real. |
 | **`QueueEscrow`** | Custodia el USDG de depósitos aún en cola, **separado del Fund** | Un block de RHJ al Fund no alcanza el dinero no invertido (C11). |
 | **`StakeEscrow`** | El stake first-loss del manager | Timelock 7d + ventana 30d para retirar; el slash SOLO va a la reserva; liberación two-step con gracia. |
 | **`CompensationReserve`** | Funding y claims pull del first-loss, por período | `Σ pagado ≤ fondeado`; residuo barrido al manager solo en Closed (`totalShares==0`). |
@@ -103,6 +104,11 @@ fondo). Los **registries** y la **gobernanza** son compartidos por todos los fon
 ## El `Fund` en detalle (SPEC §4–§10)
 
 **Ciclo de vida**: `Active → (PendingWinding) → Winding → Closed`, más `Frozen` (si RHJ bloquea el fondo).
+
+**Acceso**: completamente abierto. Manager y LPs no presentan KYC ni atestaciones. Cada `Fund`
+guarda un `OpenEligibilityGate` inmutable que devuelve elegible para cualquier dirección; por ello
+la ruta heredada `forceRedeem` no puede activarse. SIWE en el website solo autentica propiedad de
+wallet para datos sociales, no identidad civil ni elegibilidad on-chain.
 
 **Entrar/salir** (colas, §5): `requestDeposit`/`requestWithdraw` encolan; `executeBatch` las procesa
 en la primera ventana de NAV válido con **forward pricing estricto** (la orden ejecuta contra una ronda

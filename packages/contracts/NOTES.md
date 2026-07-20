@@ -12,7 +12,20 @@ Estado y decisiones que no viven en el código ni en la spec. Para retomar sin r
 | 1.3a | `Fund` núcleo (sin trading) | 93 (26 core+ataques, 4 inv, +escrows/nav) | ✅ revisado (3 lentes) |
 | 1.3b | Flecos: true-up del collar in-kind, fill parcial del cap (C19), Frozen completo, cash-queue reorder | — | pendiente |
 | 1.4a | Trading: AdapterRegistry + UniswapV4Adapter + fund.execute con guardarraíl + presupuesto | 103 | ✅ revisado (falta 0x RFQ, liquidación keeper-asistida) |
-| 1.5 | `EligibilityGate` (EIP-712), `FeeSplitter`, `Guardian` (timelock), `FundFactory` | 117 | ✅ revisado (G1 HIGH cerrado) |
+| 1.5 | `OpenEligibilityGate` por defecto, `FeeSplitter`, `Guardian` (timelock), `FundRegistry` | suite completa | ✅ permissionless |
+
+## Decisión vigente (2026-07-20): acceso completamente abierto
+
+- Los despliegues usan `OpenEligibilityGate`, contrato stateless sin owner ni funciones de
+  revocación: `isEligible(any)=true` e `ineligibleSince(any)=0` para siempre.
+- `Fund.sol` conserva la interfaz inmutable para no alterar su núcleo económico ni su margen EIP-170.
+  Con el gate abierto, `forceRedeem` revierte siempre con `StillEligible`.
+- El keeper no busca LPs inelegibles; el indexer no indexa attestations; el devnet no levanta signer.
+- `EligibilityGate.sol` y `packages/compliance-signer` quedan como código legado auditado, **inactivo**.
+  Reintroducir restricciones requeriría una decisión explícita y nuevos fondos desplegados con otro
+  gate; nunca puede cambiarse silenciosamente el gate de un fondo ya creado.
+- SIWE/Supabase se usa únicamente como prueba de propiedad de wallet para RLS y funciones sociales;
+  no es KYC, no aplica geoblocking y no condiciona depósitos on-chain.
 
 ## Diferido explícitamente en Fund.sol 1.3a (buscar "1.3a" / "TODO" / "DIFERIDO" en el header)
 

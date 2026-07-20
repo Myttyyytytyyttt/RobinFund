@@ -12,7 +12,6 @@ const out = resolve(here, "../../contracts/out");
 const CONTRACTS = [
   ["FundAbi", "Fund.sol/Fund.json"],
   ["FundRegistryAbi", "FundRegistry.sol/FundRegistry.json"],
-  ["EligibilityGateAbi", "EligibilityGate.sol/EligibilityGate.json"],
   ["FundShareAbi", "FundShare.sol/FundShare.json"],
 ];
 
@@ -36,4 +35,4 @@ for (const [name, path] of CONTRACTS) {
 
 mkdirSync(resolve(here, "../abis"), { recursive: true });
 writeFileSync(resolve(here, "../abis/generated.ts"), ts, "utf8");
-console.log(`abis/generated.ts escrito (${CONTRACTS.length} contratos)`);
+console.log(`abis/generated.ts escrito (${CONTRACTS.length} contratos; acceso abierto)`);

@@ -4,35 +4,31 @@ pragma solidity ^0.8.26;
 import {Script, console2} from "forge-std/Script.sol";
 import {TokenRegistry} from "../src/TokenRegistry.sol";
 import {AdapterRegistry} from "../src/AdapterRegistry.sol";
-import {EligibilityGate} from "../src/EligibilityGate.sol";
+import {OpenEligibilityGate} from "../src/OpenEligibilityGate.sol";
 import {Guardian} from "../src/Guardian.sol";
 import {FundRegistry} from "../src/FundRegistry.sol";
 import {UniswapV4Adapter, IPoolManager} from "../src/adapters/UniswapV4Adapter.sol";
-import {IEligibilityGate} from "../src/interfaces/IEligibilityGate.sol";
 import {AddressBook} from "../src/AddressBook.sol";
 import {IAggregatorV3, IBeacon} from "../src/interfaces/IAggregatorV3.sol";
 
 /// @title Deploy — despliega el protocolo compartido de RobinFund (SPEC §12)
-/// @notice Orden: registries → gate → guardian → adapter → factory. Después transfiere la ownership
+/// @notice Orden: registries → gate abierto → guardian → adapter → registry. Después transfiere la ownership
 /// de los registries al Guardian y lista los Stock Tokens iniciales. Parametrizable por env:
-///   DEPLOYER_PK, COMPLIANCE_SIGNER, GUARDIAN_MULTISIG, KEEPER, PROTOCOL_TREASURY, GUARDIAN_DELAY.
+///   DEPLOYER_PK, GUARDIAN_MULTISIG, GUARDIAN_DELAY.
 /// Uso: forge script script/Deploy.s.sol --rpc-url robinhood_testnet --broadcast
 contract Deploy is Script {
     // maxStaleness por activo (heartbeat real 86400s + 1h de margen); bandas amplias iniciales.
     uint48 constant STALENESS = 90000;
 
     function run() external {
-        address signer = vm.envOr("COMPLIANCE_SIGNER", msg.sender);
         address multisig = vm.envOr("GUARDIAN_MULTISIG", msg.sender);
-        address keeper = vm.envOr("KEEPER", msg.sender);
-        address treasury = vm.envOr("PROTOCOL_TREASURY", msg.sender);
         uint256 guardianDelay = vm.envOr("GUARDIAN_DELAY", uint256(2 days));
 
         vm.startBroadcast();
 
         TokenRegistry registry = new TokenRegistry(AddressBook.USDG);
         AdapterRegistry adapters = new AdapterRegistry();
-        EligibilityGate gate = new EligibilityGate(signer);
+        OpenEligibilityGate gate = new OpenEligibilityGate();
         Guardian guardian = new Guardian(multisig, guardianDelay);
         UniswapV4Adapter uniAdapter = new UniswapV4Adapter(IPoolManager(AddressBook.UNI_V4_POOL_MANAGER));
         uint256 adapterId = adapters.add(address(uniAdapter));
@@ -57,7 +53,7 @@ contract Deploy is Script {
 
         console2.log("TokenRegistry   ", address(registry));
         console2.log("AdapterRegistry ", address(adapters));
-        console2.log("EligibilityGate ", address(gate));
+        console2.log("OpenEligibilityGate", address(gate));
         console2.log("Guardian        ", address(guardian));
         console2.log("UniswapV4Adapter", address(uniAdapter), "id", adapterId);
         console2.log("FundRegistry    ", address(fundRegistry));

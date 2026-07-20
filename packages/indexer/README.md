@@ -1,4 +1,4 @@
-# RobinFund — Indexer
+# NuvemFund — Indexer
 
 Indexer [Ponder](https://ponder.sh) del protocolo: transforma los eventos on-chain en la base de
 datos que consulta el frontend (GraphQL + SQL sobre HTTP). Nada de esto toca la chain para servir
@@ -11,7 +11,6 @@ cliente.
 |---|---|---|
 | `FundRegistry` | dirección fija | `fund` (metadatos leídos on-chain al registro) |
 | `Fund` (todos) | **factory pattern** desde `FundRegistered` | `deposit`, `withdrawal`, `settlement` (serie de precios), `claim`, `trade`, `fundAsset`, `lpPosition`, `activity` |
-| `EligibilityGate` | dirección fija | `attestation` |
 
 Agregados corrientes en `fund` (exactos porque `FundShare` no es transferible — las shares solo se
 mueven por mint/burn evented): `totalShares`, `lpCount` (holders con shares > 0), `lifetime*`,
@@ -31,7 +30,7 @@ pnpm test:e2e     # E2E completo: anvil fork + protocolo real + ciclo LP + asser
 ```
 
 Env (el `.env` raíz se carga solo): `INDEXER_RPC_URL` (fallback `RH_RPC_MAINNET`), `FUND_REGISTRY`,
-`ELIGIBILITY_GATE`, `INDEXER_START_BLOCK` (bloque del deploy — acota el backfill),
+`INDEXER_START_BLOCK` (bloque del deploy — acota el backfill),
 `INDEXER_CHAIN_ID` (default 4663), `DATABASE_URL` (Postgres; sin ella, PGlite embebida en
 `PONDER_PGLITE_DIR`).
 
@@ -58,8 +57,11 @@ Env (el `.env` raíz se carga solo): `INDEXER_RPC_URL` (fallback `RH_RPC_MAINNET
 `CreateFund.s.sol` reales, feed USDG mockeado — un fork no publica rondas), ejecuta el ciclo LP
 completo, **mina 256 bloques para enterrar los eventos bajo la ventana de finality** (el backfill
 histórico de Ponder solo cubre bloques finalizados), arranca `ponder start` contra el anvil y
-verifica por GraphQL: fondo con metadatos/agregados, depósito ejecutado, retiro pagado, settlement
-en la serie, posición del LP a cero tras salir, atestaciones, y el orden del feed de actividad.
+verifica por GraphQL: fondo con metadatos/agregados, depósito ejecutado sin onboarding, retiro pagado,
+settlement en la serie, posición del LP a cero tras salir y el orden del feed de actividad.
+
+El indexer no almacena KYC, países ni attestations. La identidad social del website vive separada en
+Supabase y se protege con SIWE/RLS; Ponder solo deriva estado financiero público de la chain.
 
 ## Revisión adversarial (aplicada)
 

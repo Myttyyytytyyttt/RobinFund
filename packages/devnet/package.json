@@ -3,7 +3,7 @@
   "version": "0.0.1",
   "private": true,
   "type": "module",
-  "description": "Devnet local: anvil forkeando mainnet + protocolo desplegado + keeper/signer/indexer corriendo + drill completo de 9 actos",
+  "description": "Devnet local permissionless: anvil forkeando mainnet + protocolo desplegado + keeper/indexer + drill completo de 9 actos",
   "scripts": {
     "devnet": "tsx src/devnet.ts",
     "drill": "tsx src/drill.ts",

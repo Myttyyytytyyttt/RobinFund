@@ -23,6 +23,7 @@ export const fundAbi = parseAbi([
   "function close()",
   "function finalizeClosure(uint64[] periodsToSweep)",
   "function claim()",
+  "function forceRedeem(address lp)",
 ]);
 
 export const shareAbi = parseAbi([
@@ -40,4 +41,7 @@ export const erc20 = parseAbi([
   "function balanceOf(address) view returns (uint256)",
 ]);
 
-export const gateRevokeAbi = parseAbi(["function revoke(address account)"]);
+export const openGateAbi = parseAbi([
+  "function isEligible(address account) view returns (bool)",
+  "function ineligibleSince(address account) view returns (uint48)",
+]);

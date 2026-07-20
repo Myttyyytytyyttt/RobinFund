@@ -14,21 +14,18 @@
  *  3. Sin settlement pendiente pero con órdenes en cola:
  *     · NAV válido → `executeBatch(gross)`.
  *     · NAV inválido con retiro in-kind ejecutable en cabeza → `executeInKindWithdrawals` (válvula D12).
- *  4. LPs inelegibles pasada la gracia de 30d → `forceRedeem(lp)` (§10.2, permissionless).
  */
 import { type Address, type PublicClient, type WalletClient } from "viem";
-import { fundAbi, fundRegistryAbi, gateAbi } from "./abi.js";
+import { fundAbi, fundRegistryAbi } from "./abi.js";
 import { assessFund, type FundAssessment, type SettleAction } from "./settlement.js";
 import { checkFundBlocked } from "./monitors.js";
-import { shouldForceRedeem } from "./monitors.js";
 import type { FundSnapshot } from "./fundReader.js";
 
 export type TxIntent =
   | { fn: "declareFrozen"; args: readonly [] }
   | { fn: "settle"; args: readonly [bigint] }
   | { fn: "executeBatch"; args: readonly [bigint] }
-  | { fn: "executeInKindWithdrawals"; args: readonly [] }
-  | { fn: "forceRedeem"; args: readonly [Address] };
+  | { fn: "executeInKindWithdrawals"; args: readonly [] };
 
 export interface PlanInput {
   snap: FundSnapshot;
@@ -39,8 +36,6 @@ export interface PlanInput {
   blocked: boolean;
   /** Con NAV inválido: ¿la cabeza de la cola de retiros es in-kind con cooldown vencido? */
   headWithdrawInKindReady: boolean;
-  /** LPs inelegibles con gracia vencida y shares vivas. */
-  redeemables: Address[];
 }
 
 export function planActions(p: PlanInput): TxIntent[] {
@@ -61,7 +56,6 @@ export function planActions(p: PlanInput): TxIntent[] {
     out.push({ fn: "executeInKindWithdrawals", args: [] });
   }
 
-  for (const lp of p.redeemables) out.push({ fn: "forceRedeem", args: [lp] });
   return out;
 }
 
@@ -151,24 +145,6 @@ export async function gatherPlanInput(
       o[4] && !o[3] && nowSeconds >= requestTime + snap.withdrawCooldownSeconds;
   }
 
-  // compliance: LPs con shares vivas e inelegibles pasada la gracia
-  const redeemables: Address[] = [];
-  const gate = (await publicClient.readContract({
-    address: fund,
-    abi: fundAbi,
-    functionName: "GATE",
-  })) as Address;
-  for (const lp of assess.lps) {
-    if (lp.shares === 0n) continue;
-    const since = (await publicClient.readContract({
-      address: gate,
-      abi: gateAbi,
-      functionName: "ineligibleSince",
-      args: [lp.address],
-    })) as bigint | number;
-    if (shouldForceRedeem(BigInt(since), nowSeconds)) redeemables.push(lp.address);
-  }
-
   const input: PlanInput = {
     snap,
     queues: { deposits: dep, withdrawals: wd },
@@ -176,7 +152,6 @@ export async function gatherPlanInput(
     grossClaimsWad: assess.grossClaimsWad,
     blocked,
     headWithdrawInKindReady,
-    redeemables,
   };
   return { assess, input };
 }

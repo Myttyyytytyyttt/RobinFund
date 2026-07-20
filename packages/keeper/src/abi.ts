@@ -107,13 +107,6 @@ export const fundAbi = [
     inputs: [],
     outputs: [],
   },
-  {
-    type: "function",
-    name: "forceRedeem",
-    stateMutability: "nonpayable",
-    inputs: [{ name: "lp", type: "address" }],
-    outputs: [],
-  },
   { type: "function", name: "declareFrozen", stateMutability: "nonpayable", inputs: [], outputs: [] },
   // --- eventos (para descubrir el set de LPs y monitorear) ---
   {
@@ -158,23 +151,4 @@ export const accessRegistryAbi = [
 export const fundRegistryAbi = [
   { type: "function", name: "fundCount", stateMutability: "view", inputs: [], outputs: [{ type: "uint256" }] },
   { type: "function", name: "funds", stateMutability: "view", inputs: [{ type: "uint256" }], outputs: [{ type: "address" }] },
-] as const;
-
-/** EligibilityGate — el runner consulta inelegibilidad (forceRedeem §10.2); attest para tests/tooling. */
-export const gateAbi = [
-  { type: "function", name: "isEligible", stateMutability: "view", inputs: [{ type: "address" }], outputs: [{ type: "bool" }] },
-  { type: "function", name: "ineligibleSince", stateMutability: "view", inputs: [{ type: "address" }], outputs: [{ type: "uint48" }] },
-  { type: "function", name: "nonceOf", stateMutability: "view", inputs: [{ type: "address" }], outputs: [{ type: "uint256" }] },
-  {
-    type: "function",
-    name: "attest",
-    stateMutability: "nonpayable",
-    inputs: [
-      { name: "account", type: "address" },
-      { name: "expiry", type: "uint48" },
-      { name: "nonce", type: "uint256" },
-      { name: "signature", type: "bytes" },
-    ],
-    outputs: [],
-  },
 ] as const;

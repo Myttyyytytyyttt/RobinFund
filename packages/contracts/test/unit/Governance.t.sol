@@ -3,6 +3,7 @@ pragma solidity ^0.8.26;
 
 import {Test} from "forge-std/Test.sol";
 import {EligibilityGate} from "../../src/EligibilityGate.sol";
+import {OpenEligibilityGate} from "../../src/OpenEligibilityGate.sol";
 import {Guardian} from "../../src/Guardian.sol";
 import {FeeSplitter} from "../../src/FeeSplitter.sol";
 import {FundRegistry} from "../../src/FundRegistry.sol";
@@ -12,6 +13,23 @@ import {AdapterRegistry} from "../../src/AdapterRegistry.sol";
 import {IEligibilityGate} from "../../src/interfaces/IEligibilityGate.sol";
 import {IERC20} from "../../src/interfaces/IERC20.sol";
 import {MockAccessRegistry, MockStockToken, MockUSDG, MockFeed} from "../mocks/Mocks.sol";
+
+contract OpenEligibilityGateTest is Test {
+    OpenEligibilityGate gate = new OpenEligibilityGate();
+
+    function test_cualquier_wallet_es_elegible_sin_registro() public view {
+        assertTrue(gate.isEligible(address(0)));
+        assertTrue(gate.isEligible(address(0xA11CE)));
+        assertTrue(gate.isEligible(address(type(uint160).max)));
+        assertEq(gate.ineligibleSince(address(0xA11CE)), 0);
+    }
+
+    function test_no_existe_superficie_de_revocacion() public {
+        (bool ok,) = address(gate).call(abi.encodeWithSignature("revoke(address)", address(0xA11CE)));
+        assertFalse(ok);
+        assertTrue(gate.isEligible(address(0xA11CE)));
+    }
+}
 
 contract EligibilityGateTest is Test {
     EligibilityGate gate;

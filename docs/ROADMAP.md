@@ -1,6 +1,8 @@
 # NuvemFund — Step-by-step build roadmap
 
-> Complements [SPEC.md](SPEC.md) (mechanism v0.3) and [REVIEW.md](REVIEW.md) (adversarial review).
+> Complements [SPEC.md](SPEC.md) (mechanism v1.0) and [REVIEW.md](REVIEW.md) (adversarial review).
+> Current access decision (2026-07-20): **permissionless, no KYC**. SIWE is wallet authentication
+> for social data only. The compliance signer is archived and not deployed.
 > Real execution order: each phase depends on the previous one except where noted. Durations estimated for 1–2 full-time people.
 
 ---
@@ -31,13 +33,13 @@ Internal order by dependencies:
 - **1.2 Custody peripherals**: `FundShare` (non-transferable ERC-20), `QueueEscrow` (separate), `StakeEscrow` (timelocks, Frozen suspension), `CompensationReserve` (pull claims per period).
 - **1.3 `Fund` — the core** (60% of the work):
   - 1.3.1 Deposit/withdrawal queues: strict forward pricing, minimum latency, pre-settlement blackout, pagination, minimums and caps (§5.3).
-  - 1.3.2 Canonical batch sequence: settlement → FIFO deposits (running fee, partial fill at cap, skip+refund by attestation) → FIFO withdrawals with netting (§5.4).
+  - 1.3.2 Canonical batch sequence: settlement → FIFO deposits (open gate, running fee, cap handling) → FIFO withdrawals with netting (§5.4).
   - 1.3.3 Cash withdrawal settlement: fixed price, real proceeds to the one leaving, sharePrice invariant (§5.6); in-kind withdrawal without NAV.
   - 1.3.4 First-loss: basis per LP with lazy roll-forward, aggregate `B`, settlement with `grossClaims`/λ/funding, claims (§6).
   - 1.3.5 Fees: entry fee on curve with running AUM, HWM adjusted for contributions, crystallization with §7.2 variables.
   - 1.3.6 States: Winding (ad-hoc settlement at the transition), Closed (fixed claims, stake release), Frozen (§10.3).
-- **1.4 Trading**: `AdapterRegistry` + `UniswapV3Adapter` + `ZeroExAdapter` with delta measurement, per-trade guardrail, double slippage budget, pre-settlement freeze, beacon watch (§8).
-- **1.5 Governance and compliance**: `EligibilityGate` (EIP-712, revocation, forced redemption), `FeeSplitter`, `Guardian` (pauses without withdrawals, depeg breaker), `FundFactory` (clones, immutable params).
+- **1.4 Trading**: `AdapterRegistry` + `UniswapV4Adapter` with delta measurement, per-trade guardrail, double slippage budget, pre-settlement freeze, beacon watch (§8). 0x RFQ remains deferred.
+- **1.5 Governance and access**: `OpenEligibilityGate` (always open, immutable), `FeeSplitter`, `Guardian` (pauses without withdrawals, depeg breaker), `FundRegistry` (direct deploy + register).
 - **1.6 Serious testing**:
   - 1.6.1 Unit tests per contract.
   - 1.6.2 **One test for each of the 21 attacks in §14** — the mechanism regression suite.
@@ -51,13 +53,13 @@ Internal order by dependencies:
 
 ## Phase 2 — Indexer, keeper and services (≈ 2 weeks, starts with 1.7)
 
-- **2.1 Indexer** (Ponder over 46630/4663): events from all contracts → historical sharePrice, track records per manager, slashes, degraded settlements, forced redemptions. GraphQL/REST API for the frontend.
+- **2.1 Indexer** ✅ (Ponder over 46630/4663): FundRegistry/Fund events → historical sharePrice, track records, slashes and degraded settlements. GraphQL API for the frontend; no identity/KYC tables.
 - **2.2 Keeper bots** (TS + viem, the protocol's own — everything is permissionless anyway):
   - 2.2.1 Batch and settlement executor (with off-chain computation of `grossClaims` from events + publication).
   - 2.2.2 Withdrawal liquidator (Uniswap/0x routing with guards).
   - 2.2.3 Monitors: beacon implementations, `isBlocked` per fund, `UIMultiplierUpdated`, feed pauses → alerts + auto-suspensions.
-  - 2.2.4 Expired compliance forced redemptions.
-- **2.3 Compliance signer service**: geo verification + user attestation → EIP-712 signature with TTL; RHJ jurisdictions list; revocation. (Evaluate an external zk-KYC-type provider as an upgrade.)
+  - 2.2.4 No identity monitoring or forced redemptions in the permissionless deployment.
+- **2.3 Compliance signer service**: archived/inactive. It is not built, started or funded in the current product.
 
 **Deliverable**: testnet operating on its own end-to-end without manual intervention.
 
@@ -69,7 +71,7 @@ Internal order by dependencies:
 - **3.2 LP flows**: explore funds (filters by stake/AUM coverage, track record, slashes), deposit with visible effective fee and forward pricing explanation ("your order executes in the next valid window ~Monday 13:30 UTC"), cash/in-kind withdrawal, first-loss claims.
 - **3.3 Manager side**: fund creation (wizard with params + stake), trading terminal (Uniswap/0x quotes, visible slippage budget), stake and cap management.
 - **3.4 Social layer**: per-fund token-gated chat (SIWE + `minAccessShares`), manager feed, real-time positions for LPs / public 24h delay, leaderboards, X-linked profiles.
-- **3.5 Compliance UX**: geo-block, attestation flow, per-fund issuer risk disclosures (§10.3).
+- **3.5 Open-access UX**: no geo-block or KYC; clear issuer/custody risk disclosures (§10.2). SIWE only proves wallet ownership.
 
 **Deliverable**: complete product usable on testnet — the demo that gets shown.
 
@@ -91,7 +93,7 @@ Internal order by dependencies:
 
 - **5.1 Founding cohort of managers**: 5–10 traders with an audience on X, white-glove onboarding, subsidized stakes if needed.
 - **5.2 Incentives**: points system for deposits/retention/manager PnL (without an explicit token promise), campaigns with the chain community.
-- **5.3 Technical v2**: trust-minimization of `grossClaims` (challenge window or proof), collateral on Morpho, baskets/indices, transferable shares with gating, decentralized keeper.
+- **5.3 Technical v2**: trust-minimization of `grossClaims` (challenge window or proof), collateral on Morpho, baskets/indices, optional transferable shares, decentralized keeper.
 - **5.4 Product v2**: evaluate keys with fee-share (if legal allows), secondary markets, agents (the chain's agentic trading MCP).
 
 ---
@@ -101,8 +103,8 @@ Internal order by dependencies:
 | Category | Item | By when |
 |---|---|---|
 | Infra | Dedicated RPC (Alchemy/QuickNode), 2 keys (testnet/mainnet) | Phase 0 |
-| Infra | Hosting: Vercel (web) + VPS/Railway (keeper, indexer, signer) | Phase 2 |
-| Services | Privy, WalletConnect Cloud, domain, geo-IP service | Phases 0–3 |
+| Infra | Hosting: Vercel (web) + VPS/Railway (keeper, indexer) | Phase 2 |
+| Services | Privy, WalletConnect Cloud, domain, Supabase wallet auth | Phases 0–3 |
 | Funds | testnet ETH (free) · mainnet ETH for deploys (~$200–500) · USDG for seed funds and testing | Phases 0/4/5 |
 | Funds | Audit $30–80k · legal $10–30k · bug bounty (escrow) | Phase 4 |
 | Security | 2/3 minimum multisig (Guardian), hardware wallets, incident response plan | Phase 4 |

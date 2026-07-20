@@ -1,8 +1,14 @@
-# NuvemFund — Mechanism specification v0.9
+# NuvemFund — Mechanism specification v1.0
 
 > Social fund protocol over Robinhood Stock Tokens on Robinhood Chain (chain ID 4663, testnet 46630).
-> Status: draft for discussion, pre-implementation. Date: 2026-07-19.
+> Status: implemented and exercised on a mainnet fork. Date: 2026-07-20.
 >
+> **Changelog v1.0 (permissionless access)**: NuvemFund launches completely open, with no KYC,
+> country filtering, attestations or compliance signer in the operational path. Deployments use an
+> immutable `OpenEligibilityGate`: every wallet is eligible and `ineligibleSince` is always zero.
+> The legacy EIP-712 gate remains archived code, not deployed. The keeper no longer scans identity
+> state or sends forced redemptions; the indexer no longer stores attestations. SIWE is used only to
+> prove wallet ownership for social data/RLS, never as KYC or a prerequisite for on-chain entry.
 > **Changelog v0.2**: incorporates the 30 confirmed findings from the adversarial review ([REVIEW.md](REVIEW.md), C1–C30).
 > **Changelog v0.3**: the verification of v0.2 (27/30 closed) detected that C1/C3/C12 were only closed in the *calculation* of the loss, not in the *distribution* — the compensation entered the NAV pro-rata and a mid-period entrant still captured part of it. v0.3 changed the first-loss to claims per LP capped at the average cost basis (outside the NAV), added a **per-period slippage budget tied to the stake** (residual of C5), and fixed 10 internal inconsistencies.
 > **Changelog v0.4**: the adversarial replay of v0.3 found the **average-basis washing** (buy the dip to lower your basis, sell the rebound keeping the basis and you keep the realized gain, and you claim first-loss over a "loss" already recovered — +250 USDG per 1,000 shares in a market-neutral maneuver, verified numerically). v0.4 replaces the average cost basis with **net invested capital (`NI`)**: withdrawals subtract `max(pro-rata of NI, real proceeds)`, so that every realized intra-period gain nets the claim and a market-neutral maneuver claims 0. It also fixes the justification of the per-period slippage budget (§8).
@@ -15,7 +21,7 @@
 
 ## 0. Summary
 
-NuvemFund allows any eligible person to create an **open (evergreen) fund** that operates Robinhood Stock Tokens (ERC-20 + ERC-8056, Chainlink feeds per asset) with third-party capital denominated in USDG. LPs enter and exit at any time through **queues with strict forward pricing**. The manager locks a **fixed stake in USDG that acts as first-loss over each LP's net invested capital** — individual claims crystallized in each period, which at most restore what was contributed — and which determines the **AUM cap**. Social access is tied to being an LP. Managers can activate an **entry fee that grows with cap utilization** — the curve lives in the fee; the share price is always NAV.
+NuvemFund allows any wallet to create an **open (evergreen) fund** that operates Robinhood Stock Tokens (ERC-20 + ERC-8056, Chainlink feeds per asset) with third-party capital denominated in USDG. LPs enter and exit at any time through **queues with strict forward pricing**. The manager locks a **fixed stake in USDG that acts as first-loss over each LP's net invested capital** — individual claims crystallized in each period, which at most restore what was contributed — and which determines the **AUM cap**. Social access is tied to being an LP. Managers can activate an **entry fee that grows with cap utilization** — the curve lives in the fee; the share price is always NAV.
 
 ## 1. Closed design decisions
 
@@ -27,19 +33,18 @@ NuvemFund allows any eligible person to create an **open (evergreen) fund** that
 | D4 | **No keys.** Social access tied to LP position ≥ minimum. | A single NAV-backed asset; no reflexive asset nor security with a right to profits. |
 | D5 | **Entry fee** activatable: fixed (`feeMin = feeMax`) or growing with utilization. Manager/fund/protocol split. The "fund" part **is not performance** (it adjusts the HWM, §7.2). | FOMO and reward to the early LP via real flow; no double charging of perf fee on fee (C4). |
 | D6 | Shares minted/burned **always at NAV**. No curve touches the share price. | Anti-ponzi invariant. |
-| D7 | Shares **non-transferable** in v1 (only mint/burn via queues). | Condition 28 of the RHJ prospectus; no leakage of the gating; no resale of access. |
-| D8 | **Mandatory eligibility gating** on entry + **forced redemption** if eligibility expires or is revoked (§10). | Exposure to Condition 28 is continuous (C24). |
+| D7 | Shares **non-transferable** in v1 (only mint/burn via queues). | Keeps NI/first-loss accounting deterministic and ties social membership to a real position. |
+| D8 | **Permissionless access**: no KYC, jurisdiction list, attestation, expiry or revocation (§10). | The product launches open; identity is not a trusted dependency of the financial protocol. |
 | D9 | Many small and independent funds; **queue escrow separate from the Fund**. | Blast radius bounded against an issuer block (C11). |
 | D10 | No leverage, shorts or Morpho in v1. Universe = Stock Tokens with a valid feed + USDG. | Minimal auditable surface. |
 | D11 | **Internal accounting in WAD (18 dec)** with explicit normalization at every boundary and rounding against the actor. | USDG has 6 decimals on the chain (C2/C9). |
-| D12 | **Withdrawals are never blocked** by governance or compliance. Attestation only gates entries; the Guardian only pauses deposits/trading. | Unconditional exit invariant (C21). |
+| D12 | **Withdrawals are never blocked** by governance or identity services. The Guardian only pauses deposits/trading. | Unconditional exit invariant (C21). |
 
 ## 2. Actors
 
-- **Manager**: creates the fund, locks stake, operates via adapters. Attested as eligible.
-- **LP**: deposits USDG, receives shares at NAV, accesses the social layer. Attested on entering; their exit never requires attestation.
-- **Keeper**: executes batches, settlements, liquidations, forced redemptions and monitoring. **Permissionless** functions (anyone can call them when the preconditions are met); the protocol operates its own bots for liveness. At settlement it also publishes `grossClaims` (§6), a scalar verifiable off-chain from on-chain events.
-- **Compliance signer**: issues EIP-712 attestations off-chain.
+- **Manager**: any wallet that creates a fund, locks stake and operates via adapters.
+- **LP**: any wallet that deposits USDG, receives shares at NAV and accesses the social layer.
+- **Keeper**: executes batches, settlements and technical monitoring. **Permissionless** functions (anyone can call them when the preconditions are met); the protocol operates its own bots for liveness. At settlement it also publishes `grossClaims` (§6), a scalar verifiable off-chain from on-chain events.
 - **Guardian** (multisig + timelock): pauses deposits/trading, manages registries, depeg circuit breaker. **Cannot block withdrawals nor touch fund assets** (D12).
 
 ## 3. External dependencies
@@ -111,8 +116,8 @@ All conditions, evaluated live in the transaction:
 
 ### 5.3 Queues and batches
 
-- `requestDeposit(D)`: requires a current attestation, `D ≥ minDeposit`, < `maxPendingOrders` live orders of the LP. The USDG goes to the **`QueueEscrow` (contract separate from the Fund)** (C11). Cancellable until its batch opens. Honest scope of C11 (G14): the escrow protects against blocks of the Fund's address by issuer/Paxos (the blocked Fund can still *call* `release`); it does not protect against a bug of the Fund itself — that is why the Fund's cancellation/refund route must be dependency-free (no NAV, no attestation, no pauses).
-- `requestWithdraw(S)`: `S ≥ minWithdrawShares` (or the full balance); locks the shares. **Cancellable only until the cooldown matures**; afterwards it is committed (C20). Cancelling unlocks the shares. The lock is internal accounting of the Fund (`FundShare` does not expose lock); the locked shares remain in `balanceOf` for the purposes of §5.1 and §11 until the burn (G16). Several concurrent orders permitted, independent cooldowns, under the cap per address. Neither requesting nor executing a withdrawal requires attestation (D12).
+- `requestDeposit(D)`: open to every wallet, `D ≥ minDeposit`, < `maxPendingOrders` live orders of the LP. The USDG goes to the **`QueueEscrow` (contract separate from the Fund)** (C11). Cancellable until its batch opens. Honest scope of C11 (G14): the escrow protects against blocks of the Fund's address by issuer/Paxos (the blocked Fund can still *call* `release`); it does not protect against a bug of the Fund itself — that is why the Fund's cancellation/refund route must be dependency-free (no NAV, external identity service or pauses).
+- `requestWithdraw(S)`: `S ≥ minWithdrawShares` (or the full balance); locks the shares. **Cancellable only until the cooldown matures**; afterwards it is committed (C20). Cancelling unlocks the shares. The lock is internal accounting of the Fund (`FundShare` does not expose lock); the locked shares remain in `balanceOf` for the purposes of §5.1 and §11 until the burn (G16). Several concurrent orders permitted, independent cooldowns, under the cap per address.
 - **In-kind** withdrawal: raw pro-rata of each token + USDG, same cooldown. **Does not require a valid NAV** — normative escape valve in pauses, depeg and Frozen (C23).
 
 **Strict forward pricing** (C13): a batch fixes a cutoff `T_c` and only executes when, for each relevant asset, the round used satisfies `updatedAt > T_c`. Minimum latency `MIN_QUEUE_LATENCY` (10 min); `withdrawCooldown ≥ 1h`.
@@ -124,7 +129,7 @@ All conditions, evaluated live in the transaction:
 ### 5.4 Canonical sequence of a valid window (C8)
 
 1. **Settlement**, if due (§9).
-2. **FIFO, sequential deposits**: each order (i) verifies attestation — invalid: **skip + refund in the same batch** (C21); (ii) verifies cap with **partial fill**: executes up to the headroom, returns the remainder in the same transaction, and the later deposit orders pass to the next batch (C19); (iii) computes its fee with the **current AUM** that includes the previous fills of the batch (C15); (iv) credits its fund-fee to the NAV and **adjusts the HWM** (§7.2); (v) mints at the current sharePrice resulting from the fixed marks + previous credits.
+2. **FIFO, sequential deposits**: every wallet passes the immutable open gate; each order (i) verifies cap with **partial fill**: executes up to the headroom, returns the remainder in the same transaction, and the later deposit orders pass to the next batch (C19); (ii) computes its fee with the **current AUM** that includes the previous fills of the batch (C15); (iii) credits its fund-fee to the NAV and **adjusts the HWM** (§7.2); (iv) mints at the current sharePrice resulting from the fixed marks + previous credits.
 3. **FIFO withdrawals** at the sharePrice resulting from step 2 (that is the "fixed" price referenced by §5.6): payment first from the fund's USDG (natural netting with the batch's deposits), then liquidation (§5.6).
 
 ### 5.5 USDG and depeg (C23)
@@ -192,18 +197,18 @@ Post:        NI_lp −= claim_lp  (lazy)  ·  the aggregate NI is decremented ex
 - **Coverage vesting** (v0.7): the coverage of a deposit matures linearly over `COVERAGE_VESTING` (default 1 period). It closes the two captures flagged in round 5: the *hedged capture* (fund-long at the cap + external short of the same Stock Token collected the stake with no price risk) now requires ≥ 1 period of the short's carry cost, and the *whipsaw* of a recent deposit loses the coverage that has not yet matured. Vesting only **reduces** claims — it opens no new surface. Recommended complement to the manager: **price the insurance via entry fee** (`feeMin > 0` as premium; with fee 0 the insurance is free and it is expectable that it will be arbitraged until the stake is exhausted).
 - **Reserve residue** (v0.9, replaces the v0.7 rollover — finding G2 of the 1.2 review: with lazy and indefinite claims, the safe residue is NOT computable in the next settlement): the `funded − paid` residue of each period stays in the `CompensationReserve` throughout the entire life of the fund and **only leaves via `sweep` in Closed when `totalShares == 0`** — at that point every LP has materialized (the burn is a mandatory touch), so the residue is *provably* unclaimable and returns to the manager together with the release of the stake. Never before, never between periods.
 - **Keeper under-declaration** (v0.9): a `grossClaims` published below the real `Σ loss_lp` shortchanges the last ones to materialize (`Σ claims ≤ funding` of the contract). It is **detectable ex-post** (Σ materialized > published grossClaims = on-chain proof of the under-declaration) and is treated as a keeper incident (trust v1, §15); the cut claims are **not** re-created against future periods.
-- **Mandatory materialization**: any operation that mutates `NI_lp` or `shares_lp` (mint, burn, forced redemption, crystallization) **materializes first, in order, all pending `(Pe_k, λ_k)`** of the LP, applying `NI_lp −= claim_k` between one and the next — the pro-rata branch of the burn never operates on a stale `NI_lp`.
+- **Mandatory materialization**: any operation that mutates `NI_lp` or `shares_lp` (mint, burn, crystallization) **materializes first, in order, all pending `(Pe_k, λ_k)`** of the LP, applying `NI_lp −= claim_k` between one and the next — the pro-rata branch of the burn never operates on a stale `NI_lp`.
 
 - **`funding` is exact and 100% on-chain** (`NI` and `totalShares` are contract state): the stake never pays more than the fund's net loss against the live invested capital. The aggregate includes the negative `NI` of exited accounts **forever** — neither intra-period bucketing (v0.4) nor cross-period (v0.5) can increase the funding.
 - `grossClaims` (keeper, verifiable from events) **only determines the λ split, never the stake outflow** (review 1.3a, S3). Key correction: the per-LP vesting makes `grossClaims` (vested) be **< `funding`** (netted, non-vested), so `grossClaims` CANNOT gate the funding — doing so (as v0.9.1 attempted) let a keeper under-declare and reduce the stake outflow, reopening §14.6/§14.20. That is why `λ = min(1, funding/grossClaims)`: with `grossClaims ≤ funding` (vesting case), λ = 1 and each LP collects its vested claim; the residue `funding − Σ claims` stays in the reserve and is swept to the manager in Closed (v0.9). An over-declaring keeper only lowers λ (uniformly underpays, residue to the reserve); an under-declaring one also lowers λ but never reduces the slashed `funding`. In no case does it move the stake outflow or direct it to a colluding account (the `loss_lp` are on-chain state).
 - **Temporary over-slash from vesting**: since `funding` (non-vested) ≥ `Σ claims` (vested), the stake is slashed by more than what is paid in the period; the excess lives in the reserve and returns to the manager in Closed. Bounded (≤ one vesting window of deferral) and recoverable — the price of keeping the funding keeper-independent.
-- **Trade-off assumed**: when other LPs realized gains, the aggregate net is smaller than the sum of individual losses and λ < 1 even if the stake is sufficient. Deliberate price of Sybil immunity without identity assumptions. Grief of diluting λ without profit: mitigated by attestation uniqueness (§10.1).
+- **Trade-off assumed**: when other LPs realized gains, the aggregate net is smaller than the sum of individual losses and λ < 1 even if the stake is sufficient. Deliberate price of Sybil immunity without identity assumptions. Splitting wallets cannot increase fund-level funding; λ-dilution without profit remains an observable, bounded open-access trade-off.
 - **Product property assumed** (not an accounting exploit, yes priced economics): whoever deposits is insured at their real entry cost. Over the fund's position the claim only **restores** — but an LP can end up net positive by means the contract does not see or insure: whipsaw (the market recovers after collecting the claim) or external hedge (short of the same Stock Token on another venue — the "hedged capture" of round 5, bounded by the total stake). That is why the insurance **is priced**: coverage vesting imposes a carry cost and the entry fee is the premium the manager must charge. That "downside covered until the stake is exhausted" is the value proposition, paid knowingly and **at a price** by the manager.
 
 **Split — pull, not NAV**:
 
 - Compensation **never enters NAV or sharePrice**: side payment from the `CompensationReserve`. Economic invariants (verified by fuzzing of 200k sequences in round 5): (1) `claim_lp ≤ real accumulated uncompensated loss` under any sequence of flows; (2) `Σ lifetime claims of the LP ≤ net capital contributed by the LP`; (3) `stake outflow per settlement ≤ aggregate net loss against the live NI of the LPs`. A market-neutral maneuver claims 0 — within one account, split across several, and across period boundaries.
-- The shares of blocked withdrawals not yet burned do generate a claim (they held until the mark). The forced compliance redemption (§10.2) is a normal burn: no extra claim.
+- The shares of pending withdrawals not yet burned do generate a claim (they held until the mark).
 - After a slash, `aumCap` falls to `k × remainingStake`; the manager may replenish.
 - **Stake withdrawal**: `STAKE_WITHDRAW_TIMELOCK` (7 days) + **30-day execution window** (a matured and non-executed request expires — no permanent exit option, G3) + only at settlement + only if the resulting cap ≥ AUM. Slashes after the request **reduce what was requested**: stake added afterward does not inherit the old timelock (G3). No `MIN_STAKE` floor post-creation — the operational floor is `aumCap = k × stake ≥ AUM` (decision G17). Final release: two-step with grace in the escrow (§4).
 - In **Frozen** first-loss is **suspended**: the loss caused by the issuer is not the manager's (§10.3).
@@ -265,35 +270,39 @@ else:  P_final = Pe   (HWM intact)
 - **Mark**: the settlement executes in the **first valid window (§5.2, evaluated live) with `block.timestamp ≥ settlementDue`**, using the rounds current for that window (each with `updatedAt ≥ settlementDue` when the feed has published after the due; if not, the most recent valid by staleness). Non-discretion comes from: (1) trading frozen from due (§8) — the manager cannot trade the mark; (2) permissionless execution with the protocol keeper committed to calling in the first valid window (documented liveness assumption; if only the manager called, it could choose among valid windows — accepted residual and visible on-chain as settlement delay).
 - **Postponement cap** (C17): no valid window within `MAX_SETTLEMENT_DELAY` (7 days) → **degraded settlement**: assets without a reliable price at the last valid price, perf fee omitted (HWM intact), first-loss computed with the available marks, event flagged on-chain.
 
-## 10. Eligibility and compliance
+## 10. Open access and issuer controls
 
-### 10.1 Entry
+### 10.1 Permissionless entry
 
-- EIP-712 `(address, expiry, nonce)` attestations (the per-account monotonic `nonce` is anti-replay; the signer must sign the exact triple), TTL 90 days, revocable. **Revocation advances the nonce** (review 1.5/G1): it invalidates every pre-issued signature, so re-enabling requires a signer signature POSTERIOR to the revocation — a pre-signed renewal cannot undo a compliance block. They verify non-US-person and non-restricted jurisdiction (RHJ list: US + Cuba, Belarus, Iran, North Korea, Russia, Syria, Ukraine, South Sudan, Sudan, Myanmar, Venezuela; additional restrictions Canada/UK/Switzerland).
-- **Uniqueness**: the compliance signer issues **a single active address per verified person** (changing address revokes the previous one). Defense in depth against Sybil: the first-loss mechanism is already Sybil-immune in extraction (§6), and uniqueness additionally disables the λ-dilution grief.
-- Required in `createFund` and `requestDeposit`, re-verified when executing the batch (invalid: skip + refund, §5.4).
+- Production and devnet deploy `OpenEligibilityGate`, a stateless contract with no owner, signer or
+  mutation methods. `isEligible(address)` always returns `true`; `ineligibleSince(address)` always
+  returns `0`.
+- Each Fund stores the gate address as an immutable constructor parameter. A fund created open cannot
+  later be switched to a restrictive gate by governance or an operator.
+- Managers and LPs do not submit KYC, country, identity or attestation data. Deposits are authorized
+  only by wallet signatures/allowances and the financial preconditions of the Fund.
+- `Fund.forceRedeem` remains in the already-reviewed bytecode for interface continuity, but is
+  unreachable with `OpenEligibilityGate` because it always reverts `StillEligible`. The keeper does
+  not scan or call it.
+- The old `EligibilityGate`/compliance signer is archived optional code and is not part of the
+  deployment, indexer or liveness assumptions described by this version.
 
-### 10.2 Continuous eligibility (C24)
-
-- Attestation lapsed beyond `COMPLIANCE_GRACE` (30 days) or revoked → anyone can enqueue the **forced redemption** of the LP's full balance: USDG at the next valid NAV, **without cooldown**; social access falls at the instant of the revocation. Public event (the fund's compliance register). Their pending first-loss claims remain claimable.
-- Voluntary withdrawals never require attestation (D12).
-
-### 10.3 Frozen (C25, C30)
+### 10.2 Frozen (C25, C30)
 
 - **Detection**: in addition to monitoring, `isNavValid()` and the batches read `isBlocked(fund)` and per-token pauses **on-chain as a precondition** (C30).
-- **In Frozen**: (1) pending deposits voided with refund (the `QueueEscrow` is not blocked); (2) trading off; (3) **USDG-only redemption** pro-rata of the liquid sleeve with proportional partial burn; (4) in-kind per token, skipping those that revert (residual as a claim); (5) valuation of blocked assets: last valid price 72h → progressive haircut → zero after observed `adminBurn`; (6) **first-loss suspended** (§6); (7) stake released after distributing the recoverable USDG. The `CompensationReserve` of previous periods is not blocked: claims already adjudicated keep being paid. **Invariant (G15)**: the Fund's claim-collection entrypoint does not depend on fund state, valid NAV, attestation or pauses — mirror of D12; a `whenNotFrozen` on that path would be a spec bug.
+- **In Frozen**: (1) pending deposits voided with refund (the `QueueEscrow` is not blocked); (2) trading off; (3) **USDG-only redemption** pro-rata of the liquid sleeve with proportional partial burn; (4) in-kind per token, skipping those that revert (residual as a claim); (5) valuation of blocked assets: last valid price 72h → progressive haircut → zero after observed `adminBurn`; (6) **first-loss suspended** (§6); (7) stake released after distributing the recoverable USDG. The `CompensationReserve` of previous periods is not blocked: claims already adjudicated keep being paid. **Invariant (G15)**: the Fund's claim-collection entrypoint does not depend on fund state, valid NAV, identity services or pauses — mirror of D12; a `whenNotFrozen` on that path would be a spec bug.
 - Permanent disclosure of the issuer risk (block/burn/upgrade) per fund.
 
 ## 11. Social layer (off-chain)
 
-- Chat + feed + real-time positions: gated by `balanceOf(LP) ≥ minAccessShares`, verified by SIWE against the indexer. Expires on redeeming below the minimum; falls with the compliance revocation (§10.2).
-- Public: positions with 24h delay and full track record — historical sharePrice, settlements (including degraded ones), slashes and first-loss claims, forced redemptions. The history is signal.
+- Chat + feed + real-time positions: gated only by `balanceOf(LP) ≥ minAccessShares`, verified by SIWE against the indexer. SIWE proves control of the wallet; it is not KYC. Access expires on redeeming below the minimum.
+- Public: positions with 24h delay and full track record — historical sharePrice, settlements (including degraded ones), slashes and first-loss claims. The history is signal.
 
 ## 12. Contract map
 
 | Contract | Responsibility |
 |---|---|
-| `FundFactory` | ERC-1167 clones, global registry |
+| `FundRegistry` | Lightweight index of Funds deployed directly by the operator scripts |
 | `Fund` | NAV, settlement, `NI` per LP, trading, states |
 | `QueueEscrow` | **Separate**: USDG of pending deposits and refunds (C11) |
 | `CompensationReserve` | **Separate**: funding/claims per period with cash invariants; `sweep` of the residue only in Closed with totalShares=0 (v0.9). Payable in any fund state (§10.3) |
@@ -302,7 +311,7 @@ else:  P_final = Pe   (HWM intact)
 | `TokenRegistry` | Assets + feed + calibrated `maxStaleness` (C26) + auto-suspension by beacon (C29) |
 | `AdapterRegistry` + adapters | Whitelisted venues, deltas, guardrail + slippage budgets |
 | `NAVLib` | WAD valuation + validity (§5.2) |
-| `EligibilityGate` | Attestations, revocation, forced redemption (C24) |
+| `OpenEligibilityGate` | Immutable permissionless access: every wallet eligible, no revocation surface |
 | `FeeSplitter` | Split of the **performance fee** 90/10 (the entry fee is split inside the Fund's deposit path); deployed by the Fund |
 | `Guardian` | Pauses (never withdrawals), registries, depeg circuit breaker |
 
@@ -334,13 +343,11 @@ else:  P_final = Pe   (HWM intact)
 | `minWithdrawShares` | equiv. 50 USDG at request | — | protocol |
 | `maxPendingOrders` per address | 8 | — | protocol |
 | `MAX_ORDERS_PER_TX` | 50 | — | protocol |
-| `COMPLIANCE_GRACE` | 30 d | — | protocol |
 | `STAKE_RELEASE_GRACE` | 30 d | — | protocol |
 | `STAKE_WITHDRAW_TIMELOCK` | 7 d | — | protocol |
 | `STAKE_WITHDRAW_EXECUTION_WINDOW` | 30 d | — | protocol |
 | `COVERAGE_VESTING` | 1 × PERIOD | — | protocol |
 | `minAccessShares` | per fund | ≥ 0 | manager |
-| attestation TTL | 90 d | — | protocol |
 
 ## 14. Attacks and edge cases considered
 
@@ -360,13 +367,13 @@ else:  P_final = Pe   (HWM intact)
 14. **Fund block by RHJ** → on-chain precondition, Frozen mechanics, separate escrows, first-loss suspended (C25/C30/C11).
 15. **Beacon upgrade** → auto-suspension + deltas in adapters (C29).
 16. **USDG depeg** → feed if it exists; if not, circuit breaker with in-kind open (C23).
-17. **Ineligible LP** → forced redemption post-grace; voluntary exit never blocked (C24/C21).
+17. **Identity-layer exclusion** → impossible in v1.0: the Fund points to an immutable open gate with no revocation surface. Only issuer-level token/address controls remain, handled by Frozen (C24/C21).
 18. **Dormant LP at the close** → fixed claims + release of the stake after the grace (C22).
 19. **Double-count of the `uiMultiplier`** → valuation = raw × feed; multiplier UI-only.
 20. **Manager as LP of their own fund** → allowed; with claims over NI they only collect having previously lost that money against the market — they cannot self-recycle the slash (see 2 and 22).
 21. **Keeper publishes incorrect `grossClaims`** → the funding is exact, on-chain and **keeper-independent** (`min(availableStake, max(0, NI − Pe × totalShares_LP))`); `grossClaims` only enters into `λ = min(1, funding/grossClaims)`. A false `grossClaims` (high or low) only redistributes/dilutes among claimants, **never reduces or increases the stake outflow** (S3 of review 1.3a corrected the v0.9.1 attempt to cap funding by grossClaims, which was indeed keeper-reducible); residue to the reserve → manager in Closed; scalar recomputable from events (§15).
 22. **Average-basis laundering** (buy the dip to lower the basis, sell the rebound keeping it, claim over the retained "loss" already recovered in cash — the exploit that killed v0.3) → net invested capital: the burn subtracts `max(NI pro-rata, proceeds)`, so every realized gain nets the claim and the market-neutral maneuver claims 0 (v0.4).
-23. **Bucketing across addresses** (the entity puts the realized gain in account B — floored to claim 0 — and the retained loss in account A — full claim; the exploit that killed v0.4) → funding netted at the fund level: the realized gains of *any* address subtract from the aggregate `NI` — and since v0.6 the negative `NI` of exited accounts **persist forever** (no per-period reset), so the cross-period variant that killed v0.5 does not work either. Residual grief of diluting λ without profit → attestation uniqueness (§10.1) (v0.5/v0.6).
+23. **Bucketing across addresses** (the entity puts the realized gain in account B — floored to claim 0 — and the retained loss in account A — full claim; the exploit that killed v0.4) → funding netted at the fund level: the realized gains of *any* address subtract from the aggregate `NI` — and since v0.6 the negative `NI` of exited accounts **persist forever** (no per-period reset), so the cross-period variant that killed v0.5 does not work either. In the permissionless model, splitting wallets cannot increase the aggregate stake outflow; λ-dilution without profit is an accepted observable residual (v0.5/v0.6/v1.0).
 24. **In-kind valuation seam** (withdraw in-kind with the oracle paused at a peak and have the proceeds recorded at the later depressed price → phantom NI → over-claim) → collar: deduction at `max(pro-rata, last valid price, first valid price after)`, correction only upward, with the settlement mark as the limit. Weak and opportunistic residue (nobody controls Chainlink's pauses), bounded by `sharesBurned × (real peak − collar)` (v0.5).
 25. **Free put re-issued by the baseline reset** (the exploit that killed v0.2–v0.5 as a family: re-basing the insured capital to each settlement's mark turned any peak into an insured floor — a passive holder in a 1→2→1 market drained 100% of the stake with no real loss, no Sybil and no timing) → **lifetime invested capital, no resets**: the insurance returns at most what was contributed, once (`Σ lifetime claims ≤ net capital contributed`); each claim reduces the insured capital (v0.6).
 26. **Hedged capture of the insurance** (fund-long up to the cap + external short of the same Stock Token: collects claims with no price risk; accounting-wise impeccable — the stake only pays real losses of the fund's position — but free-insurance economics, bounded by the total stake) → not an accounting defect but a *pricing* one: **coverage vesting** (≥ 1 period of the short's carry) + entry fee as premium (`feeMin > 0` recommended; with fee 0 it is expectable that it will be arbitraged). Inherent to insuring a liquid hedgeable asset; bounded, visible and priced (v0.7).

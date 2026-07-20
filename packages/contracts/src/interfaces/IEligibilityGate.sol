@@ -1,13 +1,13 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.26;
 
-/// @notice Gate de elegibilidad (SPEC §10). Implementación completa en Fase 1.5;
-/// el Fund solo depende de esta interfaz.
+/// @notice Interfaz de acceso consumida por Fund. El despliegue permissionless usa
+/// OpenEligibilityGate; EligibilityGate queda disponible solo como módulo legado opcional.
 interface IEligibilityGate {
-    /// @notice Elegible ahora mismo (atestación vigente, no revocada).
+    /// @notice Si la wallet puede abrir o ampliar una posición y si el manager puede operar.
     function isEligible(address account) external view returns (bool);
 
-    /// @notice Timestamp desde el que la cuenta es inelegible (caducidad o revocación);
-    /// 0 si es elegible. Usado por la redención forzosa (§10.2: gracia de 30 días).
+    /// @notice Timestamp desde el que la cuenta es inelegible; 0 si es elegible.
+    /// OpenEligibilityGate devuelve siempre 0, por lo que forceRedeem queda desactivado.
     function ineligibleSince(address account) external view returns (uint48);
 }
