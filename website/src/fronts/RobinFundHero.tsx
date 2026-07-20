@@ -34,19 +34,21 @@ type MockTrade = { side: 'B' | 'S'; ticker: string; size: string; ago: string }
 const MOCK_FUNDS: {
   name: string
   manager: string
+  perfTotal: string
   perf7d: string
   nav: string
   members: number
-  cover: string
+  coverK: number // Loss-Protection en miles de $ — decide el tier
   trades: MockTrade[]
 }[] = [
   {
     name: 'Alpine Alpha',
     manager: '@sofia.eth',
+    perfTotal: '+87%',
     perf7d: '+3.1%',
     nav: '$1.248',
     members: 248,
-    cover: '$25k first-loss',
+    coverK: 8,
     trades: [
       { side: 'B', ticker: 'NVDA', size: '$12.4k', ago: '2h' },
       { side: 'S', ticker: 'TSLA', size: '$8.2k', ago: '6h' },
@@ -56,10 +58,11 @@ const MOCK_FUNDS: {
   {
     name: 'Blue Chip Basket',
     manager: '@marchetti',
+    perfTotal: '+34%',
     perf7d: '+1.8%',
     nav: '$1.091',
     members: 512,
-    cover: '$40k first-loss',
+    coverK: 40,
     trades: [
       { side: 'B', ticker: 'MSFT', size: '$22.0k', ago: '4h' },
       { side: 'B', ticker: 'SPY', size: '$15.5k', ago: '9h' },
@@ -69,10 +72,11 @@ const MOCK_FUNDS: {
   {
     name: 'Momentum Seven',
     manager: '@kenji_t',
+    perfTotal: '+129%',
     perf7d: '+5.6%',
     nav: '$1.412',
     members: 97,
-    cover: '$12k first-loss',
+    coverK: 12,
     trades: [
       { side: 'B', ticker: 'TSLA', size: '$9.8k', ago: '1h' },
       { side: 'B', ticker: 'NVDA', size: '$14.1k', ago: '7h' },
@@ -80,6 +84,35 @@ const MOCK_FUNDS: {
     ],
   },
 ]
+
+// Tiers del Loss-Protection: <5k bronze · 5-10k silver · 10-20k gold · 20k+ diamond
+function coverTier(k: number) {
+  if (k >= 20)
+    return { border: 'rgba(165,225,255,0.75)', text: '#cdeeff', glow: '0 0 14px rgba(165,225,255,0.28)' }
+  if (k >= 10) return { border: 'rgba(255,215,0,0.6)', text: '#f2d77c', glow: '0 0 12px rgba(255,215,0,0.18)' }
+  if (k >= 5) return { border: 'rgba(200,200,210,0.7)', text: '#e4e4ea', glow: 'none' }
+  return { border: 'rgba(205,127,50,0.7)', text: '#e5b184', glow: 'none' }
+}
+
+// Logo de stock: primero public/stocks/<TICKER>.png (si lo añades tú), si no CDN, si no se oculta.
+function StockLogo({ ticker }: { ticker: string }) {
+  return (
+    <img
+      src={`/stocks/${ticker}.png`}
+      onError={(e) => {
+        const img = e.currentTarget
+        if (!img.dataset.cdn) {
+          img.dataset.cdn = '1'
+          img.src = `https://assets.parqet.com/logos/symbol/${ticker}?format=png`
+        } else {
+          img.style.visibility = 'hidden'
+        }
+      }}
+      alt={ticker}
+      className="w-4 h-4 rounded-full bg-white/90 object-contain"
+    />
+  )
+}
 
 type Phase = 'hero' | 'transition' | 'vista'
 
@@ -323,50 +356,62 @@ export default function RobinFundHero() {
             </p>
 
             <div className="animate-fade-rise-delay-2 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-5">
-              {MOCK_FUNDS.map((f) => (
-                <div
-                  key={f.name}
-                  className="rounded-2xl bg-black/25 backdrop-blur-md border border-white/20 p-6 text-white cursor-pointer transition-transform hover:scale-[1.02]"
-                >
-                  {/* Cabecera: nombre + perf 7d */}
-                  <div className="flex items-baseline justify-between mb-1">
-                    <span className="font-semibold text-lg">{f.name}</span>
-                    <span className="text-emerald-300 font-medium text-sm">{f.perf7d} · 7d</span>
-                  </div>
-                  <div className="text-white/60 text-sm mb-5">
-                    {f.manager}
-                    <span className="mx-2 text-white/30">·</span>
-                    {f.members} investors
-                  </div>
+              {MOCK_FUNDS.map((f) => {
+                const tier = coverTier(f.coverK)
+                return (
+                  <div
+                    key={f.name}
+                    className="rounded-2xl bg-black/40 backdrop-blur-md border border-white/20 p-6 text-white cursor-pointer transition-transform hover:scale-[1.02]"
+                  >
+                    {/* Cabecera: nombre + % general grande con 7d debajo */}
+                    <div className="flex items-start justify-between mb-1">
+                      <span className="font-semibold text-lg">{f.name}</span>
+                      <div className="text-right">
+                        <div className="text-emerald-300 font-semibold text-xl leading-none">{f.perfTotal}</div>
+                        <div className="text-white/60 text-xs mt-1">
+                          {f.perf7d} <span className="text-white/40">· 7d</span>
+                        </div>
+                      </div>
+                    </div>
+                    <div className="text-white/60 text-sm mb-5">
+                      {f.manager}
+                      <span className="mx-2 text-white/30">·</span>
+                      {f.members} investors
+                    </div>
 
-                  {/* Trades recientes, en pequeño */}
-                  <div className="text-white/50 text-[11px] uppercase tracking-wide mb-2">Recent trades</div>
-                  <ul className="space-y-1.5 mb-5">
-                    {f.trades.map((t, i) => (
-                      <li key={i} className="flex items-center gap-2 text-xs">
-                        <span
-                          className={`w-4 h-4 rounded-full flex items-center justify-center text-[9px] font-bold ${
-                            t.side === 'B' ? 'bg-emerald-400/25 text-emerald-300' : 'bg-red-400/25 text-red-300'
-                          }`}
-                        >
-                          {t.side}
-                        </span>
-                        <span className="font-medium">{t.ticker}</span>
-                        <span className="text-white/60">{t.size}</span>
-                        <span className="ml-auto text-white/40">{t.ago}</span>
-                      </li>
-                    ))}
-                  </ul>
+                    {/* Trades recientes, en pequeño, con logo del stock */}
+                    <div className="text-white/50 text-[11px] uppercase tracking-wide mb-2">Recent trades</div>
+                    <ul className="space-y-1.5 mb-5">
+                      {f.trades.map((t, i) => (
+                        <li key={i} className="flex items-center gap-2 text-xs">
+                          <span
+                            className={`w-4 h-4 rounded-full flex items-center justify-center text-[9px] font-bold ${
+                              t.side === 'B' ? 'bg-emerald-400/25 text-emerald-300' : 'bg-red-400/25 text-red-300'
+                            }`}
+                          >
+                            {t.side}
+                          </span>
+                          <StockLogo ticker={t.ticker} />
+                          <span className="font-medium">{t.ticker}</span>
+                          <span className="text-white/60">{t.size}</span>
+                          <span className="ml-auto text-white/40">{t.ago}</span>
+                        </li>
+                      ))}
+                    </ul>
 
-                  {/* Pie: NAV + cover */}
-                  <div className="flex items-center justify-between text-sm pt-4 border-t border-white/10">
-                    <span className="text-white/80">NAV {f.nav}</span>
-                    <span className="rounded-full bg-white/15 border border-white/20 px-3 py-1 text-xs">
-                      {f.cover}
-                    </span>
+                    {/* Pie: NAV + Loss-Protection con tier (bronze/silver/gold/diamond) */}
+                    <div className="flex items-center justify-between text-sm pt-4 border-t border-white/10">
+                      <span className="text-white/80">NAV {f.nav}</span>
+                      <span
+                        className="rounded-full bg-white/10 border px-3 py-1 text-xs font-medium"
+                        style={{ borderColor: tier.border, color: tier.text, boxShadow: tier.glow }}
+                      >
+                        ${f.coverK}k Loss-Protection
+                      </span>
+                    </div>
                   </div>
-                </div>
-              ))}
+                )
+              })}
             </div>
           </main>
         </div>
