@@ -581,16 +581,9 @@ contract Fund {
         lockedShares[lp] -= shares;
         pendingOrders[lp]--;
 
-        // pro-rata físico de cada activo (try/catch: en Frozen salta tokens bloqueados, §10.3)
-        for (uint256 i; i < assets.length; ++i) {
-            uint256 bal = IERC20(assets[i]).balanceOf(address(this));
-            uint256 slice = bal * shares / supply;
-            if (slice > 0) {
-                removedWad += NAVLib.sliceValueWad(REGISTRY.getAsset(assets[i]).feed, slice);
-                (bool ok,) = assets[i].call(abi.encodeCall(IERC20.transfer, (lp, slice)));
-                ok; // residual de tokens intransferibles: TODO 1.3b (claim in-kind)
-            }
-        }
+        // pro-rata físico + InKindSlice por asset — en NAVLib (delegatecall) por tamaño EIP-170;
+        // en Frozen salta tokens bloqueados (§10.3, residual: TODO 1.3b claim in-kind)
+        removedWad = NAVLib.distributeInKind(REGISTRY, assets, orderId, lp, shares, supply);
         removedWad += usdgSlice * USDG_TO_WAD;
         if (usdgSlice > 0) USDG.safeTransfer(lp, usdgSlice);
         emit WithdrawExecuted(orderId, lp, shares, usdgSlice, true);

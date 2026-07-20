@@ -174,6 +174,35 @@ library NAVLib {
         }
     }
 
+    /// @notice Un asset entregado en un retiro in-kind. Emitido vía delegatecall (librería enlazada):
+    /// el log sale con la dirección del FUND. `valueWad` es mejor esfuerzo al último precio del feed
+    /// (0 con feed muerto — válvula de crisis §5.3). La pata USDG no se eventea aquí: ya viaja como
+    /// `paid6` en `WithdrawExecuted`. Valor total del retiro = Σ valueWad + paid6·1e12.
+    event InKindSlice(uint256 indexed orderId, address token, uint256 amount, uint256 valueWad);
+
+    /// @notice Reparte el pro-rata físico de `tokens` al LP y eventea cada slice entregado.
+    /// Devuelve el valor WAD retirado del fondo (descuento del NAV local, S6). `public` a propósito
+    /// (patrón EIP-170): la librería enlazada saca el loop del bytecode del Fund. El transfer es
+    /// low-level: en Frozen los tokens bloqueados revierten y se saltan sin eventear (§10.3 — el LP
+    /// no los recibió; residual reclamable en 1.3b), pero su valor SÍ resta del NAV local (como antes).
+    function distributeInKind(
+        TokenRegistry reg,
+        address[] memory tokens,
+        uint256 orderId,
+        address lp,
+        uint256 shares,
+        uint256 supply
+    ) public returns (uint256 removedWad) {
+        for (uint256 i; i < tokens.length; ++i) {
+            uint256 slice = IERC20(tokens[i]).balanceOf(address(this)) * shares / supply;
+            if (slice == 0) continue;
+            uint256 valueWad = sliceValueWad(reg.getAsset(tokens[i]).feed, slice);
+            removedWad += valueWad;
+            (bool ok,) = tokens[i].call(abi.encodeCall(IERC20.transfer, (lp, slice)));
+            if (ok) emit InKindSlice(orderId, tokens[i], slice, valueWad);
+        }
+    }
+
     /// @notice Forward pricing estricto (C13): cutoff = min(updatedAt) de los feeds relevantes; una
     /// orden es ejecutable si su requestTime < cutoff. `public` para sacar el código del Fund.
     function freshnessCutoff(TokenRegistry reg, address[] memory tokens) public view returns (uint48 cutoff) {

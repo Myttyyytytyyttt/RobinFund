@@ -80,7 +80,12 @@ agregados de LP (kind `fee_redeem`), índices de BD en columnas calientes, `exec
 - `PerfFeeCrystallized` se emite antes que `Settled` en la misma tx → `settlement` se upsertea
   desde ambos handlers y `Settled` ya conoce las shares de la fee para el precio post-dilución.
 - El status `cancelled` de depósitos es inalcanzable (el contrato emite `DepositRefunded("cancelada")`).
-- **Fleco de contrato** (pre-deploy): los retiros in-kind solo eventean la pata USDG (`paid6`) —
-  el valor de los tokens entregados (`removedWad`) no se emite, así que `withdrawn6`/PnL realizado
-  subrepresentan las salidas in-kind. Documentado en `packages/contracts/NOTES.md`.
+- **Retiros in-kind**: cada asset entregado emite `InKindSlice(orderId, token, amount, valueWad)`
+  (lo emite `NAVLib.distributeInKind` vía delegatecall, así que el log sale con la dirección del
+  Fund — por eso `gen-abis` funde los eventos de NAVLib en `FundAbi`). Los slices llegan ANTES que
+  su `WithdrawExecuted` (misma tx): el handler acumula `inKindValueWad` en la orden y deja el
+  detalle en `in_kind_slice`; `WithdrawExecuted` cierra con `exit6 = paid6 + inKindValueWad/1e12`
+  hacia `withdrawn6`/`lifetimeWithdrawn6`. `valueWad=0` = feed muerto (válvula de crisis §5.3),
+  no "gratis". Un transfer que revierte (token bloqueado en Frozen) NO emite slice: el LP no lo
+  recibió (residual reclamable en 1.3b del contrato).
 - Cantidades: USDG en `*6`, precios/shares en WAD, como `bigint` crudo — formatea el frontend.

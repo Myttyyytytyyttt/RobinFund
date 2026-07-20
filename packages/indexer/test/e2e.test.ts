@@ -322,6 +322,25 @@ beforeAll(async () => {
   await feedRoundAndWarp(t2 + 86400n + 600n, t2 + 86400n + 1200n);
   await write(2, fundAddr, fundAbi, "executeBatch", [0n]);
 
+  // ---- segundo ciclo: retiro IN-KIND. El fondo solo tiene USDG (los Stock Tokens reales del fork
+  // bloquean transfers a direcciones no-KYC), así que no habrá InKindSlice de tokens — la pata de
+  // slices se cubre en los unit tests de contratos; aquí se verifica la agregación in-kind del
+  // indexer (exit6 = paid6 + inKindValueWad/1e12) y que Ponder decodifica el ABI fundido ----
+  await write(4, fundAddr, fundAbi, "requestDeposit", [500_000000n]);
+  const t3 = await now();
+  await feedRoundAndWarp(t3 + 900n, t3 + 1300n);
+  await write(2, fundAddr, fundAbi, "executeBatch", [0n]);
+  const shares2 = (await pub.readContract({
+    address: shareAddr,
+    abi: shareAbi,
+    functionName: "balanceOf",
+    args: [acct[4]!.address],
+  })) as bigint;
+  await write(4, fundAddr, fundAbi, "requestWithdraw", [shares2, true]);
+  const t4 = await now();
+  await feedRoundAndWarp(t4 + 86400n + 600n, t4 + 86400n + 1200n);
+  await write(2, fundAddr, fundAbi, "executeBatch", [0n]);
+
   // enterrar los eventos bajo la ventana de finality de Ponder: el backfill histórico solo cubre
   // bloques finalizados, y todo nuestro ciclo vive en los últimos ~40 bloques del fork
   await testClient.mine({ blocks: 256 });
@@ -411,9 +430,10 @@ describe.skipIf(!RUN)("E2E: indexer Ponder sobre el protocolo real", () => {
     expect(f.state).toBe(0);
     expect(f.frozen).toBe(false);
     expect(BigInt(f.currentPeriod)).toBe(2n); // un settlement ejecutado
-    expect(BigInt(f.lifetimeDeposited6)).toBe(1_000_000000n);
-    expect(BigInt(f.lifetimeWithdrawn6)).toBeGreaterThan(990_000000n);
-    expect(f.lpCount).toBe(0); // el LP salió entero
+    expect(BigInt(f.lifetimeDeposited6)).toBe(1_500_000000n);
+    // incluye el retiro cash Y la pata USDG del in-kind (agregación exit6 del handler)
+    expect(BigInt(f.lifetimeWithdrawn6)).toBeGreaterThan(1_400_000000n);
+    expect(f.lpCount).toBe(0); // el LP salió entero (dos veces)
     expect(f.lastPeWad).not.toBeNull();
     // el precio para TVL (post perf fee) existe y no supera al de la marca
     expect(f.lastPePostFeeWad).not.toBeNull();
@@ -422,8 +442,10 @@ describe.skipIf(!RUN)("E2E: indexer Ponder sobre el protocolo real", () => {
   });
 
   it("depósito: requested → executed con shares, fee y la tx de ejecución enlazada", async () => {
-    const data = await gql(`{ deposits { items { orderId lp amount6 status sharesMinted fee6 txHash executedTxHash } } }`);
-    expect(data.deposits.items).toHaveLength(1);
+    const data = await gql(
+      `{ deposits(orderBy: "orderId", orderDirection: "asc") { items { orderId lp amount6 status sharesMinted fee6 txHash executedTxHash } } }`,
+    );
+    expect(data.deposits.items).toHaveLength(2);
     const d = data.deposits.items[0];
     expect(d.status).toBe("executed");
     expect(d.lp.toLowerCase()).toBe(acct[4]!.address.toLowerCase());
@@ -433,13 +455,25 @@ describe.skipIf(!RUN)("E2E: indexer Ponder sobre el protocolo real", () => {
     expect(d.executedTxHash).not.toBe(d.txHash); // solicitud y batch son tx distintas
   });
 
-  it("retiro: executed con el cash pagado", async () => {
-    const data = await gql(`{ withdrawals { items { lp shares inKind status paid6 } } }`);
-    expect(data.withdrawals.items).toHaveLength(1);
-    const w = data.withdrawals.items[0];
-    expect(w.status).toBe("executed");
-    expect(w.inKind).toBe(false);
-    expect(BigInt(w.paid6)).toBeGreaterThan(990_000000n);
+  it("retiro cash e in-kind: ambos executed; el in-kind con su pata USDG en paid6", async () => {
+    const data = await gql(
+      `{ withdrawals(orderBy: "orderId", orderDirection: "asc") { items { lp shares inKind status paid6 inKindValueWad } } }`,
+    );
+    expect(data.withdrawals.items).toHaveLength(2);
+    const [cash, inKind] = data.withdrawals.items;
+    expect(cash.status).toBe("executed");
+    expect(cash.inKind).toBe(false);
+    expect(BigInt(cash.paid6)).toBeGreaterThan(990_000000n);
+    expect(inKind.status).toBe("executed");
+    expect(inKind.inKind).toBe(true);
+    expect(BigInt(inKind.paid6)).toBeGreaterThan(0n); // pro-rata USDG del fondo solo-cash
+    // fondo sin Stock Tokens: no hubo InKindSlice, el acumulador queda null
+    expect(inKind.inKindValueWad).toBeNull();
+  });
+
+  it("in_kind_slice existe y está vacía (fondo solo-USDG: sin slices de tokens)", async () => {
+    const data = await gql(`{ inKindSlices { items { token amount valueWad } } }`);
+    expect(data.inKindSlices.items).toHaveLength(0);
   });
 
   it("settlement: la serie de precios tiene el período con Pe > 0 y funding 0 (sin pérdida)", async () => {
@@ -458,8 +492,8 @@ describe.skipIf(!RUN)("E2E: indexer Ponder sobre el protocolo real", () => {
     const p = data.lpPositions.items[0];
     expect(p.lp.toLowerCase()).toBe(acct[4]!.address.toLowerCase());
     expect(BigInt(p.shares)).toBe(0n);
-    expect(BigInt(p.deposited6)).toBe(1_000_000000n);
-    expect(BigInt(p.withdrawn6)).toBeGreaterThan(990_000000n);
+    expect(BigInt(p.deposited6)).toBe(1_500_000000n);
+    expect(BigInt(p.withdrawn6)).toBeGreaterThan(1_400_000000n); // cash + pata USDG del in-kind
   });
 
   it("atestaciones del gate indexadas (manager + LP activas)", async () => {

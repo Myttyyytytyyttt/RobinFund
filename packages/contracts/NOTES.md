@@ -93,13 +93,28 @@ clones ERC-1167 + initialize → v2.
 Scripts: `script/Deploy.s.sol` (protocolo compartido), `script/CreateFund.s.sol` (un fondo). Deploy
 completo simulado OK contra fork de mainnet.
 
-## Fleco (hallado por la revisión del indexer, 2026-07-20): valor in-kind no eventeado
+## RESUELTO (2026-07-20): valor in-kind no eventeado — `InKindSlice` desde NAVLib
 
-`WithdrawExecuted(orderId, lp, shares, paid6, inKind)` solo lleva la pata USDG (`paid6`); el
-`removedWad` (valor total entregado en tokens, calculado en `_executeInKind`) no se emite y los
-transfers por asset tampoco eventean. Consecuencia: ningún indexer puede responder "qué recibió el
-LP en su retiro in-kind y cuánto valía" — `withdrawn6`/PnL realizado subrepresentan las salidas
-in-kind (incluye forceRedeem y la válvula de crisis). **Cambio solo posible PRE-deploy** (después
-es imposible). Opciones: añadir `removedWad` a WithdrawExecuted (ojo: Fund a 34 bytes del límite
-EIP-170) o un evento `InKindSlice(orderId, token, amount)` por asset. Fallback si no cabe: el
-indexer reconstruye leyendo balances block-1 vs block (caro, no aísla órdenes en el mismo batch).
+Hallazgo original (revisión del indexer): `WithdrawExecuted(orderId, lp, shares, paid6, inKind)`
+solo llevaba la pata USDG; los transfers por asset no eventeaban nada, y ningún indexer podía
+responder "qué recibió el LP y cuánto valía" (subrepresentaba PnL/`lifetimeWithdrawn6`, incluye
+forceRedeem y la válvula de crisis).
+
+Aplicado — **opción B enriquecida**: `event InKindSlice(uint256 indexed orderId, address token,
+uint256 amount, uint256 valueWad)` por asset entregado, con el valor al feed incluido (el indexer
+no necesita precios propios). Decisiones:
+
+- El loop pro-rata entero se movió a `NAVLib.distributeInKind` (**public**, patrón EIP-170 ya
+  usado): el evento se emite vía delegatecall y **el log sale con la dirección del Fund**. Efecto
+  neto en tamaño: Fund 24,542 → 24,267 B (margen 34 → **309 B**); NAVLib 5,183 → 5,891 B. La
+  extracción pagó el evento con creces.
+- `WithdrawExecuted` conserva su firma (paid6 = solo pata USDG): cero churn en tests/keeper.
+  Valor total del retiro = Σ `valueWad` + `paid6`·1e12.
+- Slice cuyo transfer revierte (token bloqueado en Frozen): **no emite** — el LP no lo recibió
+  (residual reclamable en 1.3b) — pero su valor sigue restando del NAV local (comportamiento S6
+  idéntico al previo).
+- `valueWad = 0` con feed muerto (sliceValueWad degrada, no revierte): la válvula de crisis emite
+  cantidades exactas con valor desconocido; el indexer lo registra como "sin precio", no "gratis".
+- El ABI del Fund NO contiene el evento (vive en el artifact de NAVLib): el `gen-abis` del indexer
+  funde los eventos de librerías enlazadas en `FundAbi` (Ponder decodifica por address del Fund).
+- El keeper no consume eventos de retiro: su ABI no cambia.
