@@ -1,12 +1,27 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { usePrivy, useLogin, useWallets } from '@privy-io/react-auth'
 import { profileStore, validateUsername, type Profile } from '@/lib/profileStore'
+import ProfileView from './ProfileView'
 
 const short = (addr?: string) => (addr ? `${addr.slice(0, 6)}…${addr.slice(-4)}` : '')
 
 export default function WalletButton() {
   const { ready, authenticated, logout, user, linkTwitter } = usePrivy()
   const address = user?.wallet?.address
+
+  const [menuOpen, setMenuOpen] = useState(false)
+  const [showProfile, setShowProfile] = useState(false)
+  const menuRef = useRef<HTMLDivElement>(null)
+
+  // Cerrar el dropdown al clicar fuera
+  useEffect(() => {
+    if (!menuOpen) return
+    const onDown = (e: MouseEvent) => {
+      if (menuRef.current && !menuRef.current.contains(e.target as Node)) setMenuOpen(false)
+    }
+    document.addEventListener('mousedown', onDown)
+    return () => document.removeEventListener('mousedown', onDown)
+  }, [menuOpen])
 
   // Cuenta ACTIVA en la extensión (Rabby/MetaMask…): useWallets es reactivo a
   // accountsChanged, mientras que user.wallet.address es la que FIRMÓ el login.
@@ -106,19 +121,58 @@ export default function WalletButton() {
     )
   }
 
-  // Conectado y registrado → muestra el username; hover para desconectar
+  // Conectado y registrado → trigger de ancho fijo (no layout-shift) + dropdown
   return (
-    <button
-      onClick={logout}
-      title="Disconnect"
-      className="group flex items-center gap-2 bg-gray-900 text-white rounded-full pl-2 pr-5 py-1.5 text-sm cursor-pointer transition-transform hover:scale-[1.03] active:scale-[0.97]"
-    >
-      <span className="w-6 h-6 rounded-full bg-white/15 flex items-center justify-center text-xs font-semibold uppercase">
-        {profile.username.slice(0, 1)}
-      </span>
-      <span className="group-hover:hidden">@{profile.username}</span>
-      <span className="hidden group-hover:inline">Disconnect</span>
-    </button>
+    <div className="relative" ref={menuRef}>
+      <button
+        onClick={() => setMenuOpen((v) => !v)}
+        className="flex items-center gap-2 bg-gray-900 text-white rounded-full pl-2 pr-4 py-1.5 text-sm cursor-pointer transition-transform hover:scale-[1.03] active:scale-[0.97]"
+      >
+        <span className="w-6 h-6 rounded-full bg-white/15 flex items-center justify-center text-xs font-semibold uppercase">
+          {profile.username.slice(0, 1)}
+        </span>
+        <span>@{profile.username}</span>
+        <svg
+          viewBox="0 0 24 24"
+          className={`w-3.5 h-3.5 text-white/60 transition-transform ${menuOpen ? 'rotate-180' : ''}`}
+          fill="none"
+        >
+          <path d="m6 9 6 6 6-6" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+        </svg>
+      </button>
+
+      {menuOpen && (
+        <div className="absolute right-0 mt-2 w-48 rounded-xl bg-[#0d1b24] border border-white/15 shadow-2xl overflow-hidden py-1 z-50">
+          <button
+            onClick={() => {
+              setMenuOpen(false)
+              setShowProfile(true)
+            }}
+            className="w-full flex items-center gap-2.5 px-4 py-2.5 text-sm text-white/90 hover:bg-white/5 cursor-pointer transition-colors"
+          >
+            <svg viewBox="0 0 24 24" className="w-4 h-4 text-white/60" fill="none">
+              <circle cx="12" cy="8" r="3.5" stroke="currentColor" strokeWidth="2" />
+              <path d="M5 20a7 7 0 0 1 14 0" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+            </svg>
+            Profile
+          </button>
+          <button
+            onClick={() => {
+              setMenuOpen(false)
+              logout()
+            }}
+            className="w-full flex items-center gap-2.5 px-4 py-2.5 text-sm text-red-300/90 hover:bg-white/5 cursor-pointer transition-colors"
+          >
+            <svg viewBox="0 0 24 24" className="w-4 h-4" fill="none">
+              <path d="M15 17l5-5-5-5M20 12H9M9 4H6a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h3" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+            </svg>
+            Disconnect
+          </button>
+        </div>
+      )}
+
+      {showProfile && <ProfileView profile={profile} onClose={() => setShowProfile(false)} />}
+    </div>
   )
 }
 

@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import VexHero from './fronts/VexHero'
 import RobinFundHero from './fronts/RobinFundHero'
+import ProfileView from './components/ProfileView'
 
 const FRONTS = {
   vex: { title: 'VEX', component: VexHero },
@@ -44,10 +45,19 @@ export default function App() {
   }, [])
 
   const Front = FRONTS[front].component
+  // Preview de diseño del perfil sin wallet: ?profile=demo
+  const profileDemo = new URLSearchParams(window.location.search).get('profile') === 'demo'
 
   return (
     <>
       <Front key={front} />
+
+      {profileDemo && (
+        <ProfileView
+          profile={{ address: '0x1234abcd5678ef901234abcd5678ef901234abcd', username: 'mytyty', twitter: 'mytyty', createdAt: Date.now() }}
+          onClose={() => { window.location.search = '' }}
+        />
+      )}
 
       {/* Selector escondido: invisible hasta hover; también tecla F */}
       <div className="fixed bottom-3 right-3 z-50 opacity-0 hover:opacity-100 transition-opacity duration-200">
