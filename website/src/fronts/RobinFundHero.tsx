@@ -150,6 +150,37 @@ function SocialIcon({ kind, href }: { kind: 'x' | 'tg' | 'web'; href: string }) 
   )
 }
 
+// Pasos del How it works (copy simple; el detalle tecnico vive en docs)
+const HOW_STEPS = [
+  {
+    n: '01',
+    title: 'Connect & deposit',
+    text: 'Link any EVM wallet and deposit USDG into the fund you pick. Your shares stay in your hands — always.',
+  },
+  {
+    n: '02',
+    title: 'Managers trade real stocks',
+    text: 'Funds hold tokenized US stocks on Robinhood Chain. Markets run 24/7, fully on-chain and transparent.',
+  },
+  {
+    n: '03',
+    title: 'Losses hit the manager first',
+    text: 'Every manager locks their own stake. If the fund loses, your first losses come out of it — that is the Loss-Protection tier on every card.',
+  },
+  {
+    n: '04',
+    title: 'Leave whenever you want',
+    text: 'Withdraw at NAV, any day. No lock-ups, no permissions, no middlemen.',
+  },
+]
+
+const TIER_LEGEND = [
+  { name: 'Bronze', range: '< $5k', color: '#e5b184' },
+  { name: 'Silver', range: '$5–10k', color: '#e4e4ea' },
+  { name: 'Gold', range: '$10–20k', color: '#f2d77c' },
+  { name: 'Diamond', range: '$20k+', color: '#cdeeff' },
+]
+
 // Tiers del Loss-Protection: <5k bronze · 5-10k silver · 10-20k gold · 20k+ diamond
 function coverTier(k: number) {
   if (k >= 20)
@@ -183,7 +214,7 @@ type Phase = 'hero' | 'transition' | 'vista'
 
 export default function RobinFundHero() {
   const [phase, setPhase] = useState<Phase>('hero')
-  const [vistaTab, setVistaTab] = useState<'funds' | 'managers'>('funds')
+  const [vistaTab, setVistaTab] = useState<'funds' | 'managers' | 'how'>('funds')
   const [zoomed, setZoomed] = useState(false)
   const [blurPulse, setBlurPulse] = useState(false)
   const [par, setPar] = useState({ x: 0, y: 0 })
@@ -194,7 +225,7 @@ export default function RobinFundHero() {
     phaseRef.current = phase
   }, [phase])
 
-  const startTransition = (target: 'funds' | 'managers' = 'funds') => {
+  const startTransition = (target: 'funds' | 'managers' | 'how' = 'funds') => {
     if (phase !== 'hero') return
     setVistaTab(target)
     const v = transVidRef.current
@@ -326,7 +357,8 @@ export default function RobinFundHero() {
 
             <div className="hidden md:flex items-center gap-8">
               {NAV_LINKS.map(({ label, active }) => {
-                const target = label === 'Funds' ? 'funds' : label === 'Managers' ? 'managers' : null
+                const target =
+                  label === 'Funds' ? 'funds' : label === 'Managers' ? 'managers' : label === 'How it works' ? 'how' : null
                 return (
                   <a
                     key={label}
@@ -418,7 +450,7 @@ export default function RobinFundHero() {
             </button>
             {/* Pills para saltar entre vistas sin repetir el vuelo */}
             <div className="animate-fade-rise flex items-center gap-1 rounded-full bg-black/30 backdrop-blur-sm border border-white/20 p-1">
-              {(['funds', 'managers'] as const).map((tab) => (
+              {(['funds', 'managers', 'how'] as const).map((tab) => (
                 <button
                   key={tab}
                   onClick={() => setVistaTab(tab)}
@@ -426,7 +458,7 @@ export default function RobinFundHero() {
                     vistaTab === tab ? 'bg-white text-gray-900 font-medium' : 'text-white/70 hover:text-white'
                   }`}
                 >
-                  {tab === 'funds' ? 'Funds' : 'Managers'}
+                  {tab === 'funds' ? 'Funds' : tab === 'managers' ? 'Managers' : 'How it works'}
                 </button>
               ))}
             </div>
@@ -438,20 +470,50 @@ export default function RobinFundHero() {
 
           <main className="max-w-6xl mx-auto w-full px-6 pt-10">
             <h2 className="animate-fade-rise text-white font-bold text-3xl sm:text-4xl md:text-5xl tracking-[-1px] mb-2 drop-shadow-lg">
-              {vistaTab === 'funds' ? 'Explore Funds' : 'Managers'}
+              {vistaTab === 'funds' ? 'Explore Funds' : vistaTab === 'managers' ? 'Managers' : 'How it works'}
             </h2>
             <p className="animate-fade-rise-delay text-white/80 text-base sm:text-lg mb-8 drop-shadow">
               {vistaTab === 'funds'
                 ? 'Managers with real skin in the game. Pick one, follow their moves.'
-                : 'The people behind the funds — track record, funds and where to find them.'}
+                : vistaTab === 'managers'
+                  ? 'The people behind the funds — track record, funds and where to find them.'
+                  : 'Four steps. Your keys, real stocks, and a manager who loses first.'}
             </p>
+
+            {vistaTab === 'how' && (
+              <div className="animate-fade-rise-delay-2">
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-5 mb-6">
+                  {HOW_STEPS.map((s) => (
+                    <div
+                      key={s.n}
+                      className="rounded-2xl bg-black/40 backdrop-blur-md border border-white/20 p-6 text-white transition-transform hover:scale-[1.02]"
+                    >
+                      <div className="text-emerald-300/80 font-mono text-sm mb-3">{s.n}</div>
+                      <div className="font-semibold text-lg mb-2 leading-tight">{s.title}</div>
+                      <p className="text-white/70 text-sm leading-relaxed">{s.text}</p>
+                    </div>
+                  ))}
+                </div>
+
+                {/* Leyenda de tiers del Loss-Protection */}
+                <div className="rounded-2xl bg-black/30 backdrop-blur-md border border-white/15 px-6 py-4 flex flex-wrap items-center gap-x-8 gap-y-2">
+                  <span className="text-white/50 text-[11px] uppercase tracking-wide">Loss-Protection tiers</span>
+                  {TIER_LEGEND.map((t) => (
+                    <span key={t.name} className="flex items-center gap-2 text-sm" style={{ color: t.color }}>
+                      <span className="w-2 h-2 rounded-full" style={{ backgroundColor: t.color }} />
+                      {t.name} <span className="text-white/50 text-xs">{t.range}</span>
+                    </span>
+                  ))}
+                </div>
+              </div>
+            )}
 
             {vistaTab === 'managers' && (
               <div className="animate-fade-rise-delay-2 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-5">
                 {MOCK_MANAGERS.map((m) => (
                   <div
                     key={m.handle}
-                    className="rounded-2xl bg-black/40 backdrop-blur-md border border-white/20 p-6 text-white cursor-pointer transition-transform hover:scale-[1.02]"
+                    className="rounded-2xl bg-black/40 backdrop-blur-md border border-white/20 p-6 text-white cursor-pointer transition-transform hover:scale-[1.02] flex flex-col"
                   >
                     {/* Cabecera: foto + nombre + % */}
                     <div className="flex items-start justify-between mb-5">
@@ -488,8 +550,8 @@ export default function RobinFundHero() {
                       ))}
                     </ul>
 
-                    {/* Links sociales */}
-                    <div className="flex items-center gap-2 pt-4 border-t border-white/10">
+                    {/* Links sociales — mt-auto: anclados abajo aunque haya pocos fondos */}
+                    <div className="mt-auto flex items-center gap-2 pt-4 border-t border-white/10">
                       <SocialIcon kind="x" href={m.socials.x} />
                       <SocialIcon kind="tg" href={m.socials.tg} />
                       <SocialIcon kind="web" href={m.socials.web} />
@@ -506,7 +568,7 @@ export default function RobinFundHero() {
                 return (
                   <div
                     key={f.name}
-                    className="rounded-2xl bg-black/40 backdrop-blur-md border border-white/20 p-6 text-white cursor-pointer transition-transform hover:scale-[1.02]"
+                    className="rounded-2xl bg-black/40 backdrop-blur-md border border-white/20 p-6 text-white cursor-pointer transition-transform hover:scale-[1.02] flex flex-col"
                   >
                     {/* Cabecera: nombre + % general grande con 7d debajo */}
                     <div className="flex items-start justify-between mb-1">
@@ -544,8 +606,8 @@ export default function RobinFundHero() {
                       ))}
                     </ul>
 
-                    {/* Pie: NAV + Loss-Protection con tier (bronze/silver/gold/diamond) */}
-                    <div className="flex items-center justify-between text-sm pt-4 border-t border-white/10">
+                    {/* Pie: NAV + Loss-Protection con tier — mt-auto: siempre anclado abajo */}
+                    <div className="mt-auto flex items-center justify-between text-sm pt-4 border-t border-white/10">
                       <span className="text-white/80">NAV {f.nav}</span>
                       <span
                         className="rounded-full bg-white/10 border px-3 py-1 text-xs font-medium"
