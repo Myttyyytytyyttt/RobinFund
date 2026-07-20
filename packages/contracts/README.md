@@ -23,11 +23,12 @@ hallazgos. Tres `HIGH` cerrados en revisión (ver más abajo).
 | 1.2 | `FundShare`, `QueueEscrow`, `StakeEscrow`, `CompensationReserve` | 18 | ✅ revisado |
 | 1.3a | `Fund` (núcleo) | +26 | ✅ revisado (3 lentes) |
 | 1.4a | `AdapterRegistry`, `UniswapV4Adapter` + `Fund.execute` | +10 | ✅ revisado |
-| 1.5 | `EligibilityGate`, `FeeSplitter`, `Guardian`, `FundFactory` | +21 | ✅ revisado |
+| 1.5 | `EligibilityGate`, `FeeSplitter`, `Guardian`, `FundRegistry` + scripts de deploy | +21 | ✅ revisado |
 
-**Pendiente** (flecos con fallback seguro, ver §Deferidos): Frozen §10.3 completo, liquidación
-keeper-asistida de retiros cash, 0x RFQ adapter, fill parcial del cap. **Off-chain** (Fase 2+):
-indexer, keeper, servicio de firma de compliance, frontend.
+Todos los contratos < 24.5KB (EIP-170); deploy completo simulado OK contra fork de mainnet. **Pendiente**
+(flecos con fallback seguro, ver §Deferidos): Frozen §10.3 completo, liquidación keeper-asistida de
+retiros cash, 0x RFQ adapter, fill parcial del cap. **Off-chain** (Fase 2, en curso): keeper (grossClaims
++ settlement + monitores, en `packages/keeper`), indexer, servicio de firma de compliance.
 
 ---
 
@@ -41,9 +42,9 @@ fondo). Los **registries** y la **gobernanza** son compartidos por todos los fon
                     │  TokenRegistry   AdapterRegistry   EligibilityGate  │
                     │  (activos+feeds) (venues trading)  (EIP-712)        │
                     │  Guardian (timelock, owner de los registries)       │
-                    │  FundFactory (crea fondos, gatea managers)          │
+                    │  FundRegistry (índice de fondos desplegados)        │
                     └──────────────┬──────────────────────────────────────┘
-                                   │ createFund()
+                                   │ deploy directo (script) + register
                     ┌──────────────▼────────── POR FONDO ─────────────────┐
                     │                    Fund                              │
                     │   despliega en su constructor:                       │

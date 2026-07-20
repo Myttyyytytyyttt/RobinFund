@@ -1,0 +1,21 @@
+{
+  "name": "@robinfund/keeper",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "description": "Bots keeper de RobinFund: batches, settlement (grossClaims), monitores",
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "dependencies": {
+    "viem": "^2.21.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.20.1",
+    "typescript": "^5.6.0",
+    "vitest": "^2.1.0"
+  }
+}
