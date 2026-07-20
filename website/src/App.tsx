@@ -4,7 +4,7 @@ import RobinFundHero from './fronts/RobinFundHero'
 
 const FRONTS = {
   vex: { title: 'VEX', component: VexHero },
-  robinfund: { title: 'Neverless', component: RobinFundHero },
+  robinfund: { title: 'Neverless | Join the Stock Family', component: RobinFundHero },
 } as const
 
 type FrontKey = keyof typeof FRONTS

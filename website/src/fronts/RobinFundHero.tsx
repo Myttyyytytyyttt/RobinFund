@@ -1,7 +1,7 @@
 import { lazy, Suspense, useEffect, useRef, useState } from 'react'
 import { GooeyText } from '@/components/ui/gooey-text-morphing'
 import { MagneticButton } from '@/components/ui/magnetic-button'
-import ConnectButton from '@/components/ConnectButton'
+import WalletButton from '@/components/WalletButton'
 
 // Visor de docs lazy: el markdown + react-markdown solo cargan al abrir Docs
 const DocsView = lazy(() => import('@/components/DocsView'))
@@ -381,7 +381,7 @@ export default function RobinFundHero() {
               })}
             </div>
 
-            <ConnectButton />
+            <WalletButton />
           </nav>
 
           <main className="max-w-7xl mx-auto px-6 pt-32 pb-12 flex flex-col items-center text-center">
