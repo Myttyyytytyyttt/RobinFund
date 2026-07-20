@@ -92,3 +92,14 @@ clones ERC-1167 + initialize → v2.
 
 Scripts: `script/Deploy.s.sol` (protocolo compartido), `script/CreateFund.s.sol` (un fondo). Deploy
 completo simulado OK contra fork de mainnet.
+
+## Fleco (hallado por la revisión del indexer, 2026-07-20): valor in-kind no eventeado
+
+`WithdrawExecuted(orderId, lp, shares, paid6, inKind)` solo lleva la pata USDG (`paid6`); el
+`removedWad` (valor total entregado en tokens, calculado en `_executeInKind`) no se emite y los
+transfers por asset tampoco eventean. Consecuencia: ningún indexer puede responder "qué recibió el
+LP en su retiro in-kind y cuánto valía" — `withdrawn6`/PnL realizado subrepresentan las salidas
+in-kind (incluye forceRedeem y la válvula de crisis). **Cambio solo posible PRE-deploy** (después
+es imposible). Opciones: añadir `removedWad` a WithdrawExecuted (ojo: Fund a 34 bytes del límite
+EIP-170) o un evento `InKindSlice(orderId, token, amount)` por asset. Fallback si no cabe: el
+indexer reconstruye leyendo balances block-1 vs block (caro, no aísla órdenes en el mismo batch).

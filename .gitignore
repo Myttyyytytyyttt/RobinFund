@@ -31,3 +31,7 @@ Thumbs.db
 
 # Compliance signer — store local (binding persona-direccion; nunca commitear)
 packages/compliance-signer/data/
+
+# Ponder (indexer)
+packages/indexer/.ponder/
+packages/indexer/generated/
