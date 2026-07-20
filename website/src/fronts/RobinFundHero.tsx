@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { GooeyText } from '@/components/ui/gooey-text-morphing'
 import { MagneticButton } from '@/components/ui/magnetic-button'
+import ConnectButton from '@/components/ConnectButton'
 
 const VIDEO_URL =
   'https://d8j0ntlcm91z4.cloudfront.net/user_38xzZboKViGWJOttwIXH07lWA1P/hf_20260323_071151_38c3924f-c312-48af-a196-3fbb80e4226f.mp4'
@@ -192,12 +193,7 @@ export default function RobinFundHero() {
               ))}
             </div>
 
-            <button
-              onClick={startTransition}
-              className="bg-gray-900 text-white rounded-full px-6 py-2.5 text-sm cursor-pointer transition-transform hover:scale-[1.03] active:scale-[0.97]"
-            >
-              Explore Funds
-            </button>
+            <ConnectButton />
           </nav>
 
           <main className="max-w-7xl mx-auto px-6 pt-32 pb-12 flex flex-col items-center text-center">
