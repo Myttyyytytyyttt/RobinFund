@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { usePrivy, useLogin } from '@privy-io/react-auth'
+import { usePrivy, useLogin, useWallets } from '@privy-io/react-auth'
 import { profileStore, validateUsername, type Profile } from '@/lib/profileStore'
 
 const short = (addr?: string) => (addr ? `${addr.slice(0, 6)}…${addr.slice(-4)}` : '')
@@ -7,6 +7,15 @@ const short = (addr?: string) => (addr ? `${addr.slice(0, 6)}…${addr.slice(-4)
 export default function WalletButton() {
   const { ready, authenticated, logout, user, linkTwitter } = usePrivy()
   const address = user?.wallet?.address
+
+  // Cuenta ACTIVA en la extensión (Rabby/MetaMask…): useWallets es reactivo a
+  // accountsChanged, mientras que user.wallet.address es la que FIRMÓ el login.
+  // Si difieren, la sesión está desincronizada de la extensión.
+  const { wallets } = useWallets()
+  const injected = wallets.find((w) => w.walletClientType !== 'privy')
+  const activeAddr = injected?.address
+  const walletMismatch =
+    authenticated && !!activeAddr && !!address && activeAddr.toLowerCase() !== address.toLowerCase()
 
   const [profile, setProfile] = useState<Profile | null>(null)
   const [showReg, setShowReg] = useState(false)
@@ -31,8 +40,31 @@ export default function WalletButton() {
     },
   })
 
+  // Cambio de cuenta en la extensión → re-autenticar con la wallet nueva.
+  // logout + login: la sesión de Privy pertenece a la wallet que firmó; no es
+  // transferible, así que la nueva cuenta debe firmar su propio login.
+  const switchToActive = async () => {
+    await logout()
+    setProfile(null)
+    login()
+  }
+
   if (!ready) {
     return <button disabled className="bg-gray-900/60 text-white/70 rounded-full px-6 py-2.5 text-sm cursor-wait">…</button>
+  }
+
+  // La extensión cambió de cuenta: la sesión ya no representa a la wallet activa
+  if (walletMismatch) {
+    return (
+      <button
+        onClick={switchToActive}
+        title={`Session: ${short(address)} — extension: ${short(activeAddr)}`}
+        className="flex items-center gap-2 rounded-full border border-amber-400/60 bg-amber-400/10 text-amber-200 px-5 py-2.5 text-sm cursor-pointer transition-transform hover:scale-[1.03] active:scale-[0.97]"
+      >
+        <span className="w-2 h-2 rounded-full bg-amber-300 animate-pulse" />
+        Switch to {short(activeAddr)}
+      </button>
+    )
   }
 
   // No conectado
