@@ -85,6 +85,71 @@ const MOCK_FUNDS: {
   },
 ]
 
+// Mockup de managers (vista Managers — misma mecánica que Funds)
+const MOCK_MANAGERS: {
+  photo: string
+  name: string
+  handle: string
+  perfTotal: string
+  perf7d: string
+  funds: { name: string; nav: string }[]
+  socials: { x: string; tg: string; web: string }
+}[] = [
+  {
+    photo: '/twitter1.jpg',
+    name: 'Sofia Lindqvist',
+    handle: '@sofia.eth',
+    perfTotal: '+87%',
+    perf7d: '+3.1%',
+    funds: [
+      { name: 'Alpine Alpha', nav: '$1.248' },
+      { name: 'Nordic Growth', nav: '$1.062' },
+    ],
+    socials: { x: '#', tg: '#', web: '#' },
+  },
+  {
+    photo: '/twitter2.jpg',
+    name: 'Luca Marchetti',
+    handle: '@marchetti',
+    perfTotal: '+34%',
+    perf7d: '+1.8%',
+    funds: [{ name: 'Blue Chip Basket', nav: '$1.091' }],
+    socials: { x: '#', tg: '#', web: '#' },
+  },
+  {
+    photo: '/twitter3.jpg',
+    name: 'Kenji Tanaka',
+    handle: '@kenji_t',
+    perfTotal: '+129%',
+    perf7d: '+5.6%',
+    funds: [
+      { name: 'Momentum Seven', nav: '$1.412' },
+      { name: 'Tokyo Overnight', nav: '$0.981' },
+    ],
+    socials: { x: '#', tg: '#', web: '#' },
+  },
+]
+
+// Iconos sociales mínimos (inline, sin dependencias)
+function SocialIcon({ kind, href }: { kind: 'x' | 'tg' | 'web'; href: string }) {
+  const paths = {
+    x: 'M18.9 2H22l-6.8 7.8L23.2 22h-6.3l-4.9-6.4L6.4 22H3.2l7.3-8.3L2.8 2h6.4l4.4 5.9L18.9 2zm-1.1 18h1.7L7.6 3.9H5.8L17.8 20z',
+    tg: 'M21.9 4.3c.3-1.1-.8-2-1.8-1.6L2.7 9.6c-1.1.4-1.1 2 .1 2.3l4.4 1.3 1.7 5.4c.3 1 1.6 1.3 2.3.5l2.4-2.5 4.5 3.3c.9.6 2.1.2 2.4-.9l3.4-14.7zM9.2 12.7l8.5-5.4c.4-.2.8.3.4.6l-6.9 6.4-.3 3.1-1.7-4.7z',
+    web: 'M12 2a10 10 0 100 20 10 10 0 000-20zm7.9 9h-3a15.6 15.6 0 00-1.1-5.3A8 8 0 0119.9 11zM12 4c.9 1.2 1.9 3.6 2.1 7h-4.2C10.1 7.6 11.1 5.2 12 4zM4.1 13h3c.2 2 .6 3.8 1.1 5.3A8 8 0 014.1 13zm3-2h-3a8 8 0 014.1-5.3A15.6 15.6 0 007.1 11zm4.9 9c-.9-1.2-1.9-3.6-2.1-7h4.2c-.2 3.4-1.2 5.8-2.1 7zm3.8-1.7c.5-1.5.9-3.3 1.1-5.3h3a8 8 0 01-4.1 5.3z',
+  }
+  return (
+    <a
+      href={href}
+      className="w-8 h-8 rounded-full bg-white/10 border border-white/20 flex items-center justify-center text-white/70 hover:text-white hover:bg-white/20 transition-colors"
+      onClick={(e) => e.preventDefault()}
+    >
+      <svg viewBox="0 0 24 24" className="w-4 h-4" fill="currentColor">
+        <path d={paths[kind]} />
+      </svg>
+    </a>
+  )
+}
+
 // Tiers del Loss-Protection: <5k bronze · 5-10k silver · 10-20k gold · 20k+ diamond
 function coverTier(k: number) {
   if (k >= 20)
@@ -118,6 +183,7 @@ type Phase = 'hero' | 'transition' | 'vista'
 
 export default function RobinFundHero() {
   const [phase, setPhase] = useState<Phase>('hero')
+  const [vistaTab, setVistaTab] = useState<'funds' | 'managers'>('funds')
   const [zoomed, setZoomed] = useState(false)
   const [blurPulse, setBlurPulse] = useState(false)
   const [par, setPar] = useState({ x: 0, y: 0 })
@@ -128,8 +194,9 @@ export default function RobinFundHero() {
     phaseRef.current = phase
   }, [phase])
 
-  const startTransition = () => {
+  const startTransition = (target: 'funds' | 'managers' = 'funds') => {
     if (phase !== 'hero') return
+    setVistaTab(target)
     const v = transVidRef.current
     // El video arranca YA; el contenido del hero hace fade-off por encima y un pulso
     // de blur enmascara la costura entre el frame del fondo y el primer frame del clip.
@@ -258,17 +325,24 @@ export default function RobinFundHero() {
             </div>
 
             <div className="hidden md:flex items-center gap-8">
-              {NAV_LINKS.map(({ label, active }) => (
-                <a
-                  key={label}
-                  href="#"
-                  className={`text-sm transition-colors ${
-                    active ? 'text-gray-900 font-medium' : 'text-gray-600 hover:text-gray-900'
-                  }`}
-                >
-                  {label}
-                </a>
-              ))}
+              {NAV_LINKS.map(({ label, active }) => {
+                const target = label === 'Funds' ? 'funds' : label === 'Managers' ? 'managers' : null
+                return (
+                  <a
+                    key={label}
+                    href="#"
+                    onClick={(e) => {
+                      e.preventDefault()
+                      if (target) startTransition(target)
+                    }}
+                    className={`text-sm transition-colors ${
+                      active ? 'text-gray-900 font-medium' : 'text-gray-600 hover:text-gray-900'
+                    }`}
+                  >
+                    {label}
+                  </a>
+                )
+              })}
             </div>
 
             <ConnectButton />
@@ -310,7 +384,7 @@ export default function RobinFundHero() {
             <div className="animate-fade-rise-delay-2 mt-9">
               <MagneticButton distance={0.25}>
                 <button
-                  onClick={startTransition}
+                  onClick={() => startTransition('funds')}
                   className="bg-gray-900/90 text-white rounded-full px-12 py-4 text-sm cursor-pointer transition-transform hover:scale-[1.03] active:scale-[0.97]"
                 >
                   Explore Funds
@@ -342,6 +416,21 @@ export default function RobinFundHero() {
             >
               ← Back
             </button>
+            {/* Pills para saltar entre vistas sin repetir el vuelo */}
+            <div className="animate-fade-rise flex items-center gap-1 rounded-full bg-black/30 backdrop-blur-sm border border-white/20 p-1">
+              {(['funds', 'managers'] as const).map((tab) => (
+                <button
+                  key={tab}
+                  onClick={() => setVistaTab(tab)}
+                  className={`rounded-full px-4 py-1.5 text-sm cursor-pointer transition-colors ${
+                    vistaTab === tab ? 'bg-white text-gray-900 font-medium' : 'text-white/70 hover:text-white'
+                  }`}
+                >
+                  {tab === 'funds' ? 'Funds' : 'Managers'}
+                </button>
+              ))}
+            </div>
+
             <span className="animate-fade-rise rounded-full bg-black/30 backdrop-blur-sm border border-white/20 text-white/70 text-xs px-4 py-2">
               Mockup — vista previa
             </span>
@@ -349,12 +438,68 @@ export default function RobinFundHero() {
 
           <main className="max-w-6xl mx-auto w-full px-6 pt-10">
             <h2 className="animate-fade-rise text-white font-bold text-3xl sm:text-4xl md:text-5xl tracking-[-1px] mb-2 drop-shadow-lg">
-              Explore Funds
+              {vistaTab === 'funds' ? 'Explore Funds' : 'Managers'}
             </h2>
             <p className="animate-fade-rise-delay text-white/80 text-base sm:text-lg mb-8 drop-shadow">
-              Managers with real skin in the game. Pick one, follow their moves.
+              {vistaTab === 'funds'
+                ? 'Managers with real skin in the game. Pick one, follow their moves.'
+                : 'The people behind the funds — track record, funds and where to find them.'}
             </p>
 
+            {vistaTab === 'managers' && (
+              <div className="animate-fade-rise-delay-2 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-5">
+                {MOCK_MANAGERS.map((m) => (
+                  <div
+                    key={m.handle}
+                    className="rounded-2xl bg-black/40 backdrop-blur-md border border-white/20 p-6 text-white cursor-pointer transition-transform hover:scale-[1.02]"
+                  >
+                    {/* Cabecera: foto + nombre + % */}
+                    <div className="flex items-start justify-between mb-5">
+                      <div className="flex items-center gap-3">
+                        <img
+                          src={m.photo}
+                          alt={m.name}
+                          className="w-14 h-14 rounded-full border-2 border-white/30 object-cover"
+                        />
+                        <div>
+                          <div className="font-semibold text-lg leading-tight">{m.name}</div>
+                          <div className="text-white/60 text-sm">{m.handle}</div>
+                        </div>
+                      </div>
+                      <div className="text-right">
+                        <div className="text-emerald-300 font-semibold text-xl leading-none">{m.perfTotal}</div>
+                        <div className="text-white/60 text-xs mt-1">
+                          {m.perf7d} <span className="text-white/40">· 7d</span>
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Fondos que gestiona */}
+                    <div className="text-white/50 text-[11px] uppercase tracking-wide mb-2">Manages</div>
+                    <ul className="space-y-1.5 mb-5">
+                      {m.funds.map((f) => (
+                        <li
+                          key={f.name}
+                          className="flex items-center justify-between text-xs bg-white/5 border border-white/10 rounded-lg px-3 py-2"
+                        >
+                          <span className="font-medium">{f.name}</span>
+                          <span className="text-white/60">NAV {f.nav}</span>
+                        </li>
+                      ))}
+                    </ul>
+
+                    {/* Links sociales */}
+                    <div className="flex items-center gap-2 pt-4 border-t border-white/10">
+                      <SocialIcon kind="x" href={m.socials.x} />
+                      <SocialIcon kind="tg" href={m.socials.tg} />
+                      <SocialIcon kind="web" href={m.socials.web} />
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            {vistaTab === 'funds' && (
             <div className="animate-fade-rise-delay-2 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-5">
               {MOCK_FUNDS.map((f) => {
                 const tier = coverTier(f.coverK)
@@ -413,6 +558,7 @@ export default function RobinFundHero() {
                 )
               })}
             </div>
+            )}
           </main>
         </div>
       )}
