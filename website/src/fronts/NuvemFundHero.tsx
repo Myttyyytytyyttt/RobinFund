@@ -215,7 +215,7 @@ function StockLogo({ ticker }: { ticker: string }) {
 
 type Phase = 'hero' | 'transition' | 'vista'
 
-export default function RobinFundHero() {
+export default function NuvemFundHero() {
   const [phase, setPhase] = useState<Phase>('hero')
   const [vistaTab, setVistaTab] = useState<'funds' | 'managers' | 'how'>('funds')
   const [zoomed, setZoomed] = useState(false)
@@ -350,10 +350,10 @@ export default function RobinFundHero() {
           }}
         >
           <nav className="max-w-7xl mx-auto px-6 pt-6 flex items-center justify-between">
-            {/* Logo Neverless */}
+            {/* NuvemFund logo */}
             <img
               src="/logo.png"
-              alt="Neverless"
+              alt="NuvemFund"
               className="h-9 w-auto select-none"
               style={{ filter: 'drop-shadow(0 1px 3px rgba(0,0,0,0.25))' }}
             />

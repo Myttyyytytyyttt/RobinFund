@@ -169,8 +169,8 @@ export default function DocsView({ onClose }: { onClose: () => void }) {
       {/* Topbar */}
       <header className="flex items-center gap-4 px-4 sm:px-6 h-16 border-b border-white/10 shrink-0 bg-black/20">
         <button onClick={onClose} className="flex items-center gap-2 cursor-pointer group shrink-0">
-          <img src="/logo.png" alt="Neverless" className="h-7 w-auto" />
-          <span className="font-semibold text-white group-hover:text-white/80 transition-colors">Neverless Docs</span>
+          <img src="/logo.png" alt="NuvemFund" className="h-7 w-auto" />
+          <span className="font-semibold text-white group-hover:text-white/80 transition-colors">NuvemFund Docs</span>
         </button>
 
         <div className="relative flex-1 max-w-md ml-auto">

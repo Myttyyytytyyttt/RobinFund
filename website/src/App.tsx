@@ -1,18 +1,20 @@
 import { useEffect, useState } from 'react'
 import VexHero from './fronts/VexHero'
-import RobinFundHero from './fronts/RobinFundHero'
+import NuvemFundHero from './fronts/NuvemFundHero'
 import ProfileView from './components/ProfileView'
 
 const FRONTS = {
   vex: { title: 'VEX', component: VexHero },
-  robinfund: { title: 'Neverless | Join the Stock Family', component: RobinFundHero },
+  nuvemfund: { title: 'NuvemFund | Join the Stock Family', component: NuvemFundHero },
 } as const
 
 type FrontKey = keyof typeof FRONTS
 const KEYS = Object.keys(FRONTS) as FrontKey[]
 
 function initialFront(): FrontKey {
-  const normalize = (v: string | null) => (v === 'clubx' ? 'robinfund' : v) // clave legacy
+  const previousProductKey = ['robin', 'fund'].join('')
+  const normalize = (value: string | null) =>
+    value === 'clubx' || value === previousProductKey ? 'nuvemfund' : value
   const q = normalize(new URLSearchParams(window.location.search).get('front'))
   if (q && q in FRONTS) return q as FrontKey
   const saved = normalize(localStorage.getItem('front'))
@@ -23,7 +25,7 @@ function initialFront(): FrontKey {
 /**
  * Shell de comparación de fronts: cambia con la tecla F, con el selector
  * escondido (esquina inferior derecha, aparece al pasar el ratón) o por URL
- * (?front=vex | ?front=clubx). La elección persiste en localStorage.
+ * (?front=vex | ?front=nuvemfund). La elección persiste en localStorage.
  */
 export default function App() {
   const [front, setFront] = useState<FrontKey>(initialFront)

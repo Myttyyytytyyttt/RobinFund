@@ -1,4 +1,4 @@
-# Neverless — Mechanism specification v0.9
+# NuvemFund — Mechanism specification v0.9
 
 > Social fund protocol over Robinhood Stock Tokens on Robinhood Chain (chain ID 4663, testnet 46630).
 > Status: draft for discussion, pre-implementation. Date: 2026-07-19.
@@ -15,7 +15,7 @@
 
 ## 0. Summary
 
-Neverless allows any eligible person to create an **open (evergreen) fund** that operates Robinhood Stock Tokens (ERC-20 + ERC-8056, Chainlink feeds per asset) with third-party capital denominated in USDG. LPs enter and exit at any time through **queues with strict forward pricing**. The manager locks a **fixed stake in USDG that acts as first-loss over each LP's net invested capital** — individual claims crystallized in each period, which at most restore what was contributed — and which determines the **AUM cap**. Social access is tied to being an LP. Managers can activate an **entry fee that grows with cap utilization** — the curve lives in the fee; the share price is always NAV.
+NuvemFund allows any eligible person to create an **open (evergreen) fund** that operates Robinhood Stock Tokens (ERC-20 + ERC-8056, Chainlink feeds per asset) with third-party capital denominated in USDG. LPs enter and exit at any time through **queues with strict forward pricing**. The manager locks a **fixed stake in USDG that acts as first-loss over each LP's net invested capital** — individual claims crystallized in each period, which at most restore what was contributed — and which determines the **AUM cap**. Social access is tied to being an LP. Managers can activate an **entry fee that grows with cap utilization** — the curve lives in the fee; the share price is always NAV.
 
 ## 1. Closed design decisions
 

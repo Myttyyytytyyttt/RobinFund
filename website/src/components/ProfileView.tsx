@@ -149,7 +149,7 @@ export default function ProfileView({
         <nav className="max-w-7xl mx-auto w-full px-6 pt-6 flex items-center justify-between">
           <img
             src="/logo.png"
-            alt="Neverless"
+            alt="NuvemFund"
             className="h-9 w-auto select-none drop-shadow-lg"
           />
           <button
@@ -157,7 +157,7 @@ export default function ProfileView({
             onClick={onClose}
             className="rounded-full bg-black/30 backdrop-blur-md border border-white/20 text-white text-sm px-5 py-2.5 cursor-pointer transition-transform hover:scale-[1.03] active:scale-[0.97] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/70"
           >
-            Back to Neverless
+            Back to NuvemFund
           </button>
         </nav>
 

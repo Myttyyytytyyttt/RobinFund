@@ -1,4 +1,4 @@
-# Neverless — Step-by-step build roadmap
+# NuvemFund — Step-by-step build roadmap
 
 > Complements [SPEC.md](SPEC.md) (mechanism v0.3) and [REVIEW.md](REVIEW.md) (adversarial review).
 > Real execution order: each phase depends on the previous one except where noted. Durations estimated for 1–2 full-time people.

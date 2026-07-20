@@ -301,11 +301,11 @@ function RegisterModal({
       <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" onClick={onCancel} />
       <div className="relative w-full max-w-md rounded-2xl bg-[#0d1b24] border border-white/15 p-7 text-white shadow-2xl">
         <div className="flex items-center gap-2 mb-1">
-          <img src="/logo.png" alt="Neverless" className="h-6 w-auto" />
+          <img src="/logo.png" alt="NuvemFund" className="h-6 w-auto" />
           <span className="text-white/50 text-xs font-mono">{short(address)}</span>
         </div>
         <h2 className="text-xl font-semibold mb-1">
-          {firstTime ? 'Welcome to Neverless' : 'Complete your profile'}
+          {firstTime ? 'Welcome to NuvemFund' : 'Complete your profile'}
         </h2>
         <p className="text-white/60 text-sm mb-6">Pick a username so managers and investors can find you.</p>
 

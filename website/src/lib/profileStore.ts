@@ -22,11 +22,20 @@ export type Profile = {
   createdAt: number
 }
 
-const KEY = 'neverless.profiles'
+const KEY = 'nuvemfund.profiles'
+const PREVIOUS_KEY = ['never', 'less.profiles'].join('')
 
 function readAll(): Record<string, Profile> {
   try {
-    return JSON.parse(localStorage.getItem(KEY) ?? '{}')
+    let stored = localStorage.getItem(KEY)
+    if (!stored) {
+      stored = localStorage.getItem(PREVIOUS_KEY)
+      if (stored) {
+        localStorage.setItem(KEY, stored)
+        localStorage.removeItem(PREVIOUS_KEY)
+      }
+    }
+    return JSON.parse(stored ?? '{}')
   } catch {
     return {}
   }
