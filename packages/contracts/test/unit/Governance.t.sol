@@ -5,7 +5,7 @@ import {Test} from "forge-std/Test.sol";
 import {EligibilityGate} from "../../src/EligibilityGate.sol";
 import {Guardian} from "../../src/Guardian.sol";
 import {FeeSplitter} from "../../src/FeeSplitter.sol";
-import {FundFactory} from "../../src/FundFactory.sol";
+import {FundRegistry} from "../../src/FundRegistry.sol";
 import {Fund} from "../../src/Fund.sol";
 import {TokenRegistry} from "../../src/TokenRegistry.sol";
 import {AdapterRegistry} from "../../src/AdapterRegistry.sol";
@@ -170,7 +170,7 @@ contract FactoryE2ETest is Test {
     Guardian guardian;
     TokenRegistry reg;
     AdapterRegistry adapters;
-    FundFactory factory;
+    FundRegistry fundRegistry;
 
     uint256 signerPk = 0x516;
     address signer;
@@ -191,7 +191,7 @@ contract FactoryE2ETest is Test {
         reg = new TokenRegistry(address(usdg));
         reg.list(address(tsla), address(feed), 90000, 1_00000000, 10000_00000000, address(0xBEEF));
         adapters = new AdapterRegistry();
-        factory = new FundFactory(reg, adapters, IEligibilityGate(address(gate)), address(guardian), keeper, treasury);
+        fundRegistry = new FundRegistry();
     }
 
     function _attest(address a) internal {
@@ -202,11 +202,19 @@ contract FactoryE2ETest is Test {
         gate.attest(a, exp, 0, abi.encodePacked(r, s, v));
     }
 
-    function test_factory_gatea_manager_inelegible() public {
-        Fund.Config memory cfg = Fund.Config({perfFeeBps: 2000, feeMinBps: 0, feeMaxBps: 0, managerEntryShareBps: 5000, kFactor: 25, period: 30 days, withdrawCooldown: 24 hours});
-        vm.prank(manager);
-        vm.expectRevert(FundFactory.NotEligible.selector);
-        factory.createFund(cfg, "RF", "RF");
+    function _cfg() internal pure returns (Fund.Config memory) {
+        return Fund.Config({perfFeeBps: 2000, feeMinBps: 0, feeMaxBps: 0, managerEntryShareBps: 5000, kFactor: 25, period: 30 days, withdrawCooldown: 24 hours});
+    }
+
+    function _createFund(string memory nm, string memory sym) internal returns (Fund fund) {
+        fund = new Fund(reg, IEligibilityGate(address(gate)), adapters, address(guardian), manager, keeper, treasury, _cfg(), nm, sym);
+        fundRegistry.register(address(fund), manager);
+    }
+
+    function test_constructor_gatea_manager_inelegible() public {
+        // manager NO atestado → el constructor del Fund revierte
+        vm.expectRevert(Fund.NotEligible.selector);
+        new Fund(reg, IEligibilityGate(address(gate)), adapters, address(guardian), manager, keeper, treasury, _cfg(), "RF", "RF");
     }
 
     function test_e2e_crear_fondo_depositar_y_pausar() public {
@@ -214,12 +222,10 @@ contract FactoryE2ETest is Test {
         address alice = address(0xA11CE);
         _attest(alice);
 
-        Fund.Config memory cfg = Fund.Config({perfFeeBps: 2000, feeMinBps: 0, feeMaxBps: 0, managerEntryShareBps: 5000, kFactor: 25, period: 30 days, withdrawCooldown: 24 hours});
-        vm.prank(manager);
-        Fund fund = Fund(factory.createFund(cfg, "RobinFund Alpha", "rfA"));
+        Fund fund = _createFund("RobinFund Alpha", "rfA");
 
-        assertEq(factory.fundCount(), 1);
-        assertTrue(factory.isFund(address(fund)));
+        assertEq(fundRegistry.fundCount(), 1);
+        assertTrue(fundRegistry.isFund(address(fund)));
         assertEq(fund.MANAGER(), manager);
         assertEq(fund.GUARDIAN(), address(guardian));
         assertTrue(fund.FEE_SPLITTER() != address(0), "FeeSplitter desplegado internamente");
@@ -240,7 +246,7 @@ contract FactoryE2ETest is Test {
         vm.warp(block.timestamp + 11 minutes);
         feed.set(feed.answer(), block.timestamp);
         fund.executeBatch(0);
-        assertGt(fund.share().balanceOf(alice), 0, "alice tiene shares via factory-fund");
+        assertGt(fund.share().balanceOf(alice), 0, "alice tiene shares");
 
         // el guardian pausa depósitos (circuit breaker); los retiros siguen abiertos (D12)
         vm.prank(multisig);
@@ -264,9 +270,7 @@ contract FactoryE2ETest is Test {
 
     function test_pause_solo_guardian() public {
         _attest(manager);
-        Fund.Config memory cfg = Fund.Config({perfFeeBps: 2000, feeMinBps: 0, feeMaxBps: 0, managerEntryShareBps: 5000, kFactor: 25, period: 30 days, withdrawCooldown: 24 hours});
-        vm.prank(manager);
-        Fund fund = Fund(factory.createFund(cfg, "RF", "RF"));
+        Fund fund = _createFund("RF", "RF");
         vm.prank(address(0xBAD));
         vm.expectRevert(Fund.NotGuardian.selector);
         fund.setGuardianPaused(true);

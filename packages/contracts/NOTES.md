@@ -74,3 +74,21 @@ Highs: **S3** funding keeper-independiente (`min(stake,netted)`, λ=min(1,fundin
 ## Revisión 1.5 (gobernanza) — hallazgos aplicados
 
 **G1 (HIGH)**: la revocación del EligibilityGate era evadible — `revoke()` no avanzaba el nonce y `attest()` limpiaba `revokedAt`, así que una firma pre-emitida (renovación/atestación inicial no enviada) re-habilitaba a un usuario revocado, deshaciendo el control de compliance. Fix: `revoke()` avanza el nonce → re-habilitar exige firma posterior a la revocación. Mediums: G2 (Guardian gana GRACE_PERIOD 14d + MIN_DELAY 1d). Lows: G3 (domain separator recomputado en fork), G4 (FeeSplitter: code-check USDG, `redeem(inKind)` + `distributeToken` genérico), G5/G7 (trading del manager gateado por elegibilidad ongoing, fail-safe: no gatea winding/retiros), G12 (error `NotGuardian`). Docs: nonce en atestación, ERC-1167 (usamos `new`), FeeSplitter solo perf fee, depeg = pauseFund. **El manager que devenga inelegible no puede tradear pero SÍ cerrar ordenadamente; los LPs siempre salen.**
+
+
+## Desplegabilidad (EIP-170) — refactor de tamaño
+
+Al escribir el deploy script se descubrió que el `Fund` pesaba 32.7KB > límite de 24.5KB (EIP-170):
+INDESPLEGABLE. Corregido a **24,542 (34B de margen)** haciendo `public` (no `internal`) las funciones
+grandes de `NAVLib` (`compute`, `tradeValueWad`, `freshnessCutoff`, `sliceValueWad`) — se despliegan
+como librería enlazada (delegatecall) en vez de inlinearse en el Fund. Comportamiento idéntico (117
+tests siguen verdes). `via_ir=true`, `optimizer_runs=1`.
+
+**FundFactory → FundRegistry**: la factory hacía `new Fund(...)`, embebiendo el creation code del Fund
+(38KB) en su runtime (40KB, indesplegable). En v1 los fondos se despliegan DIRECTOS por el operador
+(script `CreateFund.s.sol`, initcode 38KB < 49KB EIP-3860) y se registran en el `FundRegistry` ligero.
+El gate de elegibilidad del manager se movió al **constructor del Fund**. Factory permissionless con
+clones ERC-1167 + initialize → v2.
+
+Scripts: `script/Deploy.s.sol` (protocolo compartido), `script/CreateFund.s.sol` (un fondo). Deploy
+completo simulado OK contra fork de mainnet.

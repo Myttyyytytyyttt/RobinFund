@@ -227,6 +227,9 @@ contract Fund {
         if (guardian_ == address(0) || manager_ == address(0) || keeper_ == address(0) || treasury_ == address(0)) {
             revert BadConfig();
         }
+        // El manager debe estar atestado como elegible al crear el fondo (§10.1). Gate en el
+        // constructor (antes vivía en la factory, que ya no puede embeber el initcode del Fund).
+        if (!gate_.isEligible(manager_)) revert NotEligible();
         REGISTRY = registry_;
         USDG = IERC20(registry_.USDG());
         GATE = gate_;
@@ -432,29 +435,8 @@ contract Fund {
         }
     }
 
-    function _freshnessCutoff() internal view returns (uint48 cutoff) {
-        // Forward pricing estricto (C13): toda ronda usada debe ser posterior a la solicitud.
-        // cutoff = min(updatedAt) de los feeds relevantes; una orden es ejecutable si
-        // requestTime < cutoff y requestTime + MIN_QUEUE_LATENCY ≤ now.
-        cutoff = type(uint48).max;
-        for (uint256 i; i < assets.length; ++i) {
-            TokenRegistry.Asset memory a = REGISTRY.getAsset(assets[i]);
-            if (a.feed == address(0)) continue;
-            try IAggregatorV3(a.feed).latestRoundData() returns (uint80, int256, uint256, uint256 upd, uint80) {
-                if (upd < cutoff) cutoff = uint48(upd);
-            } catch {
-                return 0; // sin frescura demostrable: nada es ejecutable
-            }
-        }
-        address uFeed = REGISTRY.usdgFeed();
-        if (uFeed != address(0)) {
-            try IAggregatorV3(uFeed).latestRoundData() returns (uint80, int256, uint256, uint256 upd, uint80) {
-                if (upd < cutoff) cutoff = uint48(upd);
-            } catch {
-                return 0;
-            }
-        }
-        if (cutoff == type(uint48).max) cutoff = uint48(block.timestamp); // fondo 100% USDG sin feed
+    function _freshnessCutoff() internal view returns (uint48) {
+        return NAVLib.freshnessCutoff(REGISTRY, assets); // C13; extraído por tamaño de bytecode
     }
 
     function _executeDeposits(NAVLib.Snapshot memory s) internal {
@@ -604,7 +586,7 @@ contract Fund {
             uint256 bal = IERC20(assets[i]).balanceOf(address(this));
             uint256 slice = bal * shares / supply;
             if (slice > 0) {
-                removedWad += _valueSliceWad(REGISTRY.getAsset(assets[i]).feed, slice);
+                removedWad += NAVLib.sliceValueWad(REGISTRY.getAsset(assets[i]).feed, slice);
                 (bool ok,) = assets[i].call(abi.encodeCall(IERC20.transfer, (lp, slice)));
                 ok; // residual de tokens intransferibles: TODO 1.3b (claim in-kind)
             }
@@ -612,15 +594,6 @@ contract Fund {
         removedWad += usdgSlice * USDG_TO_WAD;
         if (usdgSlice > 0) USDG.safeTransfer(lp, usdgSlice);
         emit WithdrawExecuted(orderId, lp, shares, usdgSlice, true);
-    }
-
-    function _valueSliceWad(address feed, uint256 slice) internal view returns (uint256) {
-        if (feed == address(0)) return 0;
-        try IAggregatorV3(feed).latestRoundData() returns (uint80, int256 px, uint256, uint256, uint80) {
-            return px > 0 ? slice * uint256(px) / 1e8 : 0;
-        } catch {
-            return 0;
-        }
     }
 
     /// @dev Regla de burn del NI (§6): resta max(pro-rata NI, proceeds).
@@ -912,36 +885,12 @@ contract Fund {
         if (!REGISTRY.isActive(token)) revert BadOrder();
     }
 
-    /// @dev Valor WAD de `amount` de `token` al precio oráculo, con la MISMA disciplina que NAVLib
-    /// (T1/T2/T6): revierte si el feed está stale, fuera de banda, roto o `updatedAt` en el futuro.
-    /// Un precio stale-pero-positivo cegaba el guardarraíl y los presupuestos → extracción ilimitada.
+    /// @dev Valor WAD al precio oráculo con validez completa (delega en NAVLib.tradeValueWad, sacado
+    /// del bytecode del Fund por tamaño). Revierte con el error propio del Fund si el feed es inválido.
     function _valueWad(address token, uint256 amount) internal view returns (uint256) {
-        if (token == address(USDG)) {
-            uint256 balWad = amount * USDG_TO_WAD;
-            address uFeed = REGISTRY.usdgFeed();
-            if (uFeed == address(0)) return balWad; // solo modo degradado de deploy de prueba (§5.5)
-            int256 px = _validPrice(uFeed, REGISTRY.usdgMaxStaleness(), REGISTRY.usdgMinAnswer(), REGISTRY.usdgMaxAnswer());
-            return balWad * uint256(px) / 1e8;
-        }
-        TokenRegistry.Asset memory a = REGISTRY.getAsset(token);
-        int256 px2 = _validPrice(a.feed, a.maxStaleness, a.minAnswer, a.maxAnswer);
-        return amount * uint256(px2) / 1e8;
-    }
-
-    /// @dev Devuelve el precio si es válido (fresco, en banda, > 0); revierte si no.
-    function _validPrice(address feed, uint48 maxStaleness, int256 minAnswer, int256 maxAnswer)
-        internal
-        view
-        returns (int256)
-    {
-        if (feed == address(0)) revert SlippageExceeded();
-        try IAggregatorV3(feed).latestRoundData() returns (uint80, int256 px, uint256, uint256 upd, uint80) {
-            if (px <= 0 || px < minAnswer || px > maxAnswer) revert SlippageExceeded();
-            if (upd > block.timestamp || block.timestamp - upd > maxStaleness) revert SlippageExceeded();
-            return px;
-        } catch {
-            revert SlippageExceeded();
-        }
+        (uint256 value, bool valid) = NAVLib.tradeValueWad(REGISTRY, address(USDG), token, amount);
+        if (!valid) revert SlippageExceeded();
+        return value;
     }
 
     /// @dev Acumula el slippage adverso contra los presupuestos diario y de período (§8). Una reversión
@@ -1007,25 +956,8 @@ contract Fund {
     /// hacer que los loops de NAV superaran el gas límite). Cap de longitud como backstop.
     function registerAsset(address token) external nonReentrant {
         if (msg.sender != MANAGER && msg.sender != KEEPER) revert NotManager();
-        if (assets.length >= 32) revert BadOrder(); // cap de cartera (§10, backstop de gas)
         if (!REGISTRY.isActive(token) || IERC20(token).balanceOf(address(this)) == 0) revert BadOrder();
-        emit AssetRegistered(token);
-        uint256 n = assets.length;
-        if (n > 0 && token <= assets[n - 1]) {
-            // inserción ordenada
-            for (uint256 i; i < n; ++i) {
-                if (assets[i] == token) revert BadOrder();
-                if (token < assets[i]) {
-                    assets.push(assets[n - 1]);
-                    for (uint256 j = n - 1; j > i; --j) {
-                        assets[j] = assets[j - 1];
-                    }
-                    assets[i] = token;
-                    return;
-                }
-            }
-        }
-        assets.push(token);
+        _ensureAssetRegistered(token); // misma inserción ordenada + cap que el path de trading
     }
 
     function assetCount() external view returns (uint256) {

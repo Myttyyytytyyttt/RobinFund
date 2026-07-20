@@ -36,8 +36,10 @@ library NAVLib {
     }
 
     /// @notice Calcula NAV y validez para `fund` sobre `tokens` (estrictamente ordenada) + sleeve USDG.
+    /// @dev `public` (no `internal`) a propósito: se despliega como librería enlazada y se llama por
+    /// delegatecall, sacando ~150 líneas del bytecode del Fund (que si no excede el límite EIP-170).
     function compute(TokenRegistry reg, address fund, address[] memory tokens)
-        internal
+        public
         view
         returns (Snapshot memory s)
     {
@@ -160,6 +162,75 @@ library NAVLib {
             return (false, true, true);
         }
         ok = true;
+    }
+
+    /// @notice Valor WAD de un slice de token a su feed (para descontar del NAV en retiros in-kind, S6).
+    function sliceValueWad(address feed, uint256 slice) public view returns (uint256) {
+        if (feed == address(0)) return 0;
+        try IAggregatorV3(feed).latestRoundData() returns (uint80, int256 px, uint256, uint256, uint80) {
+            return px > 0 ? slice * uint256(px) / FEED_UNIT : 0;
+        } catch {
+            return 0;
+        }
+    }
+
+    /// @notice Forward pricing estricto (C13): cutoff = min(updatedAt) de los feeds relevantes; una
+    /// orden es ejecutable si su requestTime < cutoff. `public` para sacar el código del Fund.
+    function freshnessCutoff(TokenRegistry reg, address[] memory tokens) public view returns (uint48 cutoff) {
+        cutoff = type(uint48).max;
+        for (uint256 i; i < tokens.length; ++i) {
+            address feed = reg.getAsset(tokens[i]).feed;
+            if (feed == address(0)) continue;
+            try IAggregatorV3(feed).latestRoundData() returns (uint80, int256, uint256, uint256 upd, uint80) {
+                if (upd < cutoff) cutoff = uint48(upd);
+            } catch {
+                return 0; // sin frescura demostrable: nada es ejecutable
+            }
+        }
+        address uFeed = reg.usdgFeed();
+        if (uFeed != address(0)) {
+            try IAggregatorV3(uFeed).latestRoundData() returns (uint80, int256, uint256, uint256 upd, uint80) {
+                if (upd < cutoff) cutoff = uint48(upd);
+            } catch {
+                return 0;
+            }
+        }
+        if (cutoff == type(uint48).max) cutoff = uint48(block.timestamp); // fondo 100% USDG sin feed
+    }
+
+    /// @notice Valoración WAD para el guardarraíl de trading (§8), con la MISMA disciplina de validez
+    /// que el NAV (T1: fresco + en banda + no-futuro). Devuelve `valid=false` en vez de revertir para
+    /// que el Fund conserve su propio error. `public` para sacar el código del bytecode del Fund.
+    function tradeValueWad(TokenRegistry reg, address usdg, address token, uint256 amount)
+        public
+        view
+        returns (uint256 value, bool valid)
+    {
+        if (token == usdg) {
+            uint256 balWad = amount * USDG_TO_WAD;
+            address uFeed = reg.usdgFeed();
+            if (uFeed == address(0)) return (balWad, true); // modo degradado de deploy de prueba (§5.5)
+            (bool ok, int256 px) = _validPriceView(uFeed, reg.usdgMaxStaleness(), reg.usdgMinAnswer(), reg.usdgMaxAnswer());
+            return ok ? (balWad * uint256(px) / FEED_UNIT, true) : (0, false);
+        }
+        TokenRegistry.Asset memory a = reg.getAsset(token);
+        (bool ok2, int256 px2) = _validPriceView(a.feed, a.maxStaleness, a.minAnswer, a.maxAnswer);
+        return ok2 ? (amount * uint256(px2) / FEED_UNIT, true) : (0, false);
+    }
+
+    function _validPriceView(address feed, uint48 maxStaleness, int256 minAnswer, int256 maxAnswer)
+        private
+        view
+        returns (bool, int256)
+    {
+        if (feed == address(0)) return (false, 0);
+        try IAggregatorV3(feed).latestRoundData() returns (uint80, int256 px, uint256, uint256 upd, uint80) {
+            if (px <= 0 || px < minAnswer || px > maxAnswer) return (false, 0);
+            if (upd > block.timestamp || block.timestamp - upd > maxStaleness) return (false, 0);
+            return (true, px);
+        } catch {
+            return (false, 0);
+        }
     }
 
     /// @dev USDG es la moneda de denominación (proxy de Paxos — también upgradeable: try/catch).

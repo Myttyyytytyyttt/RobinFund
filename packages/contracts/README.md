@@ -74,7 +74,7 @@ fondo). Los **registries** y la **gobernanza** son compartidos por todos los fon
 | **`AdapterRegistry`** | Whitelist de venues de trading | Owner-gated. |
 | **`EligibilityGate`** | Atestaciones EIP-712 `(account, expiry, nonce)` del compliance signer | `revoke()` avanza el nonce (una firma pre-emitida no deshace la revocación). TTL 90d. |
 | **`Guardian`** | Gobernanza de 2 velocidades | `pauseFund` instantáneo (freno, nunca retiros) + `queue/execute` timelockeado (delay ≥1d, gracia 14d). Owner = multisig externo. |
-| **`FundFactory`** | Crea fondos | Gatea al manager por elegibilidad; inyecta params de protocolo (keeper/guardian/treasury) para que no cablee los suyos. |
+| **`FundRegistry`** | Índice de fondos desplegados | Los fondos se despliegan directos (script) y se registran; el gate de elegibilidad del manager vive en el constructor del Fund. Factory con clones → v2. |
 
 ### Librerías
 
