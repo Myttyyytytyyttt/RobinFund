@@ -25,6 +25,7 @@ export interface FundSnapshot {
   frozen: boolean;
   guardianPaused: boolean;
   periodSeconds: bigint;
+  withdrawCooldownSeconds: bigint;
   feeSplitter: Address;
   shareToken: Address;
 }
@@ -89,6 +90,7 @@ export async function readSnapshot(client: PublicClient, fund: Address): Promise
     frozen: frozen as boolean,
     guardianPaused: guardianPaused as boolean,
     periodSeconds: BigInt(config[5]),
+    withdrawCooldownSeconds: BigInt(config[6]),
     feeSplitter: getAddress(feeSplitter as Address),
     shareToken: getAddress(shareToken as Address),
   };
@@ -99,6 +101,9 @@ async function readShare(client: PublicClient, fund: Address, fn: "totalSupply")
   return (await client.readContract({ address: shareAddr as Address, abi: shareAbi, functionName: fn })) as bigint;
 }
 
+/** Estado de un LP con su dirección (el runner la necesita para forceRedeem). */
+export type AddressedLpState = LpState & { address: Address };
+
 /** Lee el estado NI de cada LP (excluyendo el FeeSplitter). */
 export async function readLpStates(
   client: PublicClient,
@@ -106,8 +111,8 @@ export async function readLpStates(
   shareToken: Address,
   feeSplitter: Address,
   lps: Address[],
-): Promise<LpState[]> {
-  const out: LpState[] = [];
+): Promise<AddressedLpState[]> {
+  const out: AddressedLpState[] = [];
   for (const lp of lps) {
     if (getAddress(lp) === feeSplitter) continue; // excluido de la contabilidad NI (§7.3)
     const [acct, shares] = await Promise.all([
@@ -115,7 +120,7 @@ export async function readLpStates(
       client.readContract({ address: shareToken, abi: shareAbi, functionName: "balanceOf", args: [lp] }),
     ]);
     const a = acct as { niWad: bigint; vestTime: number };
-    out.push({ niWad: a.niWad, shares: shares as bigint, vestTime: BigInt(a.vestTime) });
+    out.push({ address: getAddress(lp), niWad: a.niWad, shares: shares as bigint, vestTime: BigInt(a.vestTime) });
   }
   return out;
 }

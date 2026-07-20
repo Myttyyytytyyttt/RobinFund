@@ -25,10 +25,12 @@ hallazgos. Tres `HIGH` cerrados en revisión (ver más abajo).
 | 1.4a | `AdapterRegistry`, `UniswapV4Adapter` + `Fund.execute` | +10 | ✅ revisado |
 | 1.5 | `EligibilityGate`, `FeeSplitter`, `Guardian`, `FundRegistry` + scripts de deploy | +21 | ✅ revisado |
 
-Todos los contratos < 24.5KB (EIP-170); deploy completo simulado OK contra fork de mainnet. **Pendiente**
-(flecos con fallback seguro, ver §Deferidos): Frozen §10.3 completo, liquidación keeper-asistida de
-retiros cash, 0x RFQ adapter, fill parcial del cap. **Off-chain** (Fase 2, en curso): keeper (grossClaims
-+ settlement + monitores, en `packages/keeper`), indexer, servicio de firma de compliance.
+Todos los contratos < 24.5KB (EIP-170); deploy completo simulado OK contra fork de mainnet, y
+**ejercitado end-to-end** por el test de integración del keeper (anvil forkeando mainnet + estos mismos
+scripts + ciclo de vida LP completo — ver `packages/keeper`). **Pendiente** (flecos con fallback seguro,
+ver §Deferidos): Frozen §10.3 completo, liquidación keeper-asistida de retiros cash, 0x RFQ adapter,
+fill parcial del cap. **Off-chain** (Fase 2): keeper completo (Fases 2a+2b, `packages/keeper`);
+pendiente indexer y servicio de firma de compliance.
 
 ---
 

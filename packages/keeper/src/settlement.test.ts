@@ -14,6 +14,7 @@ const base: FundSnapshot = {
   frozen: false,
   guardianPaused: false,
   periodSeconds: BigInt(30 * 24 * 3600),
+  withdrawCooldownSeconds: BigInt(24 * 3600),
   feeSplitter: "0x0000000000000000000000000000000000000001",
   shareToken: "0x0000000000000000000000000000000000000002",
 };

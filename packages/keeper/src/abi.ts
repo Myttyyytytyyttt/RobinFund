@@ -38,6 +38,31 @@ export const fundAbi = [
   },
   { type: "function", name: "share", stateMutability: "view", inputs: [], outputs: [{ type: "address" }] },
   { type: "function", name: "stakeEscrow", stateMutability: "view", inputs: [], outputs: [{ type: "address" }] },
+  { type: "function", name: "GATE", stateMutability: "view", inputs: [], outputs: [{ type: "address" }] },
+  {
+    type: "function",
+    name: "queueLengths",
+    stateMutability: "view",
+    inputs: [],
+    outputs: [
+      { name: "deposits", type: "uint256" },
+      { name: "withdrawals", type: "uint256" },
+    ],
+  },
+  { type: "function", name: "withdrawHead", stateMutability: "view", inputs: [], outputs: [{ type: "uint256" }] },
+  {
+    type: "function",
+    name: "withdrawQueue",
+    stateMutability: "view",
+    inputs: [{ type: "uint256" }],
+    outputs: [
+      { name: "lp", type: "address" },
+      { name: "shares", type: "uint128" },
+      { name: "requestTime", type: "uint48" },
+      { name: "cancelled", type: "bool" },
+      { name: "inKind", type: "bool" },
+    ],
+  },
   { type: "function", name: "niAggregateWad", stateMutability: "view", inputs: [], outputs: [{ type: "int256" }] },
   { type: "function", name: "FEE_SPLITTER", stateMutability: "view", inputs: [], outputs: [{ type: "address" }] },
   { type: "function", name: "currentPeriod", stateMutability: "view", inputs: [], outputs: [{ type: "uint64" }] },
@@ -89,6 +114,7 @@ export const fundAbi = [
     inputs: [{ name: "lp", type: "address" }],
     outputs: [],
   },
+  { type: "function", name: "declareFrozen", stateMutability: "nonpayable", inputs: [], outputs: [] },
   // --- eventos (para descubrir el set de LPs y monitorear) ---
   {
     type: "event",
@@ -120,9 +146,35 @@ export const shareAbi = [
 
 export const stakeEscrowAbi = [
   { type: "function", name: "stakeAvailable", stateMutability: "view", inputs: [], outputs: [{ type: "uint256" }] },
+  { type: "function", name: "addStake", stateMutability: "nonpayable", inputs: [{ name: "amount", type: "uint256" }], outputs: [] },
 ] as const;
 
 /** ACCESS registry de RHJ — para monitorear si un fondo fue bloqueado (§10.3). */
 export const accessRegistryAbi = [
   { type: "function", name: "isBlocked", stateMutability: "view", inputs: [{ type: "address" }], outputs: [{ type: "bool" }] },
+] as const;
+
+/** FundRegistry — enumeración de los fondos que el runner atiende. */
+export const fundRegistryAbi = [
+  { type: "function", name: "fundCount", stateMutability: "view", inputs: [], outputs: [{ type: "uint256" }] },
+  { type: "function", name: "funds", stateMutability: "view", inputs: [{ type: "uint256" }], outputs: [{ type: "address" }] },
+] as const;
+
+/** EligibilityGate — el runner consulta inelegibilidad (forceRedeem §10.2); attest para tests/tooling. */
+export const gateAbi = [
+  { type: "function", name: "isEligible", stateMutability: "view", inputs: [{ type: "address" }], outputs: [{ type: "bool" }] },
+  { type: "function", name: "ineligibleSince", stateMutability: "view", inputs: [{ type: "address" }], outputs: [{ type: "uint48" }] },
+  { type: "function", name: "nonceOf", stateMutability: "view", inputs: [{ type: "address" }], outputs: [{ type: "uint256" }] },
+  {
+    type: "function",
+    name: "attest",
+    stateMutability: "nonpayable",
+    inputs: [
+      { name: "account", type: "address" },
+      { name: "expiry", type: "uint48" },
+      { name: "nonce", type: "uint256" },
+      { name: "signature", type: "bytes" },
+    ],
+    outputs: [],
+  },
 ] as const;
