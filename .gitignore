@@ -35,3 +35,6 @@ packages/compliance-signer/data/
 # Ponder (indexer)
 packages/indexer/.ponder/
 packages/indexer/generated/
+
+# Devnet (Ponder store efímero por si acaso)
+packages/devnet/.ponder/
