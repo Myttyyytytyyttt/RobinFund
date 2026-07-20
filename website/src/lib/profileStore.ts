@@ -97,23 +97,35 @@ async function upsertRemote(
   const client = getSupabaseClient()
   if (!client) return saveLocal(address, data)
 
-  const { data: row, error } = await client
+  const walletAddress = norm(address)
+
+  // Keep the write response minimal. Asking PostgREST to return the upserted
+  // row can require SELECT access to private columns such as owner_id.
+  const { error: writeError } = await client
     .from('profiles')
     .upsert(
       {
-        wallet_address: norm(address),
+        wallet_address: walletAddress,
         username: data.username.trim(),
         twitter_username: normalizeTwitter(data.twitter) ?? null,
       },
       { onConflict: 'wallet_address' },
     )
+
+  if (writeError) {
+    if (writeError.code === '23505') throw new Error('That username is already taken.')
+    if (writeError.code === '23514') throw new Error('The profile contains an invalid value.')
+    throw new Error(writeError.message)
+  }
+
+  const { data: row, error: readError } = await client
+    .from('profiles')
     .select('wallet_address, username, twitter_username, twitter_verified, created_at')
+    .eq('wallet_address', walletAddress)
     .single()
 
-  if (error) {
-    if (error.code === '23505') throw new Error('That username is already taken.')
-    if (error.code === '23514') throw new Error('The profile contains an invalid value.')
-    throw new Error(error.message)
+  if (readError) {
+    throw new Error(readError.message)
   }
 
   const profile = fromRow(row as ProfileRow)
