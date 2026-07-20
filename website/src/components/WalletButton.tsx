@@ -8,6 +8,7 @@ const short = (addr?: string) => (addr ? `${addr.slice(0, 6)}…${addr.slice(-4)
 export default function WalletButton() {
   const { ready, authenticated, logout, user, linkTwitter } = usePrivy()
   const address = user?.wallet?.address
+  const twitterAvatarUrl = user?.twitter?.profilePictureUrl?.replace('_normal', '')
 
   const [menuOpen, setMenuOpen] = useState(false)
   const [showProfile, setShowProfile] = useState(false)
@@ -188,6 +189,7 @@ export default function WalletButton() {
       {showProfile && (
         <ProfileView
           profile={profile}
+          avatarUrl={twitterAvatarUrl}
           onClose={() => setShowProfile(false)}
           onConnectTwitter={linkTwitter}
         />

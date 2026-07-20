@@ -40,10 +40,12 @@ function dayLabel(index: number, total: number) {
 
 export default function ProfileView({
   profile,
+  avatarUrl,
   onClose,
   onConnectTwitter,
 }: {
   profile: Profile
+  avatarUrl?: string | null
   onClose: () => void
   onConnectTwitter?: () => unknown
 }) {
@@ -102,9 +104,7 @@ export default function ProfileView({
             <div className="px-6 py-6 sm:px-8 sm:py-7 flex flex-col lg:flex-row lg:items-center gap-7">
               <div className="flex items-center gap-4 min-w-0 lg:w-[38%]">
                 <div className="relative shrink-0">
-                  <div className="w-16 h-16 sm:w-[72px] sm:h-[72px] rounded-full bg-white/10 border border-white/25 flex items-center justify-center text-2xl font-semibold uppercase shadow-inner">
-                    {profile.username.slice(0, 1)}
-                  </div>
+                  <ProfileAvatar username={profile.username} src={avatarUrl} />
                   <span className="absolute bottom-0.5 right-0.5 w-3.5 h-3.5 rounded-full bg-emerald-300 border-[3px] border-[#102b32]" />
                 </div>
                 <div className="min-w-0">
@@ -191,6 +191,28 @@ export default function ProfileView({
           </p>
         </main>
       </div>
+    </div>
+  )
+}
+
+function ProfileAvatar({ username, src }: { username: string; src?: string | null }) {
+  const [failedSrc, setFailedSrc] = useState<string | null>(null)
+  const showImage = !!src && failedSrc !== src
+
+  return (
+    <div className="w-16 h-16 sm:w-[72px] sm:h-[72px] overflow-hidden rounded-full bg-white/10 border border-white/25 flex items-center justify-center text-2xl font-semibold uppercase shadow-inner">
+      {showImage ? (
+        <img
+          src={src}
+          alt={`@${username}'s X profile picture`}
+          className="h-full w-full object-cover"
+          decoding="async"
+          referrerPolicy="no-referrer"
+          onError={() => setFailedSrc(src)}
+        />
+      ) : (
+        username.slice(0, 1)
+      )}
     </div>
   )
 }
