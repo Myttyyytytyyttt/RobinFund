@@ -22,6 +22,7 @@ import {
   lpPosition,
   deposit,
   withdrawal,
+  inKindSlice,
   settlement,
   claim,
   trade,
@@ -233,9 +234,44 @@ ponder.on("Fund:WithdrawRequested", async ({ event, context }) => {
   });
 });
 
+// InKindSlice llega ANTES que su WithdrawExecuted (misma tx, logIndex menor): acumula el valor por
+// orden y deja el detalle por token; WithdrawExecuted cierra la orden y vuelca el total a agregados.
+ponder.on("Fund:InKindSlice", async ({ event, context }) => {
+  const fundAddr = event.log.address;
+  const { orderId, token, amount, valueWad } = event.args;
+  const wid = `${fundAddr}-${orderId}`;
+
+  await context.db.insert(inKindSlice).values({
+    id: `${event.transaction.hash}-${event.log.logIndex}`,
+    fund: fundAddr,
+    orderId,
+    withdrawalId: wid,
+    token,
+    amount,
+    valueWad,
+    timestamp: event.block.timestamp,
+    txHash: event.transaction.hash,
+  });
+
+  // sin fila (hueco deploy→register): el detalle queda en in_kind_slice; los agregados de ese
+  // hueco ya se degradan en todo el indexer — find + update condicional, no upsert (falta lp/shares)
+  const row = await context.db.find(withdrawal, { id: wid });
+  if (row) {
+    await context.db.update(withdrawal, { id: wid }).set({
+      inKindValueWad: (row.inKindValueWad ?? 0n) + valueWad,
+    });
+  }
+});
+
 ponder.on("Fund:WithdrawExecuted", async ({ event, context }) => {
   const fundAddr = event.log.address;
   const { orderId, lp, shares, paid6, inKind } = event.args;
+
+  // capturar ANTES del upsert (y antes de que update mute el objeto cacheado): el valor in-kind
+  // acumulado por los InKindSlice de esta misma tx — paid6 solo lleva la pata USDG
+  const prev = await context.db.find(withdrawal, { id: `${fundAddr}-${orderId}` });
+  const inKindValue6 = inKind ? (prev?.inKindValueWad ?? 0n) / 10n ** 12n : 0n;
+  const exit6 = paid6 + inKindValue6; // valor total que salió hacia el LP
 
   await context.db
     .insert(withdrawal)
@@ -267,7 +303,7 @@ ponder.on("Fund:WithdrawExecuted", async ({ event, context }) => {
   // el burn de la perf fee redimida por el FeeSplitter NO es un retiro de LP
   if (lp.toLowerCase() === f.feeSplitter.toLowerCase()) {
     await context.db.update(fund, { address: fundAddr }).set({ totalShares: f.totalShares - shares });
-    await feed(context, event, "fee_redeem", lp, paid6, { orderId, shares, inKind });
+    await feed(context, event, "fee_redeem", lp, exit6, { orderId, shares, inKind });
     return;
   }
 
@@ -279,18 +315,18 @@ ponder.on("Fund:WithdrawExecuted", async ({ event, context }) => {
   if (pos) {
     await context.db.update(lpPosition, { id: posId }).set({
       shares: newShares,
-      withdrawn6: pos.withdrawn6 + paid6,
+      withdrawn6: pos.withdrawn6 + exit6,
       lastActionAt: event.block.timestamp,
     });
   }
 
   await context.db.update(fund, { address: fundAddr }).set({
     totalShares: f.totalShares - shares,
-    lifetimeWithdrawn6: f.lifetimeWithdrawn6 + paid6,
+    lifetimeWithdrawn6: f.lifetimeWithdrawn6 + exit6,
     lpCount: f.lpCount - (exitedFully ? 1 : 0),
   });
 
-  await feed(context, event, "withdraw_executed", lp, paid6, { orderId, shares, inKind });
+  await feed(context, event, "withdraw_executed", lp, exit6, { orderId, shares, inKind, paid6, inKindValue6 });
 });
 
 ponder.on("Fund:OrderCancelled", async ({ event, context }) => {

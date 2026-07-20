@@ -34,7 +34,7 @@ export const fund = onchainTable(
     totalShares: t.bigint().notNull(), // supply total, INCLUYE las shares del FeeSplitter
     lpCount: t.integer().notNull(), // holders LP con shares > 0
     lifetimeDeposited6: t.bigint().notNull(),
-    lifetimeWithdrawn6: t.bigint().notNull(), // solo cash USDG (in-kind: solo su pata USDG — ver README)
+    lifetimeWithdrawn6: t.bigint().notNull(), // cash USDG + valor de los tokens entregados in-kind (Σ InKindSlice.valueWad/1e12)
   }),
   (table) => ({
     managerIdx: index().on(table.manager),
@@ -49,7 +49,7 @@ export const lpPosition = onchainTable(
     lp: t.hex().notNull(),
     shares: t.bigint().notNull(),
     deposited6: t.bigint().notNull(), // bruto ejecutado
-    withdrawn6: t.bigint().notNull(), // cash pagado (in-kind: solo la pata USDG)
+    withdrawn6: t.bigint().notNull(), // cash pagado + valor de los tokens entregados in-kind
     claimed6: t.bigint().notNull(), // claims del first-loss cobrados
     firstDepositAt: t.bigint().notNull(),
     lastActionAt: t.bigint().notNull(),
@@ -94,7 +94,8 @@ export const withdrawal = onchainTable(
     shares: t.bigint().notNull(),
     inKind: t.boolean().notNull(),
     status: t.text().notNull(), // requested | executed | cancelled
-    paid6: t.bigint(), // in-kind: SOLO la pata USDG (el valor de los tokens entregados no se emite — fleco de contrato)
+    paid6: t.bigint(), // pata USDG del retiro (in-kind: los tokens van aparte, ver inKindValueWad)
+    inKindValueWad: t.bigint(), // Σ valueWad de los InKindSlice de la orden (WAD); total ≈ paid6 + esto/1e12
     requestedAt: t.bigint().notNull(),
     executedAt: t.bigint(),
     txHash: t.hex().notNull(),
@@ -103,6 +104,27 @@ export const withdrawal = onchainTable(
   (table) => ({
     fundIdx: index().on(table.fund),
     lpIdx: index().on(table.lp),
+  }),
+);
+
+/** Asset entregado en un retiro in-kind (evento InKindSlice — NAVLib lo emite con address del Fund).
+ *  Responde "qué recibió el LP y cuánto valía"; valueWad=0 ⇒ feed muerto (válvula de crisis). */
+export const inKindSlice = onchainTable(
+  "in_kind_slice",
+  (t) => ({
+    id: t.text().primaryKey(), // `${txHash}-${logIndex}`
+    fund: t.hex().notNull(),
+    orderId: t.bigint().notNull(),
+    withdrawalId: t.text().notNull(), // `${fund}-${orderId}` → withdrawal.id
+    token: t.hex().notNull(),
+    amount: t.bigint().notNull(), // unidades crudas del token (18 dec en Stock Tokens)
+    valueWad: t.bigint().notNull(), // valor al feed en la entrega (0 = sin precio, no "gratis")
+    timestamp: t.bigint().notNull(),
+    txHash: t.hex().notNull(),
+  }),
+  (table) => ({
+    withdrawalIdx: index().on(table.withdrawalId),
+    fundIdx: index().on(table.fund),
   }),
 );
 

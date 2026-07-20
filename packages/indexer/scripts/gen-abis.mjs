@@ -16,10 +16,22 @@ const CONTRACTS = [
   ["FundShareAbi", "FundShare.sol/FundShare.json"],
 ];
 
+// Librerías enlazadas que emiten eventos vía delegatecall DESDE el Fund (p.ej. InKindSlice en
+// NAVLib.distributeInKind): el log sale con la dirección del Fund, así que sus eventos deben
+// fundirse en FundAbi para que Ponder los decodifique como eventos del Fund.
+const FUND_LINKED_LIBS = ["NAVLib.sol/NAVLib.json"];
+
 let ts = `// GENERADO por scripts/gen-abis.mjs — NO editar a mano. Regenerar: forge build && pnpm gen-abis\n`;
 for (const [name, path] of CONTRACTS) {
   const artifact = JSON.parse(readFileSync(resolve(out, path), "utf8"));
-  ts += `\nexport const ${name} = ${JSON.stringify(artifact.abi, null, 2)} as const;\n`;
+  let abi = artifact.abi;
+  if (name === "FundAbi") {
+    for (const libPath of FUND_LINKED_LIBS) {
+      const lib = JSON.parse(readFileSync(resolve(out, libPath), "utf8"));
+      abi = abi.concat(lib.abi.filter((item) => item.type === "event"));
+    }
+  }
+  ts += `\nexport const ${name} = ${JSON.stringify(abi, null, 2)} as const;\n`;
 }
 
 mkdirSync(resolve(here, "../abis"), { recursive: true });

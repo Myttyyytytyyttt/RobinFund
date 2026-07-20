@@ -3,6 +3,7 @@ pragma solidity ^0.8.26;
 
 import {Test} from "forge-std/Test.sol";
 import {Fund} from "../../src/Fund.sol";
+import {NAVLib} from "../../src/libraries/NAVLib.sol";
 import {TokenRegistry} from "../../src/TokenRegistry.sol";
 import {AdapterRegistry} from "../../src/AdapterRegistry.sol";
 import {IEligibilityGate} from "../../src/interfaces/IEligibilityGate.sol";
@@ -140,11 +141,41 @@ contract FundAttacksTest is Test {
         vm.expectRevert(Fund.NavInvalid.selector);
         fund.executeBatch(0);
 
-        // pero la valvula in-kind SÍ ejecuta (pro-rata raw, sin precio)
+        // pero la valvula in-kind SÍ ejecuta (pro-rata raw, sin precio); el slice se eventea con
+        // valueWad=0 (feed muerto: sliceValueWad degrada a 0, no revierte)
+        vm.expectEmit(true, true, true, true, address(fund));
+        emit NAVLib.InKindSlice(0, address(tsla), 50e18, 0);
         fund.executeInKindWithdrawals();
         assertEq(fund.share().balanceOf(alice), 0, "in-kind redimido sin NAV valido");
         assertEq(tsla.balanceOf(alice), 50e18, "recibe su pro-rata de TSLA");
         assertEq(usdg.balanceOf(alice), 5000_000000, "y de USDG");
+    }
+
+    // ---------- InKindSlice: los indexers ven qué recibió el LP y cuánto valía ----------
+
+    function test_in_kind_eventea_slices_con_valor_y_address_del_fund() public {
+        _deposit(alice, 10_000_000000);
+        _batch();
+        vm.prank(address(fund));
+        usdg.transfer(address(0xDEAD), 5000_000000);
+        _seed(50e18); // 50 TSLA @ $100 = 5000
+
+        uint256 aBal = fund.share().balanceOf(alice);
+        vm.prank(alice);
+        fund.requestWithdraw(aBal, true);
+        vm.warp(block.timestamp + COOLDOWN + 1);
+        feed.set(feed.answer(), block.timestamp);
+
+        // el log sale con la DIRECCIÓN DEL FUND (NAVLib emite vía delegatecall) y valora al feed;
+        // WithdrawExecuted conserva su firma y sigue llevando solo la pata USDG en paid6
+        vm.expectEmit(true, true, true, true, address(fund));
+        emit NAVLib.InKindSlice(0, address(tsla), 50e18, 5000e18);
+        vm.expectEmit(true, true, true, true, address(fund));
+        emit Fund.WithdrawExecuted(0, alice, aBal, 5000_000000, true);
+        fund.executeInKindWithdrawals();
+
+        assertEq(tsla.balanceOf(alice), 50e18);
+        assertEq(usdg.balanceOf(alice), 5000_000000);
     }
 
     function test_S4_in_kind_funciona_en_frozen() public {
