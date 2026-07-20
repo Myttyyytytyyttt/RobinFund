@@ -350,13 +350,15 @@ export default function RobinFundHero() {
           }}
         >
           <nav className="max-w-7xl mx-auto px-6 pt-6 flex items-center justify-between">
-            <div
-              className="h-10 w-10 rounded-full flex items-center justify-center select-none"
-              style={{ background: 'linear-gradient(135deg, #ff6a3d 0%, #e6382b 100%)' }}
-            >
-              <span className="text-white font-bold text-lg" style={{ transform: 'skewX(-8deg)' }}>
-                R
-              </span>
+            {/* Logo Neverless */}
+            <div className="flex items-center gap-2 select-none">
+              <img
+                src="/logo.png"
+                alt="Neverless"
+                className="h-8 w-auto"
+                style={{ filter: 'drop-shadow(0 1px 3px rgba(0,0,0,0.25))' }}
+              />
+              <span className="font-semibold text-lg tracking-tight text-gray-900">Neverless</span>
             </div>
 
             <div className="hidden md:flex items-center gap-8">

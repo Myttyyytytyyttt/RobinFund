@@ -2,6 +2,9 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 
+const BG_VIDEO =
+  'https://d8j0ntlcm91z4.cloudfront.net/user_38xzZboKViGWJOttwIXH07lWA1P/hf_20260323_071151_38c3924f-c312-48af-a196-3fbb80e4226f.mp4'
+
 // Fuente única de verdad: los .md reales del repo (../docs), importados raw por Vite.
 const RAW = import.meta.glob('../../../docs/*.md', { query: '?raw', import: 'default', eager: true }) as Record<
   string,
@@ -151,19 +154,24 @@ export default function DocsView({ onClose }: { onClose: () => void }) {
     }
 
   return (
-    <div className="fixed inset-0 z-[60] bg-[#0d1b24] text-gray-200 flex flex-col">
+    <div className="fixed inset-0 z-[60] text-gray-200 flex flex-col overflow-hidden">
+      {/* Fondo: mismo vídeo del lago, muy oscurecido para máxima legibilidad */}
+      <video
+        className="absolute inset-0 w-full h-full object-cover -z-10"
+        src={BG_VIDEO}
+        autoPlay
+        loop
+        muted
+        playsInline
+        style={{ filter: 'brightness(0.22) saturate(0.85)' }}
+      />
+      <div className="absolute inset-0 -z-10 bg-[#050d12]/85 backdrop-blur-xl" />
+
       {/* Topbar */}
-      <header className="flex items-center gap-4 px-4 sm:px-6 h-16 border-b border-white/10 shrink-0">
+      <header className="flex items-center gap-4 px-4 sm:px-6 h-16 border-b border-white/10 shrink-0 bg-black/20">
         <button onClick={onClose} className="flex items-center gap-2 cursor-pointer group shrink-0">
-          <div
-            className="h-8 w-8 rounded-full flex items-center justify-center"
-            style={{ background: 'linear-gradient(135deg, #ff6a3d 0%, #e6382b 100%)' }}
-          >
-            <span className="text-white font-bold text-sm" style={{ transform: 'skewX(-8deg)' }}>
-              R
-            </span>
-          </div>
-          <span className="font-semibold text-white group-hover:text-white/80 transition-colors">RobinFund Docs</span>
+          <img src="/logo.png" alt="Neverless" className="h-7 w-auto" />
+          <span className="font-semibold text-white group-hover:text-white/80 transition-colors">Neverless Docs</span>
         </button>
 
         <div className="relative flex-1 max-w-md ml-auto">
