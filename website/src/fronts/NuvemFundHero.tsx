@@ -9,6 +9,8 @@ const DocsView = lazy(() => import('@/components/DocsView'))
 const VIDEO_URL =
   'https://d8j0ntlcm91z4.cloudfront.net/user_38xzZboKViGWJOttwIXH07lWA1P/hf_20260323_071151_38c3924f-c312-48af-a196-3fbb80e4226f.mp4'
 const TRANSITION_VIDEO = '/ctavid2.mp4'
+const AMBIENT_AUDIO = '/bgeffect.mp3'
+const MOVE_AUDIO = '/moveffect.mp3'
 
 const NAV_LINKS = [
   { label: 'Home', active: true },
@@ -215,24 +217,97 @@ function StockLogo({ ticker }: { ticker: string }) {
 
 type Phase = 'hero' | 'transition' | 'vista'
 
-export default function NuvemFundHero() {
+type NuvemFundHeroProps = {
+  audioDisabled?: boolean
+}
+
+export default function NuvemFundHero({ audioDisabled = false }: NuvemFundHeroProps) {
   const [phase, setPhase] = useState<Phase>('hero')
   const [vistaTab, setVistaTab] = useState<'funds' | 'managers' | 'how'>('funds')
   const [zoomed, setZoomed] = useState(false)
   const [blurPulse, setBlurPulse] = useState(false)
   const [par, setPar] = useState({ x: 0, y: 0 })
   const [showDocs, setShowDocs] = useState(false)
+  const [profileOpen, setProfileOpen] = useState(false)
   const transVidRef = useRef<HTMLVideoElement>(null)
+  const ambientAudioRef = useRef<HTMLAudioElement>(null)
+  const moveAudioRef = useRef<HTMLAudioElement>(null)
   const phaseRef = useRef<Phase>('hero')
 
   useEffect(() => {
     phaseRef.current = phase
   }, [phase])
 
+  const ambientEnabled = phase === 'hero' && !showDocs && !profileOpen && !audioDisabled
+
+  useEffect(() => {
+    const ambient = ambientAudioRef.current
+    if (!ambient) return
+
+    if (!ambientEnabled) {
+      ambient.pause()
+      return
+    }
+
+    ambient.volume = 0.35
+
+    const removeUnlockListeners = () => {
+      window.removeEventListener('pointerdown', unlockAmbient)
+      window.removeEventListener('keydown', unlockAmbient)
+    }
+
+    const tryPlayAmbient = () => {
+      void ambient.play().then(removeUnlockListeners).catch(() => {})
+    }
+
+    const unlockAmbient = (event: Event) => {
+      const target = event.target instanceof Element ? event.target : document.activeElement
+      if (target?.closest('[data-audio-skip-ambient]')) return
+      tryPlayAmbient()
+    }
+
+    // Audible autoplay is commonly blocked. Try immediately, then retry on the
+    // first user gesture that is not itself opening a silent view or the camera.
+    window.addEventListener('pointerdown', unlockAmbient)
+    window.addEventListener('keydown', unlockAmbient)
+    tryPlayAmbient()
+
+    return removeUnlockListeners
+  }, [ambientEnabled])
+
+  useEffect(() => {
+    if (!showDocs && !profileOpen && !audioDisabled) return
+    ambientAudioRef.current?.pause()
+    const moveAudio = moveAudioRef.current
+    if (moveAudio) {
+      moveAudio.pause()
+      moveAudio.currentTime = 0
+    }
+  }, [audioDisabled, profileOpen, showDocs])
+
+  useEffect(
+    () => () => {
+      ambientAudioRef.current?.pause()
+      moveAudioRef.current?.pause()
+    },
+    [],
+  )
+
   const startTransition = (target: 'funds' | 'managers' | 'how' = 'funds') => {
     if (phase !== 'hero') return
     setVistaTab(target)
     const v = transVidRef.current
+    const ambientAudio = ambientAudioRef.current
+    const moveAudio = moveAudioRef.current
+    if (ambientAudio) {
+      ambientAudio.pause()
+      ambientAudio.currentTime = 0
+    }
+    if (moveAudio) {
+      moveAudio.volume = 0.85
+      moveAudio.currentTime = 0
+      void moveAudio.play().catch(() => {})
+    }
     // El video arranca YA; el contenido del hero hace fade-off por encima y un pulso
     // de blur enmascara la costura entre el frame del fondo y el primer frame del clip.
     setPhase('transition')
@@ -240,7 +315,10 @@ export default function NuvemFundHero() {
     setTimeout(() => setBlurPulse(false), 1200)
     if (v) {
       v.currentTime = 0
-      v.play().catch(() => handleEnded()) // si autoplay falla, saltamos directo a la vista final
+      v.play().catch(() => {
+        moveAudio?.pause()
+        handleEnded()
+      }) // si autoplay falla, saltamos directo a la vista final
     }
     // Red de seguridad: si el navegador pausa el video a mitad (cambio de pestaña,
     // ahorro de energía) y nunca llega el 'ended', forzamos la vista final.
@@ -269,6 +347,11 @@ export default function NuvemFundHero() {
     setPar({ x: 0, y: 0 })
     const v = transVidRef.current
     if (v) v.pause()
+    const moveAudio = moveAudioRef.current
+    if (moveAudio) {
+      moveAudio.pause()
+      moveAudio.currentTime = 0
+    }
   }
 
   const onMouseMove = (e: React.MouseEvent) => {
@@ -287,6 +370,9 @@ export default function NuvemFundHero() {
       style={{ backgroundColor: 'hsl(201 100% 13%)' }}
       onMouseMove={onMouseMove}
     >
+      <audio ref={ambientAudioRef} src={AMBIENT_AUDIO} loop preload="auto" aria-hidden="true" />
+      <audio ref={moveAudioRef} src={MOVE_AUDIO} preload="auto" aria-hidden="true" />
+
       {/* Capa de vídeos — recibe el pulso de blur que tapa la intersección de frames */}
       <div className={`absolute inset-0 ${blurPulse ? 'animate-blur-pulse' : ''}`}>
         {/* Vídeo de fondo del hero */}
@@ -366,6 +452,7 @@ export default function NuvemFundHero() {
                   <a
                     key={label}
                     href="#"
+                    data-audio-skip-ambient={label === 'Docs' || !!target ? true : undefined}
                     onClick={(e) => {
                       e.preventDefault()
                       if (label === 'Docs') setShowDocs(true)
@@ -381,7 +468,7 @@ export default function NuvemFundHero() {
               })}
             </div>
 
-            <WalletButton />
+            <WalletButton onProfileVisibilityChange={setProfileOpen} />
           </nav>
 
           <main className="max-w-7xl mx-auto px-6 pt-32 pb-12 flex flex-col items-center text-center">
@@ -420,6 +507,7 @@ export default function NuvemFundHero() {
             <div className="animate-fade-rise-delay-2 mt-9">
               <MagneticButton distance={0.25}>
                 <button
+                  data-audio-skip-ambient
                   onClick={() => startTransition('funds')}
                   className="bg-gray-900/90 text-white rounded-full px-12 py-4 text-sm cursor-pointer transition-transform hover:scale-[1.03] active:scale-[0.97]"
                 >

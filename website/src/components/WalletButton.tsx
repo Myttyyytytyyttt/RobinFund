@@ -6,7 +6,11 @@ import ProfileView from './ProfileView'
 
 const short = (addr?: string) => (addr ? `${addr.slice(0, 6)}…${addr.slice(-4)}` : '')
 
-export default function WalletButton() {
+type WalletButtonProps = {
+  onProfileVisibilityChange?: (visible: boolean) => void
+}
+
+export default function WalletButton({ onProfileVisibilityChange }: WalletButtonProps) {
   const { ready, authenticated, logout, user, linkTwitter } = usePrivy()
   const address = user?.wallet?.address
   const twitterAvatarUrl = user?.twitter?.profilePictureUrl?.replace('_normal', '')
@@ -14,6 +18,10 @@ export default function WalletButton() {
   const [menuOpen, setMenuOpen] = useState(false)
   const [showProfile, setShowProfile] = useState(false)
   const menuRef = useRef<HTMLDivElement>(null)
+
+  useEffect(() => {
+    onProfileVisibilityChange?.(showProfile)
+  }, [onProfileVisibilityChange, showProfile])
 
   // Cerrar el dropdown al clicar fuera
   useEffect(() => {
