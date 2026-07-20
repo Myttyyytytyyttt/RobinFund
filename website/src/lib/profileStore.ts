@@ -1,16 +1,23 @@
-// Perfil de usuario de Neverless (username + X opcional), ligado a la wallet.
+// Perfil social de NuvemFund, ligado criptográficamente a la wallet.
 //
-// IMPORTANTE — persistencia: hoy es localStorage (por-dispositivo). El "¿ya se
-// registró?" REAL y cross-device lo da Privy (`isNewUser` en el login) porque
-// Privy recuerda la wallet en sus servidores. El USERNAME en cambio es dato de
-// nuestra app: para que sea cross-device y con unicidad garantizada necesita el
-// backend (Fase 2). Toda la app habla con esta interfaz, así que en Fase 2 se
-// sustituye la implementación por llamadas a la API sin tocar los componentes.
+// Supabase es la persistencia cross-device y aplica unicidad + RLS. La pequeña
+// caché de localStorage conserva compatibilidad con perfiles creados antes de la
+// migración y permite pintar instantáneamente mientras llega la lectura remota.
+
+import {
+  currentSupabaseWalletAddress,
+  ensureSupabaseWalletSession,
+  getSupabaseClient,
+  isSupabaseConfigured,
+  signOutSupabase,
+  type EthereumProvider,
+} from './supabase'
 
 export type Profile = {
   address: string
   username: string
-  twitter?: string // handle de X si lo enlazó
+  twitter?: string
+  twitterVerified?: boolean
   createdAt: number
 }
 
@@ -28,7 +35,76 @@ function writeAll(all: Record<string, Profile>) {
   localStorage.setItem(KEY, JSON.stringify(all))
 }
 
-const norm = (addr: string) => addr.toLowerCase()
+const norm = (address: string) => address.toLowerCase()
+
+type ProfileRow = {
+  wallet_address: string
+  username: string
+  twitter_username: string | null
+  twitter_verified: boolean
+  created_at: string
+}
+
+function fromRow(row: ProfileRow): Profile {
+  return {
+    address: norm(row.wallet_address),
+    username: row.username,
+    twitter: row.twitter_username ?? undefined,
+    twitterVerified: row.twitter_verified,
+    createdAt: Date.parse(row.created_at),
+  }
+}
+
+function normalizeTwitter(twitter?: string): string | undefined {
+  const value = twitter?.trim().replace(/^@/, '')
+  return value || undefined
+}
+
+function saveLocal(address: string, data: { username: string; twitter?: string }): Profile {
+  const all = readAll()
+  const key = norm(address)
+  const profile: Profile = {
+    address: key,
+    username: data.username.trim(),
+    twitter: normalizeTwitter(data.twitter),
+    twitterVerified: all[key]?.twitterVerified ?? false,
+    createdAt: all[key]?.createdAt ?? Date.now(),
+  }
+  all[key] = profile
+  writeAll(all)
+  return profile
+}
+
+async function upsertRemote(
+  address: string,
+  data: { username: string; twitter?: string },
+): Promise<Profile> {
+  const client = getSupabaseClient()
+  if (!client) return saveLocal(address, data)
+
+  const { data: row, error } = await client
+    .from('profiles')
+    .upsert(
+      {
+        wallet_address: norm(address),
+        username: data.username.trim(),
+        twitter_username: normalizeTwitter(data.twitter) ?? null,
+      },
+      { onConflict: 'wallet_address' },
+    )
+    .select('wallet_address, username, twitter_username, twitter_verified, created_at')
+    .single()
+
+  if (error) {
+    if (error.code === '23505') throw new Error('That username is already taken.')
+    if (error.code === '23514') throw new Error('The profile contains an invalid value.')
+    throw new Error(error.message)
+  }
+
+  const profile = fromRow(row as ProfileRow)
+  saveLocal(profile.address, profile)
+  return profile
+}
 
 export const profileStore = {
   get(address?: string | null): Profile | null {
@@ -40,26 +116,64 @@ export const profileStore = {
     return !!profileStore.get(address)
   },
 
-  save(address: string, data: { username: string; twitter?: string }): Profile {
-    const all = readAll()
-    const key = norm(address)
-    const profile: Profile = {
-      address: key,
-      username: data.username.trim(),
-      twitter: data.twitter,
-      createdAt: all[key]?.createdAt ?? Date.now(),
+  /** Public read: no wallet signature required. Falls back to the legacy cache. */
+  async load(address?: string | null): Promise<Profile | null> {
+    if (!address) return null
+    const cached = profileStore.get(address)
+    const client = getSupabaseClient()
+    if (!client) return cached
+
+    const { data, error } = await client
+      .from('profiles')
+      .select('wallet_address, username, twitter_username, twitter_verified, created_at')
+      .eq('wallet_address', norm(address))
+      .maybeSingle()
+
+    if (error) {
+      console.warn('NuvemFund profile read failed; using local cache.', error.message)
+      return cached
     }
-    all[key] = profile
-    writeAll(all)
+    if (!data) return cached
+
+    const profile = fromRow(data as ProfileRow)
+    saveLocal(profile.address, profile)
     return profile
+  },
+
+  saveLocal,
+
+  /** Explicit write: establishes a Supabase SIWE session if needed. */
+  async save(
+    address: string,
+    data: { username: string; twitter?: string },
+    wallet?: EthereumProvider,
+  ): Promise<Profile> {
+    if (!isSupabaseConfigured) return saveLocal(address, data)
+    if (!wallet) throw new Error('The connected wallet provider is unavailable.')
+    await ensureSupabaseWalletSession(address, wallet)
+    return upsertRemote(address, data)
+  },
+
+  /** Background OAuth sync: writes only when a matching SIWE session already exists. */
+  async saveIfAuthenticated(
+    address: string,
+    data: { username: string; twitter?: string },
+  ): Promise<Profile> {
+    const local = saveLocal(address, data)
+    if (!isSupabaseConfigured) return local
+    if ((await currentSupabaseWalletAddress()) !== norm(address)) return local
+    return upsertRemote(address, data)
+  },
+
+  async signOut(): Promise<void> {
+    await signOutSupabase()
   },
 }
 
-// Validación de username (misma regla que deberá aplicar el backend en Fase 2).
 export function validateUsername(name: string): string | null {
-  const v = name.trim()
-  if (v.length < 3) return 'At least 3 characters'
-  if (v.length > 20) return 'At most 20 characters'
-  if (!/^[a-zA-Z0-9_]+$/.test(v)) return 'Letters, numbers and _ only'
+  const value = name.trim()
+  if (value.length < 3) return 'At least 3 characters'
+  if (value.length > 20) return 'At most 20 characters'
+  if (!/^[a-zA-Z0-9_]+$/.test(value)) return 'Letters, numbers and _ only'
   return null
 }
