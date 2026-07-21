@@ -132,7 +132,6 @@ export default function NuvemFundHero({ audioDisabled = false }: NuvemFundHeroPr
   const activeExternalWallet = wallets.find((wallet) => wallet.walletClientType !== 'privy')
   const walletAddress = activeExternalWallet?.address || user?.wallet?.address
   const managers = groupVaultManagers(vaults)
-  const creatorAvailable = import.meta.env.DEV || Boolean(import.meta.env.VITE_VAULT_CREATOR_URL?.trim())
 
   const refreshVaults = useCallback(async () => {
     setVaultStatus((current) => current === 'idle' ? 'loading' : current)
@@ -391,7 +390,7 @@ export default function NuvemFundHero({ audioDisabled = false }: NuvemFundHeroPr
             <WalletButton
               onProfileVisibilityChange={setProfileOpen}
               onCreateVault={() => setCreatorOpen(true)}
-              canCreateVault={creatorAvailable}
+              canCreateVault
             />
           </nav>
 
@@ -471,7 +470,7 @@ export default function NuvemFundHero({ audioDisabled = false }: NuvemFundHeroPr
             <WalletButton
               onProfileVisibilityChange={setProfileOpen}
               onCreateVault={() => setCreatorOpen(true)}
-              canCreateVault={creatorAvailable}
+              canCreateVault
             />
           </nav>
 
@@ -608,11 +607,9 @@ export default function NuvemFundHero({ audioDisabled = false }: NuvemFundHeroPr
                 {vaultStatus === 'ready' && vaults.length === 0 && (
                   <div className="sm:col-span-2 lg:col-span-3 rounded-2xl border border-dashed border-white/20 bg-black/30 px-6 py-12 text-center text-sm text-white/55 backdrop-blur-md">
                     <div>No vault is registered on this network yet.</div>
-                    {creatorAvailable && (
-                      <button type="button" onClick={() => setCreatorOpen(true)} className="mt-4 cursor-pointer rounded-full bg-white px-5 py-2.5 text-xs font-medium text-gray-950 transition-transform hover:scale-[1.02]">
-                        Create the first vault
-                      </button>
-                    )}
+                    <button type="button" onClick={() => setCreatorOpen(true)} className="mt-4 cursor-pointer rounded-full bg-white px-5 py-2.5 text-xs font-medium text-gray-950 transition-transform hover:scale-[1.02]">
+                      Create the first vault
+                    </button>
                   </div>
                 )}
                 {vaults.map((f) => {
