@@ -122,8 +122,18 @@ export function VaultAccessModal({ vault, onClose, onOpenCommunity }: VaultAcces
         if (event.currentTarget === event.target) onClose()
       }}
     >
-      <div className="mx-auto w-full min-w-0 max-w-4xl overflow-hidden rounded-[28px] border border-white/15 bg-[#071012]/90 text-white shadow-[0_28px_100px_rgba(0,0,0,0.55)]">
-        <div className="relative border-b border-white/10 px-6 pb-7 pt-6 sm:px-9 sm:pb-8 sm:pt-8">
+      <div className="relative mx-auto w-full min-w-0 max-w-4xl overflow-hidden rounded-[28px] border border-white/15 bg-[#071012] text-white shadow-[0_28px_100px_rgba(0,0,0,0.55)]">
+        <div className="pointer-events-none absolute inset-0 overflow-hidden" aria-hidden="true">
+          <img
+            src="/vaultbg.webp"
+            alt=""
+            className="h-full w-full scale-[1.08] object-cover blur-[8px]"
+          />
+          <div className="absolute inset-0 bg-black/60" />
+        </div>
+
+        <div className="relative z-10">
+          <div className="relative border-b border-white/10 px-6 pb-7 pt-6 sm:px-9 sm:pb-8 sm:pt-8">
           <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_50%_0%,rgba(84,194,161,0.16),transparent_52%)]" />
           <button
             type="button"
@@ -160,7 +170,7 @@ export function VaultAccessModal({ vault, onClose, onOpenCommunity }: VaultAcces
           </div>
         </div>
 
-        <div className="grid min-w-0 lg:grid-cols-[1.08fr_0.92fr]">
+          <div className="grid min-w-0 lg:grid-cols-[1.08fr_0.92fr]">
           <section className="min-w-0 border-b border-white/10 p-6 sm:p-9 lg:border-b-0 lg:border-r">
             <div className="mb-5 flex flex-wrap items-center gap-2">
               <span className="rounded-full border border-white/15 bg-white/[0.06] px-3 py-1 text-[11px] font-medium text-white/70">
@@ -329,6 +339,7 @@ export function VaultAccessModal({ vault, onClose, onOpenCommunity }: VaultAcces
               )}
             </div>
           </section>
+          </div>
         </div>
       </div>
     </div>
