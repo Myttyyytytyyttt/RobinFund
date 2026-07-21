@@ -8,9 +8,15 @@ const short = (addr?: string) => (addr ? `${addr.slice(0, 6)}…${addr.slice(-4)
 
 type WalletButtonProps = {
   onProfileVisibilityChange?: (visible: boolean) => void
+  onCreateVault?: () => void
+  canCreateVault?: boolean
 }
 
-export default function WalletButton({ onProfileVisibilityChange }: WalletButtonProps) {
+export default function WalletButton({
+  onProfileVisibilityChange,
+  onCreateVault,
+  canCreateVault = false,
+}: WalletButtonProps) {
   const { ready, authenticated, logout, user, linkTwitter } = usePrivy()
   const address = user?.wallet?.address
   const twitterAvatarUrl = user?.twitter?.profilePictureUrl?.replace('_normal', '')
@@ -157,16 +163,65 @@ export default function WalletButton({ onProfileVisibilityChange }: WalletButton
     )
   }
 
-  // Conectado pero sin perfil completado → invita a terminar
+  // El perfil social es opcional para el protocolo: una wallet conectada puede
+  // crear un vault aunque todavía no haya elegido username.
   if (!profile) {
     return (
-      <>
+      <div className="relative" ref={menuRef}>
         <button
-          onClick={() => setShowReg(true)}
-          className="bg-gray-900 text-white rounded-full px-6 py-2.5 text-sm cursor-pointer transition-transform hover:scale-[1.03] active:scale-[0.97]"
+          onClick={() => setMenuOpen((value) => !value)}
+          className="flex items-center gap-2 bg-gray-900 text-white rounded-full px-4 py-2.5 text-sm cursor-pointer transition-transform hover:scale-[1.03] active:scale-[0.97]"
         >
-          Finish setup
+          <span className="h-2 w-2 rounded-full bg-emerald-300" />
+          {short(address)}
+          <svg viewBox="0 0 24 24" className={`w-3.5 h-3.5 text-white/60 transition-transform ${menuOpen ? 'rotate-180' : ''}`} fill="none">
+            <path d="m6 9 6 6 6-6" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+          </svg>
         </button>
+        {menuOpen && (
+          <div className="absolute right-0 mt-2 w-52 rounded-xl bg-[#0d1b24] border border-white/15 shadow-2xl overflow-hidden py-1 z-50">
+            <button
+              type="button"
+              onClick={() => {
+                setMenuOpen(false)
+                setShowReg(true)
+              }}
+              className="w-full flex items-center gap-2.5 px-4 py-2.5 text-sm text-white/90 hover:bg-white/5 cursor-pointer transition-colors"
+            >
+              <svg viewBox="0 0 24 24" className="w-4 h-4 text-white/60" fill="none">
+                <circle cx="12" cy="8" r="3.5" stroke="currentColor" strokeWidth="2" />
+                <path d="M5 20a7 7 0 0 1 14 0" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+              </svg>
+              Complete profile
+            </button>
+            {canCreateVault && onCreateVault && (
+              <button
+                type="button"
+                onClick={() => {
+                  setMenuOpen(false)
+                  onCreateVault()
+                }}
+                className="w-full flex items-center gap-2.5 px-4 py-2.5 text-sm text-white/90 hover:bg-white/5 cursor-pointer transition-colors"
+              >
+                <VaultIcon />
+                Create a vault
+              </button>
+            )}
+            <button
+              type="button"
+              onClick={() => {
+                setMenuOpen(false)
+                void Promise.allSettled([logout(), profileStore.signOut()])
+              }}
+              className="w-full flex items-center gap-2.5 px-4 py-2.5 text-sm text-red-300/90 hover:bg-white/5 cursor-pointer transition-colors"
+            >
+              <svg viewBox="0 0 24 24" className="w-4 h-4" fill="none">
+                <path d="M15 17l5-5-5-5M20 12H9M9 4H6a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h3" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+              </svg>
+              Disconnect
+            </button>
+          </div>
+        )}
         {showReg && (
           <RegisterModal
             firstTime={firstTime}
@@ -183,7 +238,7 @@ export default function WalletButton({ onProfileVisibilityChange }: WalletButton
             onCancel={() => setShowReg(false)}
           />
         )}
-      </>
+      </div>
     )
   }
 
@@ -222,6 +277,19 @@ export default function WalletButton({ onProfileVisibilityChange }: WalletButton
             </svg>
             Profile
           </button>
+          {canCreateVault && onCreateVault && (
+            <button
+              type="button"
+              onClick={() => {
+                setMenuOpen(false)
+                onCreateVault()
+              }}
+              className="w-full flex items-center gap-2.5 px-4 py-2.5 text-sm text-white/90 hover:bg-white/5 cursor-pointer transition-colors"
+            >
+              <VaultIcon />
+              Create a vault
+            </button>
+          )}
           <button
             onClick={() => {
               setMenuOpen(false)
@@ -247,6 +315,14 @@ export default function WalletButton({ onProfileVisibilityChange }: WalletButton
         />
       )}
     </div>
+  )
+}
+
+function VaultIcon() {
+  return (
+    <svg viewBox="0 0 24 24" className="w-4 h-4 text-emerald-200/80" fill="none">
+      <path d="M4 7.5h16v11H4zM7 7.5V5h10v2.5M12 11v4M10 13h4" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
   )
 }
 

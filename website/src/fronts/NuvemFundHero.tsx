@@ -388,7 +388,11 @@ export default function NuvemFundHero({ audioDisabled = false }: NuvemFundHeroPr
               })}
             </div>
 
-            <WalletButton onProfileVisibilityChange={setProfileOpen} />
+            <WalletButton
+              onProfileVisibilityChange={setProfileOpen}
+              onCreateVault={() => setCreatorOpen(true)}
+              canCreateVault={creatorAvailable}
+            />
           </nav>
 
           <main className="max-w-7xl mx-auto px-6 pt-32 pb-12 flex flex-col items-center text-center">
@@ -464,19 +468,11 @@ export default function NuvemFundHero({ audioDisabled = false }: NuvemFundHeroPr
               ))}
             </div>
 
-            {vistaTab === 'funds' && creatorAvailable ? (
-              <button
-                type="button"
-                onClick={() => setCreatorOpen(true)}
-                className="animate-fade-rise cursor-pointer rounded-full border border-emerald-200/25 bg-emerald-200/15 px-4 py-2 text-xs font-medium text-emerald-100 backdrop-blur-sm transition-colors hover:bg-emerald-200/25"
-              >
-                Create vault
-              </button>
-            ) : (
-              <span className="animate-fade-rise rounded-full bg-black/30 backdrop-blur-sm border border-white/20 text-white/70 text-xs px-4 py-2">
-                {vaults.length} registered
-              </span>
-            )}
+            <WalletButton
+              onProfileVisibilityChange={setProfileOpen}
+              onCreateVault={() => setCreatorOpen(true)}
+              canCreateVault={creatorAvailable}
+            />
           </nav>
 
           <main className="max-w-6xl mx-auto w-full px-6 pt-10">
