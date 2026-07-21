@@ -5,14 +5,15 @@ crea un fondo, bloquea un **stake first-loss** en USDG, y opera Stock Tokens (NV
 capital de terceros. Los LPs entran/salen a NAV; el stake del manager cubre sus primeras pérdidas.
 
 > **Esta es la brújula del proyecto.** Para saber por dónde vamos: esta página (qué existe y cómo
-> encaja) + [NOTES.md](NOTES.md) (decisiones, deferidos, hallazgos de revisión) + [../../docs/SPEC.md](../../docs/SPEC.md)
+> encaja) + [NOTES.md](NOTES.md) (decisiones, deferidos, hallazgos de revisión) + [../deploy/README.md](../deploy/README.md)
+> (reinicios, TestnetAssetPack, runbook y outputs) + [../../docs/SPEC.md](../../docs/SPEC.md)
 > (mecanismo, v0.9.2) + [../../docs/REVIEW.md](../../docs/REVIEW.md) (historial de revisión adversarial del diseño).
 
 ---
 
-## Estado (2026-07-20)
+## Estado (2026-07-21)
 
-**Capa de contratos on-chain COMPLETA.** 120 tests en verde (unit con mocks + fork contra estado real
+**Capa de contratos on-chain COMPLETA.** 128 tests en verde (unit con mocks + fork contra estado real
 de mainnet 4663 + fuzzing de invariantes). Cada sub-fase pasó por revisión adversarial y aplicó los
 hallazgos. Tres `HIGH` cerrados en revisión (ver más abajo).
 
@@ -24,6 +25,7 @@ hallazgos. Tres `HIGH` cerrados en revisión (ver más abajo).
 | 1.3a | `Fund` (núcleo) | +26 | ✅ revisado (3 lentes) |
 | 1.4a | `AdapterRegistry`, `UniswapV4Adapter` + `Fund.execute` | +10 | ✅ revisado |
 | 1.5 | `OpenEligibilityGate`, `FeeSplitter`, `Guardian`, `FundRegistry` + scripts de deploy | +23 | ✅ acceso abierto |
+| 1.6 | `TestnetAssetPack` + scripts exclusivos 31337/46630 | +8 | ✅ local + público 46630 |
 
 Todos los contratos < 24.5KB (EIP-170); deploy completo simulado OK contra fork de mainnet, y
 **ejercitado end-to-end** por el test de integración del keeper (anvil forkeando mainnet + estos mismos
@@ -31,6 +33,8 @@ scripts + ciclo de vida LP completo — ver `packages/keeper`). **Pendiente** (f
 ver §Deferidos): Frozen §10.3 completo, liquidación keeper-asistida de retiros cash, 0x RFQ adapter,
 fill parcial del cap. **Off-chain** (Fase 2): keeper e indexer completos. El compliance signer existe
 como módulo legado auditado, pero **no se despliega ni participa** mientras NuvemFund sea permissionless.
+El pack sin valor de testnet, sus CAs públicas, smoke y outputs reproducibles viven en
+`packages/deploy`. Fund canario público: `0xc0FC8Edb22Dd98d1bdA19E92E34282c56c75616e`.
 
 ---
 

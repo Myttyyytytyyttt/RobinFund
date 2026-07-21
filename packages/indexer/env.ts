@@ -6,6 +6,16 @@ import { readFileSync, existsSync } from "node:fs";
 import { resolve, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 
+const INDEXER_ENV_KEYS = new Set([
+  "INDEXER_RPC_URL",
+  "RH_RPC_MAINNET",
+  "FUND_REGISTRY",
+  "INDEXER_START_BLOCK",
+  "INDEXER_CHAIN_ID",
+  "PONDER_PGLITE_DIR",
+  "DATABASE_URL",
+]);
+
 export function loadRootEnv(): void {
   const here = dirname(fileURLToPath(import.meta.url));
   const candidate = resolve(here, "../../.env");
@@ -16,6 +26,7 @@ export function loadRootEnv(): void {
     const eq = line.indexOf("=");
     if (eq <= 0) continue;
     const key = line.slice(0, eq).trim();
+    if (!INDEXER_ENV_KEYS.has(key)) continue;
     let val = line.slice(eq + 1).trim();
     if ((val.startsWith('"') && val.endsWith('"')) || (val.startsWith("'") && val.endsWith("'"))) {
       val = val.slice(1, -1);

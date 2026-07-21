@@ -8,7 +8,9 @@ interface ImportMetaEnv {
   readonly VITE_RH_RPC_URL?: string
   readonly VITE_RH_CHAIN_ID?: string
   readonly VITE_FUND_REGISTRY_ADDRESS?: string
+  readonly VITE_USDG_ADDRESS?: string
   readonly VITE_VAULT_CREATOR_URL?: string
+  readonly VITE_DISABLE_LOCAL_CREATOR?: string
 }
 
 interface ImportMeta {

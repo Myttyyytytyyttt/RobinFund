@@ -125,6 +125,13 @@ const TOKEN_SYMBOLS: Record<string, string> = {
   '0xaf3d76f1834a1d425780943c99ea8a608f8a93f9': 'AAPL',
   '0xe93237c50d904957cf27e7b1133b510c669c2e74': 'MSFT',
   '0x117cc2133c37b721f49de2a7a74833232b3b4c0c': 'SPY',
+  // Robinhood Chain testnet asset pack.
+  '0x336c508083e2afe17c594a8ef5b8542efcf672d5': 'USDG',
+  '0x3f1a8f0a7d944875e3350b0c78d56d22990a6e2f': 'TSLA',
+  '0x3b334d58c329f7a98ca3c11a09e45ae3352263ae': 'NVDA',
+  '0x6fd0d905af9841a2a268ab4784efe24575a48d1c': 'AAPL',
+  '0x5cc41b676e626c29fa685c1e9057d0264d3c6f05': 'MSFT',
+  '0x2b41f3c8b61e7188a2c7dbf494ebf6d0beaced22': 'SPY',
 }
 
 const normalize = (value: string) => value.toLowerCase()

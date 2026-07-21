@@ -9,7 +9,7 @@ import {Guardian} from "../src/Guardian.sol";
 import {FundRegistry} from "../src/FundRegistry.sol";
 import {UniswapV4Adapter, IPoolManager} from "../src/adapters/UniswapV4Adapter.sol";
 import {AddressBook} from "../src/AddressBook.sol";
-import {IAggregatorV3, IBeacon} from "../src/interfaces/IAggregatorV3.sol";
+import {IBeacon} from "../src/interfaces/IAggregatorV3.sol";
 
 /// @title Deploy — despliega el protocolo compartido de RobinFund (SPEC §12)
 /// @notice Orden: registries → gate abierto → guardian → adapter → registry. Después transfiere la ownership
@@ -21,10 +21,12 @@ contract Deploy is Script {
     uint48 constant STALENESS = 90000;
 
     function run() external {
-        address multisig = vm.envOr("GUARDIAN_MULTISIG", msg.sender);
+        uint256 deployerPk = vm.envUint("DEPLOYER_PK");
+        address multisig = vm.envOr("GUARDIAN_MULTISIG", vm.addr(deployerPk));
         uint256 guardianDelay = vm.envOr("GUARDIAN_DELAY", uint256(2 days));
 
-        vm.startBroadcast();
+        // La clave llega por el entorno, nunca como argumento visible del proceso `forge`.
+        vm.startBroadcast(deployerPk);
 
         TokenRegistry registry = new TokenRegistry(AddressBook.USDG);
         AdapterRegistry adapters = new AdapterRegistry();

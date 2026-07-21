@@ -1,0 +1,25 @@
+{
+  "name": "@nuvemfund/deploy",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "description": "Runbooks y herramientas reproducibles de despliegue de NuvemFund",
+  "scripts": {
+    "check:testnet": "tsx src/check-testnet.ts",
+    "deploy:testnet": "tsx src/deploy-testnet.ts",
+    "services:testnet": "tsx src/testnet-services.ts",
+    "smoke:testnet": "tsx src/smoke-testnet.ts",
+    "test:dynamic-entry": "tsx src/dynamic-entry-testnet.ts",
+    "test:testbots": "tsx src/testbots-testnet.ts",
+    "test:local": "tsx src/local-e2e.ts",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "dependencies": {
+    "viem": "^2.21.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.20.1",
+    "tsx": "^4.19.0",
+    "typescript": "^5.6.0"
+  }
+}

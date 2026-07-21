@@ -13,6 +13,11 @@ Estado y decisiones que no viven en el código ni en la spec. Para retomar sin r
 | 1.3b | Flecos: true-up del collar in-kind, fill parcial del cap (C19), Frozen completo, cash-queue reorder | — | pendiente |
 | 1.4a | Trading: AdapterRegistry + UniswapV4Adapter + fund.execute con guardarraíl + presupuesto | 103 | ✅ revisado (falta 0x RFQ, liquidación keeper-asistida) |
 | 1.5 | `OpenEligibilityGate` por defecto, `FeeSplitter`, `Guardian` (timelock), `FundRegistry` | suite completa | ✅ permissionless |
+| 1.6 | `TestnetAssetPack`, scripts 46630 y Fund canario | 128 contratos + E2E completo | ✅ desplegado + smoke público |
+
+Los comandos, gas, CAs públicas y resultados están en [`packages/deploy`](../deploy/README.md).
+Las addresses del E2E local siguen siendo efímeras; para testnet/Vercel solo valen las CAs del output
+`outputs/2026-07-21-testnet-public.md`.
 
 ## Decisión vigente (2026-07-20): acceso completamente abierto
 

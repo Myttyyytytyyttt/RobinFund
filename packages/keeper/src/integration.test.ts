@@ -137,10 +137,23 @@ const keeperWallet = (): WalletClient => wallets[2]!;
 
 // ---------- helpers ----------
 
-function forge(args: string[], extraEnv: Record<string, string>): void {
+function forge(script: string, extraEnv: Record<string, string>): void {
+  const args = [
+    "script",
+    script,
+    "--rpc-url",
+    ANVIL_URL,
+    "--broadcast",
+    "--slow",
+    "--non-interactive",
+    "--timeout",
+    "120",
+    "--color",
+    "never",
+  ];
   const res = spawnSync("forge", args, {
     cwd: contractsDir,
-    env: { ...process.env, ...extraEnv },
+    env: { ...process.env, DEPLOYER_PK: PK[0], ...extraEnv },
     encoding: "utf8",
     maxBuffer: 32 * 1024 * 1024,
   });
@@ -272,7 +285,7 @@ beforeAll(async () => {
   // 2. deploy del protocolo con el script REAL
   protocolDeployBlock = await pub.getBlockNumber();
   forge(
-    ["script", "script/Deploy.s.sol", "--rpc-url", ANVIL_URL, "--broadcast", "--private-key", PK[0]],
+    "script/Deploy.s.sol",
     {
       GUARDIAN_MULTISIG: acct[6]!.address,
     },
@@ -300,7 +313,7 @@ beforeAll(async () => {
 
   // 4. crear el fondo con el script REAL del operador. Manager y LP entran sin onboarding.
   forge(
-    ["script", "script/CreateFund.s.sol", "--rpc-url", ANVIL_URL, "--broadcast", "--private-key", PK[0]],
+    "script/CreateFund.s.sol",
     {
       TOKEN_REGISTRY: addrs.TokenRegistry!,
       ADAPTER_REGISTRY: addrs.AdapterRegistry!,

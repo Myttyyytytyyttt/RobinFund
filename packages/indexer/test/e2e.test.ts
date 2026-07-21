@@ -115,8 +115,25 @@ let startBlock = 0n;
 function forge(script: string, extraEnv: Record<string, string>): void {
   const res = spawnSync(
     "forge",
-    ["script", script, "--rpc-url", ANVIL_URL, "--broadcast", "--private-key", PK[0]],
-    { cwd: contractsDir, env: { ...process.env, ...extraEnv }, encoding: "utf8", maxBuffer: 32 * 1024 * 1024 },
+    [
+      "script",
+      script,
+      "--rpc-url",
+      ANVIL_URL,
+      "--broadcast",
+      "--slow",
+      "--non-interactive",
+      "--timeout",
+      "120",
+      "--color",
+      "never",
+    ],
+    {
+      cwd: contractsDir,
+      env: { ...process.env, DEPLOYER_PK: PK[0], ...extraEnv },
+      encoding: "utf8",
+      maxBuffer: 32 * 1024 * 1024,
+    },
   );
   if (res.status !== 0) throw new Error(`forge ${script} falló:\n${res.stdout}\n${res.stderr}`);
 }

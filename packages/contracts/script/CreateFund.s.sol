@@ -14,6 +14,7 @@ import {IEligibilityGate} from "../src/interfaces/IEligibilityGate.sol";
 /// constructor del Fund exige que el manager sea elegible. Parametrizable por env.
 contract CreateFund is Script {
     function run() external {
+        uint256 deployerPk = vm.envUint("DEPLOYER_PK");
         TokenRegistry registry = TokenRegistry(vm.envAddress("TOKEN_REGISTRY"));
         AdapterRegistry adapters = AdapterRegistry(vm.envAddress("ADAPTER_REGISTRY"));
         IEligibilityGate gate = IEligibilityGate(vm.envAddress("ELIGIBILITY_GATE"));
@@ -33,10 +34,19 @@ contract CreateFund is Script {
             withdrawCooldown: uint32(vm.envOr("COOLDOWN", uint256(24 hours)))
         });
 
-        vm.startBroadcast();
+        // La clave llega por el entorno, nunca como argumento visible del proceso `forge`.
+        vm.startBroadcast(deployerPk);
         Fund fund = new Fund(
-            registry, gate, adapters, guardian, manager, keeper, treasury, cfg,
-            vm.envString("FUND_NAME"), vm.envString("FUND_SYMBOL")
+            registry,
+            gate,
+            adapters,
+            guardian,
+            manager,
+            keeper,
+            treasury,
+            cfg,
+            vm.envString("FUND_NAME"),
+            vm.envString("FUND_SYMBOL")
         );
         fundRegistry.register(address(fund), manager);
         vm.stopBroadcast();

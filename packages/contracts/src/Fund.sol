@@ -2,7 +2,6 @@
 pragma solidity ^0.8.26;
 
 import {IERC20} from "./interfaces/IERC20.sol";
-import {IAggregatorV3} from "./interfaces/IAggregatorV3.sol";
 import {IEligibilityGate} from "./interfaces/IEligibilityGate.sol";
 import {TokenRegistry} from "./TokenRegistry.sol";
 import {NAVLib} from "./libraries/NAVLib.sol";

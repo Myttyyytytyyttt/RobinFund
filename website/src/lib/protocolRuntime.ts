@@ -11,8 +11,11 @@ export type ProtocolRuntime = {
   mode: 'devnet' | 'network'
 }
 
-const localCreatorUrl = import.meta.env.VITE_VAULT_CREATOR_URL?.trim() ||
-  (import.meta.env.DEV ? 'http://127.0.0.1:8788' : '')
+const creatorDisabled = import.meta.env.VITE_DISABLE_LOCAL_CREATOR === '1'
+const localCreatorUrl = creatorDisabled
+  ? ''
+  : import.meta.env.VITE_VAULT_CREATOR_URL?.trim() ||
+    (import.meta.env.DEV ? 'http://127.0.0.1:8788' : '')
 
 let cached: Promise<ProtocolRuntime> | null = null
 
@@ -52,6 +55,7 @@ export function loadProtocolRuntime(force = false): Promise<ProtocolRuntime> {
   cached = (async () => {
     const remote = localCreatorUrl ? await creatorConfig(localCreatorUrl) : null
     const envRegistry = import.meta.env.VITE_FUND_REGISTRY_ADDRESS?.trim() as Address | undefined
+    const envUsdg = import.meta.env.VITE_USDG_ADDRESS?.trim() as Address | undefined
     return {
       rpcUrl: remote?.rpcUrl || import.meta.env.VITE_RH_RPC_URL || 'https://rpc.mainnet.chain.robinhood.com',
       chainId: remote?.chainId || Number(import.meta.env.VITE_RH_CHAIN_ID || 4663),
@@ -60,7 +64,7 @@ export function loadProtocolRuntime(force = false): Promise<ProtocolRuntime> {
         (import.meta.env.DEV ? 'http://127.0.0.1:42069/graphql' : undefined),
       creatorUrl: localCreatorUrl || undefined,
       fundRegistry: remote?.fundRegistry || envRegistry,
-      usdg: remote?.usdg,
+      usdg: remote?.usdg || envUsdg,
       creatorEnabled: Boolean(remote?.creatorEnabled && localCreatorUrl),
       mode: remote?.mode === 'devnet' ? 'devnet' : 'network',
     }

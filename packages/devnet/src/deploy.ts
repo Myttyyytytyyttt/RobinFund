@@ -4,7 +4,7 @@
  * nuevas y el forward pricing las exige), sembrados con los precios reales del momento del fork.
  * El acceso es permissionless mediante OpenEligibilityGate: no hay bootstrap ni signer.
  */
-import { spawnSync } from "node:child_process";
+import { spawn } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { encodeAbiParameters, parseAbi, type Address, type Hex } from "viem";
@@ -44,13 +44,58 @@ export const mockFeedAbi = [
   },
   { type: "function", name: "answer", stateMutability: "view", inputs: [], outputs: [{ type: "int256" }] },
 ] as const;
-export function forgeScript(script: string, rpcUrl: string, extraEnv: Record<string, string>): void {
-  const res = spawnSync(
-    "forge",
-    ["script", script, "--rpc-url", rpcUrl, "--broadcast", "--private-key", PK[0]],
-    { cwd: contractsDir, env: { ...process.env, ...extraEnv }, encoding: "utf8", maxBuffer: 32 * 1024 * 1024 },
-  );
-  if (res.status !== 0) throw new Error(`forge ${script} falló:\n${res.stdout}\n${res.stderr}`);
+export async function forgeScript(
+  script: string,
+  rpcUrl: string,
+  extraEnv: Record<string, string>,
+): Promise<void> {
+  const timeoutMs = Number(process.env.FORGE_SCRIPT_TIMEOUT_MS ?? "600000");
+  const args = [
+    "script",
+    script,
+    "--rpc-url",
+    rpcUrl,
+    "--broadcast",
+    "--slow",
+    "--non-interactive",
+    "--timeout",
+    "120",
+    "--color",
+    "never",
+  ];
+  const child = spawn("forge", args, {
+    cwd: contractsDir,
+    env: { ...process.env, DEPLOYER_PK: PK[0], ...extraEnv },
+    stdio: ["ignore", "pipe", "pipe"],
+    windowsHide: true,
+  });
+
+  let stdout = "";
+  let stderr = "";
+  child.stdout.on("data", (chunk: Buffer) => {
+    const value = chunk.toString();
+    stdout += value;
+    process.stdout.write(value);
+  });
+  child.stderr.on("data", (chunk: Buffer) => {
+    const value = chunk.toString();
+    stderr += value;
+    process.stderr.write(value);
+  });
+
+  let timedOut = false;
+  const timer = setTimeout(() => {
+    timedOut = true;
+    child.kill("SIGTERM");
+  }, timeoutMs);
+
+  const code = await new Promise<number | null>((resolve, reject) => {
+    child.once("error", reject);
+    child.once("close", resolve);
+  }).finally(() => clearTimeout(timer));
+
+  if (timedOut) throw new Error(`forge ${script} excedió ${timeoutMs} ms y fue detenido`);
+  if (code !== 0) throw new Error(`forge ${script} falló (exit ${code}):\n${stdout}\n${stderr}`);
 }
 
 function parseBroadcast(script: string, chainId: number): Record<string, Address> {
@@ -95,7 +140,7 @@ async function realAnswer(d: Devnet, feed: Address): Promise<bigint> {
 export async function deployProtocol(d: Devnet): Promise<Protocol> {
   const deployBlock = await d.pub.getBlockNumber();
 
-  forgeScript("script/Deploy.s.sol", d.rpcUrl, {
+  await forgeScript("script/Deploy.s.sol", d.rpcUrl, {
     GUARDIAN_MULTISIG: acct[8]!.address,
   });
   const a = parseBroadcast("Deploy.s.sol", d.chainId);
@@ -138,7 +183,7 @@ export async function createFund(
   extra: Record<string, string> = {},
   manager: Address = acct[3]!.address,
 ): Promise<Address> {
-  forgeScript("script/CreateFund.s.sol", d.rpcUrl, {
+  await forgeScript("script/CreateFund.s.sol", d.rpcUrl, {
     TOKEN_REGISTRY: p.tokenRegistry,
     ADAPTER_REGISTRY: p.adapterRegistry,
     ELIGIBILITY_GATE: p.eligibilityGate,
