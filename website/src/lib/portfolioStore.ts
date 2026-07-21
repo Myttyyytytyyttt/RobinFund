@@ -2,7 +2,7 @@ import { profileStore } from './profileStore'
 
 const WAD = 10n ** 18n
 const USD6 = 10n ** 6n
-const DEFAULT_INDEXER_URL = 'http://127.0.0.1:42069/graphql'
+const DEFAULT_INDEXER_URL = import.meta.env.DEV ? 'http://127.0.0.1:42069/graphql' : ''
 
 export type PortfolioPosition = {
   fundAddress: string
@@ -113,6 +113,7 @@ function dateLabel(timestamp: bigint): string {
 
 async function fetchGraphql<T>(query: string, variables: Record<string, unknown>): Promise<T> {
   const endpoint = import.meta.env.VITE_INDEXER_GRAPHQL_URL || DEFAULT_INDEXER_URL
+  if (!endpoint) throw new Error('The NuvemFund indexer URL is not configured.')
   const response = await fetch(endpoint, {
     method: 'POST',
     headers: { 'content-type': 'application/json' },

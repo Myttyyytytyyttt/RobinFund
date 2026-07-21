@@ -80,8 +80,15 @@ export async function bootAnvil(port: number): Promise<Devnet> {
   const forkUrl = process.env.RH_RPC_MAINNET;
   if (!forkUrl) throw new Error("falta RH_RPC_MAINNET en el .env raíz");
   const rpcUrl = `http://127.0.0.1:${port}`;
+  // Keep the fork distinct from Robinhood mainnet in browser wallets. The forked state and
+  // contract addresses stay identical; only signatures use a local chain id.
+  const devnetChainId = Number(process.env.DEVNET_CHAIN_ID ?? "31337");
 
-  const anvil = spawn("anvil", ["--fork-url", forkUrl, "--port", String(port)], { stdio: "ignore" });
+  const anvil = spawn(
+    "anvil",
+    ["--fork-url", forkUrl, "--port", String(port), "--chain-id", String(devnetChainId)],
+    { stdio: "ignore" },
+  );
   const probe = createPublicClient({ transport: http(rpcUrl) });
   let chainId = 0;
   for (let i = 0; i < 120; i++) {
@@ -105,6 +112,18 @@ export async function bootAnvil(port: number): Promise<Devnet> {
   });
   const pub = createPublicClient({ chain, transport: http(rpcUrl) });
   const test = createTestClient({ mode: "anvil", chain, transport: http(rpcUrl) });
+
+  // Forked EOAs retain their Robinhood-mainnet nonces. The standard Anvil test accounts have
+  // occasionally been used on public chains, which can make local CREATE addresses collide and
+  // leave a Foundry broadcast queued behind old nonce history. Reset only the disposable devnet
+  // accounts before any local transaction; forked token/protocol state remains untouched.
+  for (const account of acct) {
+    await test.request({
+      method: "anvil_setNonce" as never,
+      params: [account.address, numberToHex(0)] as never,
+    });
+  }
+
   const wallets = acct.map((a) => createWalletClient({ account: a, chain, transport: http(rpcUrl) }));
 
   // latido: un bloque cada 2s para que keeper (timestamps frescos) y ponder (realtime) avancen

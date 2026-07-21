@@ -136,6 +136,7 @@ export async function createFund(
   name: string,
   symbol: string,
   extra: Record<string, string> = {},
+  manager: Address = acct[3]!.address,
 ): Promise<Address> {
   forgeScript("script/CreateFund.s.sol", d.rpcUrl, {
     TOKEN_REGISTRY: p.tokenRegistry,
@@ -143,7 +144,7 @@ export async function createFund(
     ELIGIBILITY_GATE: p.eligibilityGate,
     FUND_REGISTRY: p.fundRegistry,
     GUARDIAN: p.guardian,
-    FUND_MANAGER: acct[3]!.address,
+    FUND_MANAGER: manager,
     KEEPER: acct[2]!.address,
     PROTOCOL_TREASURY: acct[7]!.address,
     FUND_NAME: name,

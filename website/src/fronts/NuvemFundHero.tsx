@@ -1,11 +1,13 @@
-import { lazy, Suspense, useEffect, useRef, useState } from 'react'
+import { lazy, Suspense, useCallback, useEffect, useRef, useState } from 'react'
+import { usePrivy, useWallets } from '@privy-io/react-auth'
 import { GooeyText } from '@/components/ui/gooey-text-morphing'
 import { MagneticButton } from '@/components/ui/magnetic-button'
 import WalletButton from '@/components/WalletButton'
-import { MOCK_VAULTS } from '@/features/vaults/mockVaults'
 import { VaultAccessModal } from '@/features/vaults/VaultAccessModal'
 import { VaultCommunityView } from '@/features/vaults/VaultCommunityView'
+import { VaultCreatorModal } from '@/features/vaults/VaultCreatorModal'
 import type { Vault } from '@/features/vaults/types'
+import { groupVaultManagers, loadVaults } from '@/lib/vaultStore'
 
 // Visor de docs lazy: el markdown + react-markdown solo cargan al abrir Docs
 const DocsView = lazy(() => import('@/components/DocsView'))
@@ -24,9 +26,6 @@ const NAV_LINKS = [
   { label: 'Docs', active: false },
 ]
 
-// Avatares locales (website/public/twitter1..5.jpg)
-const AVATARS = ['/twitter1.jpg', '/twitter2.jpg', '/twitter3.jpg', '/twitter4.jpg', '/twitter5.jpg']
-
 // Palabras de largo casi idéntico para que el titular centrado no "baile" al mutar
 const MORPH_WORDS = ['Fellows.', 'Fortune.', 'Future.', 'Family.']
 
@@ -38,92 +37,27 @@ const STATS = [
   { value: '20%', label: 'Performance fee, HWM-gated' },
 ]
 
-// Mockup de managers (vista Managers — misma mecánica que Funds)
-const MOCK_MANAGERS: {
-  photo: string
-  name: string
-  handle: string
-  perfTotal: string
-  perf7d: string
-  funds: { name: string; nav: string }[]
-  socials: { x: string; tg: string; web: string }
-}[] = [
-  {
-    photo: '/twitter1.jpg',
-    name: 'Sofia Lindqvist',
-    handle: '@sofia.eth',
-    perfTotal: '+87%',
-    perf7d: '+3.1%',
-    funds: [
-      { name: 'Alpine Alpha', nav: '$1.248' },
-      { name: 'Nordic Growth', nav: '$1.062' },
-    ],
-    socials: { x: '#', tg: '#', web: '#' },
-  },
-  {
-    photo: '/twitter2.jpg',
-    name: 'Luca Marchetti',
-    handle: '@marchetti',
-    perfTotal: '+34%',
-    perf7d: '+1.8%',
-    funds: [{ name: 'Blue Chip Basket', nav: '$1.091' }],
-    socials: { x: '#', tg: '#', web: '#' },
-  },
-  {
-    photo: '/twitter3.jpg',
-    name: 'Kenji Tanaka',
-    handle: '@kenji_t',
-    perfTotal: '+129%',
-    perf7d: '+5.6%',
-    funds: [
-      { name: 'Momentum Seven', nav: '$1.412' },
-      { name: 'Tokyo Overnight', nav: '$0.981' },
-    ],
-    socials: { x: '#', tg: '#', web: '#' },
-  },
-]
-
-// Iconos sociales mínimos (inline, sin dependencias)
-function SocialIcon({ kind, href }: { kind: 'x' | 'tg' | 'web'; href: string }) {
-  const paths = {
-    x: 'M18.9 2H22l-6.8 7.8L23.2 22h-6.3l-4.9-6.4L6.4 22H3.2l7.3-8.3L2.8 2h6.4l4.4 5.9L18.9 2zm-1.1 18h1.7L7.6 3.9H5.8L17.8 20z',
-    tg: 'M21.9 4.3c.3-1.1-.8-2-1.8-1.6L2.7 9.6c-1.1.4-1.1 2 .1 2.3l4.4 1.3 1.7 5.4c.3 1 1.6 1.3 2.3.5l2.4-2.5 4.5 3.3c.9.6 2.1.2 2.4-.9l3.4-14.7zM9.2 12.7l8.5-5.4c.4-.2.8.3.4.6l-6.9 6.4-.3 3.1-1.7-4.7z',
-    web: 'M12 2a10 10 0 100 20 10 10 0 000-20zm7.9 9h-3a15.6 15.6 0 00-1.1-5.3A8 8 0 0119.9 11zM12 4c.9 1.2 1.9 3.6 2.1 7h-4.2C10.1 7.6 11.1 5.2 12 4zM4.1 13h3c.2 2 .6 3.8 1.1 5.3A8 8 0 014.1 13zm3-2h-3a8 8 0 014.1-5.3A15.6 15.6 0 007.1 11zm4.9 9c-.9-1.2-1.9-3.6-2.1-7h4.2c-.2 3.4-1.2 5.8-2.1 7zm3.8-1.7c.5-1.5.9-3.3 1.1-5.3h3a8 8 0 01-4.1 5.3z',
-  }
-  return (
-    <a
-      href={href}
-      className="w-8 h-8 rounded-full bg-white/10 border border-white/20 flex items-center justify-center text-white/70 hover:text-white hover:bg-white/20 transition-colors"
-      onClick={(e) => e.preventDefault()}
-    >
-      <svg viewBox="0 0 24 24" className="w-4 h-4" fill="currentColor">
-        <path d={paths[kind]} />
-      </svg>
-    </a>
-  )
-}
-
 // Pasos del How it works (copy simple; el detalle tecnico vive en docs)
 const HOW_STEPS = [
   {
     n: '01',
-    title: 'Connect & deposit',
-    text: 'Link any EVM wallet and deposit USDG into the fund you pick. Your shares stay in your hands — always.',
+    title: 'Connect & queue USDG',
+    text: 'Connect an EVM wallet, approve USDG and submit a forward-priced deposit request to the Fund contract.',
   },
   {
     n: '02',
-    title: 'Managers trade real stocks',
-    text: 'Funds hold tokenized US stocks on Robinhood Chain. Markets run 24/7, fully on-chain and transparent.',
+    title: 'Managers allocate onchain',
+    text: 'Managers can trade only through protocol-approved adapters. Assets remain inside the Fund custody contracts.',
   },
   {
     n: '03',
-    title: 'Losses hit the manager first',
-    text: 'Every manager locks their own stake. If the fund loses, your first losses come out of it — that is the Loss-Protection tier on every card.',
+    title: 'Manager capital absorbs first loss',
+    text: 'At settlement, eligible losses are funded from the manager stake up to the protection still available.',
   },
   {
     n: '04',
-    title: 'Leave whenever you want',
-    text: 'Withdraw at NAV, any day. No lock-ups, no permissions, no middlemen.',
+    title: 'Withdraw through the queue',
+    text: 'Shares are self-custodied. Withdrawals execute after the configured cooldown and only against a valid NAV.',
   },
 ]
 
@@ -141,6 +75,12 @@ function coverTier(k: number) {
   if (k >= 10) return { border: 'rgba(255,215,0,0.6)', text: '#f2d77c', glow: '0 0 12px rgba(255,215,0,0.18)' }
   if (k >= 5) return { border: 'rgba(200,200,210,0.7)', text: '#e4e4ea', glow: 'none' }
   return { border: 'rgba(205,127,50,0.7)', text: '#e5b184', glow: 'none' }
+}
+
+function compactUsd(value: number) {
+  if (value >= 1_000_000) return `$${(value / 1_000_000).toFixed(value >= 10_000_000 ? 0 : 1)}m`
+  if (value >= 1_000) return `$${(value / 1_000).toFixed(value >= 10_000 ? 0 : 1)}k`
+  return `$${value.toLocaleString('en-US', { maximumFractionDigits: 0 })}`
 }
 
 // Logo de stock: primero public/stocks/<TICKER>.png (si lo añades tú), si no CDN, si no se oculta.
@@ -170,6 +110,8 @@ type NuvemFundHeroProps = {
 }
 
 export default function NuvemFundHero({ audioDisabled = false }: NuvemFundHeroProps) {
+  const { user } = usePrivy()
+  const { wallets } = useWallets()
   const [phase, setPhase] = useState<Phase>('hero')
   const [vistaTab, setVistaTab] = useState<'funds' | 'managers' | 'how'>('funds')
   const [zoomed, setZoomed] = useState(false)
@@ -178,15 +120,43 @@ export default function NuvemFundHero({ audioDisabled = false }: NuvemFundHeroPr
   const [showDocs, setShowDocs] = useState(false)
   const [profileOpen, setProfileOpen] = useState(false)
   const [selectedVault, setSelectedVault] = useState<Vault | null>(null)
-  const [community, setCommunity] = useState<{ vault: Vault; preview: boolean } | null>(null)
+  const [community, setCommunity] = useState<Vault | null>(null)
+  const [creatorOpen, setCreatorOpen] = useState(false)
+  const [vaults, setVaults] = useState<Vault[]>([])
+  const [vaultStatus, setVaultStatus] = useState<'idle' | 'loading' | 'ready' | 'error'>('idle')
+  const [vaultError, setVaultError] = useState<string | null>(null)
   const transVidRef = useRef<HTMLVideoElement>(null)
   const ambientAudioRef = useRef<HTMLAudioElement>(null)
   const moveAudioRef = useRef<HTMLAudioElement>(null)
   const phaseRef = useRef<Phase>('hero')
+  const activeExternalWallet = wallets.find((wallet) => wallet.walletClientType !== 'privy')
+  const walletAddress = activeExternalWallet?.address || user?.wallet?.address
+  const managers = groupVaultManagers(vaults)
+  const creatorAvailable = import.meta.env.DEV || Boolean(import.meta.env.VITE_VAULT_CREATOR_URL?.trim())
+
+  const refreshVaults = useCallback(async () => {
+    setVaultStatus((current) => current === 'idle' ? 'loading' : current)
+    try {
+      const nextVaults = await loadVaults(walletAddress)
+      setVaults(nextVaults)
+      setVaultError(null)
+      setVaultStatus('ready')
+    } catch (error) {
+      setVaultError(error instanceof Error ? error.message : 'Could not load registered vaults.')
+      setVaultStatus('error')
+    }
+  }, [walletAddress])
 
   useEffect(() => {
     phaseRef.current = phase
   }, [phase])
+
+  useEffect(() => {
+    if (phase === 'hero') return
+    void refreshVaults()
+    const interval = window.setInterval(() => void refreshVaults(), 12_000)
+    return () => window.clearInterval(interval)
+  }, [phase, refreshVaults])
 
   const ambientEnabled = phase === 'hero' && !showDocs && !profileOpen && !audioDisabled
 
@@ -316,7 +286,7 @@ export default function NuvemFundHero({ audioDisabled = false }: NuvemFundHeroPr
 
   return (
     <div
-      className="relative min-h-screen overflow-hidden"
+      className={`relative min-h-screen ${phase === 'vista' ? 'overflow-x-hidden overflow-y-auto' : 'overflow-hidden'}`}
       style={{ backgroundColor: 'hsl(201 100% 13%)' }}
       onMouseMove={onMouseMove}
     >
@@ -422,20 +392,9 @@ export default function NuvemFundHero({ audioDisabled = false }: NuvemFundHeroPr
           </nav>
 
           <main className="max-w-7xl mx-auto px-6 pt-32 pb-12 flex flex-col items-center text-center">
-            <div className="animate-fade-rise mb-8 rounded-full bg-white/20 backdrop-blur-sm border border-gray-900/10 pl-3 pr-5 py-2 flex items-center gap-3">
-              <div className="flex -space-x-2.5">
-                {AVATARS.map((src, i) => (
-                  <img
-                    key={i}
-                    src={src}
-                    alt={`Manager ${i + 1}`}
-                    className="w-8 h-8 rounded-full border-2 border-white object-cover"
-                  />
-                ))}
-              </div>
-              <span className="text-sm text-gray-800">
-                Top traders run social funds — backed by their own stake.
-              </span>
+            <div className="animate-fade-rise mb-8 rounded-full bg-white/20 backdrop-blur-sm border border-gray-900/10 px-5 py-2.5 flex items-center gap-3">
+              <span className="h-2 w-2 rounded-full bg-emerald-500 shadow-[0_0_0_4px_rgba(16,185,129,0.12)]" />
+              <span className="text-sm text-gray-800">Onchain funds. Manager-funded protection.</span>
             </div>
 
             <h1 className="animate-fade-rise font-bold text-5xl sm:text-6xl md:text-[4.9rem] leading-[0.95] tracking-[-1.5px] text-gray-900 max-w-5xl flex flex-wrap items-center justify-center gap-x-[0.22em]">
@@ -480,7 +439,7 @@ export default function NuvemFundHero({ audioDisabled = false }: NuvemFundHeroPr
         </div>
       )}
 
-      {/* ---------- VISTA (post-transición): mockup sobre las montañas ---------- */}
+      {/* ---------- VISTA (post-transición): protocolo real sobre las montañas ---------- */}
       {phase === 'vista' && (
         <div className="relative z-10 min-h-screen flex flex-col">
           <nav className="max-w-7xl mx-auto w-full px-6 pt-6 flex items-center justify-between">
@@ -505,9 +464,19 @@ export default function NuvemFundHero({ audioDisabled = false }: NuvemFundHeroPr
               ))}
             </div>
 
-            <span className="animate-fade-rise rounded-full bg-black/30 backdrop-blur-sm border border-white/20 text-white/70 text-xs px-4 py-2">
-              Mockup — vista previa
-            </span>
+            {vistaTab === 'funds' && creatorAvailable ? (
+              <button
+                type="button"
+                onClick={() => setCreatorOpen(true)}
+                className="animate-fade-rise cursor-pointer rounded-full border border-emerald-200/25 bg-emerald-200/15 px-4 py-2 text-xs font-medium text-emerald-100 backdrop-blur-sm transition-colors hover:bg-emerald-200/25"
+              >
+                Create vault
+              </button>
+            ) : (
+              <span className="animate-fade-rise rounded-full bg-black/30 backdrop-blur-sm border border-white/20 text-white/70 text-xs px-4 py-2">
+                {vaults.length} registered
+              </span>
+            )}
           </nav>
 
           <main className="max-w-6xl mx-auto w-full px-6 pt-10">
@@ -552,51 +521,74 @@ export default function NuvemFundHero({ audioDisabled = false }: NuvemFundHeroPr
 
             {vistaTab === 'managers' && (
               <div className="animate-fade-rise-delay-2 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-5">
-                {MOCK_MANAGERS.map((m) => (
+                {vaultStatus === 'loading' && managers.length === 0 && (
+                  <div className="sm:col-span-2 lg:col-span-3 rounded-2xl border border-white/15 bg-black/35 px-6 py-12 text-center text-sm text-white/55 backdrop-blur-md">
+                    Reading managers from FundRegistry…
+                  </div>
+                )}
+                {vaultStatus === 'error' && managers.length === 0 && (
+                  <div className="sm:col-span-2 lg:col-span-3 rounded-2xl border border-red-200/20 bg-black/40 px-6 py-10 text-center backdrop-blur-md">
+                    <div className="text-sm text-red-100">Registered managers could not be loaded.</div>
+                    <div className="mt-2 break-words font-mono text-[10px] text-white/35">{vaultError}</div>
+                    <button type="button" onClick={() => void refreshVaults()} className="mt-4 cursor-pointer rounded-full border border-white/15 px-4 py-2 text-xs text-white/70 hover:bg-white/10">Retry</button>
+                  </div>
+                )}
+                {vaultStatus === 'ready' && managers.length === 0 && (
+                  <div className="sm:col-span-2 lg:col-span-3 rounded-2xl border border-dashed border-white/20 bg-black/30 px-6 py-12 text-center text-sm text-white/55 backdrop-blur-md">
+                    No manager has registered a vault on this network yet.
+                  </div>
+                )}
+                {managers.map((m) => (
                   <div
-                    key={m.handle}
-                    className="rounded-2xl bg-black/40 backdrop-blur-md border border-white/20 p-6 text-white cursor-pointer transition-transform hover:scale-[1.02] flex flex-col"
+                    key={m.address}
+                    className="rounded-2xl bg-black/40 backdrop-blur-md border border-white/20 p-6 text-white transition-transform hover:scale-[1.02] flex flex-col"
                   >
-                    {/* Cabecera: foto + nombre + % */}
                     <div className="flex items-start justify-between mb-5">
                       <div className="flex items-center gap-3">
-                        <img
-                          src={m.photo}
-                          alt={m.name}
-                          className="w-14 h-14 rounded-full border-2 border-white/30 object-cover"
-                        />
+                        {m.avatar ? (
+                          <img src={m.avatar} alt={m.name} className="w-14 h-14 rounded-full border-2 border-white/30 object-cover" />
+                        ) : (
+                          <div className="flex h-14 w-14 items-center justify-center rounded-full border-2 border-white/20 bg-white/10 text-lg font-semibold uppercase">
+                            {m.name.replace('@', '').slice(0, 1)}
+                          </div>
+                        )}
                         <div>
                           <div className="font-semibold text-lg leading-tight">{m.name}</div>
-                          <div className="text-white/60 text-sm">{m.handle}</div>
+                          <div className="text-white/50 font-mono text-[11px]">{m.handle || `${m.address.slice(0, 6)}…${m.address.slice(-4)}`}</div>
                         </div>
                       </div>
                       <div className="text-right">
-                        <div className="text-emerald-300 font-semibold text-xl leading-none">{m.perfTotal}</div>
-                        <div className="text-white/60 text-xs mt-1">
-                          {m.perf7d} <span className="text-white/40">· 7d</span>
-                        </div>
+                        <div className="text-emerald-300 font-semibold text-base leading-none">{m.performance}</div>
+                        <div className="text-white/45 text-xs mt-1">{compactUsd(m.protectionUsd)} protected</div>
                       </div>
                     </div>
 
-                    {/* Fondos que gestiona */}
                     <div className="text-white/50 text-[11px] uppercase tracking-wide mb-2">Manages</div>
                     <ul className="space-y-1.5 mb-5">
                       {m.funds.map((f) => (
                         <li
-                          key={f.name}
-                          className="flex items-center justify-between text-xs bg-white/5 border border-white/10 rounded-lg px-3 py-2"
+                          key={f.address}
                         >
-                          <span className="font-medium">{f.name}</span>
-                          <span className="text-white/60">NAV {f.nav}</span>
+                          <button
+                            type="button"
+                            onClick={() => setSelectedVault(f)}
+                            className="flex w-full cursor-pointer items-center justify-between rounded-lg border border-white/10 bg-white/5 px-3 py-2 text-left text-xs transition-colors hover:bg-white/10"
+                          >
+                            <span className="font-medium">{f.name}</span>
+                            <span className="text-white/60">NAV {f.nav}</span>
+                          </button>
                         </li>
                       ))}
                     </ul>
 
-                    {/* Links sociales — mt-auto: anclados abajo aunque haya pocos fondos */}
                     <div className="mt-auto flex items-center gap-2 pt-4 border-t border-white/10">
-                      <SocialIcon kind="x" href={m.socials.x} />
-                      <SocialIcon kind="tg" href={m.socials.tg} />
-                      <SocialIcon kind="web" href={m.socials.web} />
+                      {m.xUrl ? (
+                        <a href={m.xUrl} target="_blank" rel="noreferrer" className="rounded-full border border-white/15 bg-white/[0.06] px-3 py-1.5 text-xs text-white/65 transition-colors hover:bg-white/12 hover:text-white">
+                          X profile
+                        </a>
+                      ) : (
+                        <span className="text-[11px] text-white/35">No public social profile</span>
+                      )}
                     </div>
                   </div>
                 ))}
@@ -604,81 +596,92 @@ export default function NuvemFundHero({ audioDisabled = false }: NuvemFundHeroPr
             )}
 
             {vistaTab === 'funds' && (
-            <div className="animate-fade-rise-delay-2 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-5">
-              {MOCK_VAULTS.map((f) => {
-                const tier = coverTier(f.coverK)
-                return (
-                  <div
-                    key={f.id}
-                    role="button"
-                    tabIndex={0}
-                    aria-label={`Open ${f.name}`}
-                    onClick={() => setSelectedVault(f)}
-                    onKeyDown={(event) => {
-                      if (event.key === 'Enter' || event.key === ' ') {
-                        event.preventDefault()
-                        setSelectedVault(f)
-                      }
-                    }}
-                    className="group rounded-2xl bg-black/40 backdrop-blur-md border border-white/20 p-6 text-white cursor-pointer transition-all hover:scale-[1.02] hover:border-white/35 flex flex-col focus:outline-none focus:ring-2 focus:ring-emerald-200/45"
-                  >
-                    {/* Cabecera: nombre + % general grande con 7d debajo */}
-                    <div className="flex items-start justify-between mb-1">
-                      <span className="font-semibold text-lg">{f.name}</span>
-                      <div className="text-right">
-                        <div className="text-emerald-300 font-semibold text-xl leading-none">{f.perfTotal}</div>
-                        <div className="text-white/60 text-xs mt-1">
-                          {f.perf7d} <span className="text-white/40">· 7d</span>
+              <div className="animate-fade-rise-delay-2 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-5 pb-10">
+                {vaultStatus === 'loading' && vaults.length === 0 && (
+                  <div className="sm:col-span-2 lg:col-span-3 rounded-2xl border border-white/15 bg-black/35 px-6 py-12 text-center text-sm text-white/55 backdrop-blur-md">
+                    Reading FundRegistry and indexed activity…
+                  </div>
+                )}
+                {vaultStatus === 'error' && vaults.length === 0 && (
+                  <div className="sm:col-span-2 lg:col-span-3 rounded-2xl border border-red-200/20 bg-black/40 px-6 py-10 text-center backdrop-blur-md">
+                    <div className="text-sm text-red-100">Registered vaults could not be loaded.</div>
+                    <div className="mt-2 break-words font-mono text-[10px] text-white/35">{vaultError}</div>
+                    <button type="button" onClick={() => void refreshVaults()} className="mt-4 cursor-pointer rounded-full border border-white/15 px-4 py-2 text-xs text-white/70 hover:bg-white/10">Retry</button>
+                  </div>
+                )}
+                {vaultStatus === 'ready' && vaults.length === 0 && (
+                  <div className="sm:col-span-2 lg:col-span-3 rounded-2xl border border-dashed border-white/20 bg-black/30 px-6 py-12 text-center text-sm text-white/55 backdrop-blur-md">
+                    <div>No vault is registered on this network yet.</div>
+                    {creatorAvailable && (
+                      <button type="button" onClick={() => setCreatorOpen(true)} className="mt-4 cursor-pointer rounded-full bg-white px-5 py-2.5 text-xs font-medium text-gray-950 transition-transform hover:scale-[1.02]">
+                        Create the first vault
+                      </button>
+                    )}
+                  </div>
+                )}
+                {vaults.map((f) => {
+                  const tier = coverTier(f.coverK)
+                  return (
+                    <div
+                      key={f.address}
+                      role="button"
+                      tabIndex={0}
+                      aria-label={`Open ${f.name}`}
+                      onClick={() => setSelectedVault(f)}
+                      onKeyDown={(event) => {
+                        if (event.key === 'Enter' || event.key === ' ') {
+                          event.preventDefault()
+                          setSelectedVault(f)
+                        }
+                      }}
+                      className="group rounded-2xl bg-black/40 backdrop-blur-md border border-white/20 p-6 text-white cursor-pointer transition-all hover:scale-[1.02] hover:border-white/35 flex flex-col focus:outline-none focus:ring-2 focus:ring-emerald-200/45"
+                    >
+                      <div className="flex items-start justify-between mb-1 gap-4">
+                        <div>
+                          <div className="font-semibold text-lg">{f.name}</div>
+                          <div className="mt-1 font-mono text-[10px] text-white/35">{f.symbol} · {f.address.slice(0, 6)}…{f.address.slice(-4)}</div>
+                        </div>
+                        <div className="text-right shrink-0">
+                          <div className="text-emerald-300 font-semibold text-xl leading-none">{f.perfTotal}</div>
+                          <div className="text-white/60 text-xs mt-1">{f.perf7d} <span className="text-white/40">· 7d</span></div>
+                        </div>
+                      </div>
+                      <div className="text-white/60 text-sm mb-5">
+                        {f.manager.handle || f.manager.name}
+                        <span className="mx-2 text-white/30">·</span>
+                        {f.members} investors
+                      </div>
+
+                      <div className="text-white/50 text-[11px] uppercase tracking-wide mb-2">Recent trades</div>
+                      <ul className="space-y-1.5 mb-5 min-h-[54px]">
+                        {f.trades.length === 0 && (
+                          <li className="rounded-lg border border-dashed border-white/10 px-3 py-4 text-center text-[11px] text-white/35">No indexed trades yet</li>
+                        )}
+                        {f.trades.map((t) => (
+                          <li key={t.id} className="flex items-center gap-2 text-xs">
+                            <span className={`w-4 h-4 rounded-full flex items-center justify-center text-[9px] font-bold ${t.side === 'B' ? 'bg-emerald-400/25 text-emerald-300' : 'bg-red-400/25 text-red-300'}`}>{t.side}</span>
+                            <StockLogo ticker={t.ticker} />
+                            <span className="font-medium">{t.ticker}</span>
+                            <span className="text-white/60">{t.size}</span>
+                            <span className="ml-auto text-white/40">{t.ago}</span>
+                          </li>
+                        ))}
+                      </ul>
+
+                      <div className="mt-auto flex flex-wrap items-center justify-between gap-3 text-sm pt-4 border-t border-white/10">
+                        <span className="text-white/80">NAV {f.nav}</span>
+                        <div className="flex items-center justify-end gap-2">
+                          {f.access.hasAccess && <span className="rounded-full border border-emerald-200/20 bg-emerald-200/10 px-2.5 py-1 text-[10px] font-medium text-emerald-100">Member</span>}
+                          {f.access.status === 'setup' && <span className="rounded-full border border-amber-200/20 bg-amber-200/10 px-2.5 py-1 text-[10px] font-medium text-amber-100">Setup</span>}
+                          <span className="rounded-full bg-white/10 border px-3 py-1 text-xs font-medium" style={{ borderColor: tier.border, color: tier.text, boxShadow: tier.glow }}>
+                            {compactUsd(f.coverK * 1000)} Loss-Protection
+                          </span>
                         </div>
                       </div>
                     </div>
-                    <div className="text-white/60 text-sm mb-5">
-                      {f.manager.handle}
-                      <span className="mx-2 text-white/30">·</span>
-                      {f.members} investors
-                    </div>
-
-                    {/* Trades recientes, en pequeño, con logo del stock */}
-                    <div className="text-white/50 text-[11px] uppercase tracking-wide mb-2">Recent trades</div>
-                    <ul className="space-y-1.5 mb-5">
-                      {f.trades.map((t, i) => (
-                        <li key={i} className="flex items-center gap-2 text-xs">
-                          <span
-                            className={`w-4 h-4 rounded-full flex items-center justify-center text-[9px] font-bold ${
-                              t.side === 'B' ? 'bg-emerald-400/25 text-emerald-300' : 'bg-red-400/25 text-red-300'
-                            }`}
-                          >
-                            {t.side}
-                          </span>
-                          <StockLogo ticker={t.ticker} />
-                          <span className="font-medium">{t.ticker}</span>
-                          <span className="text-white/60">{t.size}</span>
-                          <span className="ml-auto text-white/40">{t.ago}</span>
-                        </li>
-                      ))}
-                    </ul>
-
-                    {/* Pie: NAV + Loss-Protection con tier — mt-auto: siempre anclado abajo */}
-                    <div className="mt-auto flex items-center justify-between gap-3 text-sm pt-4 border-t border-white/10">
-                      <span className="text-white/80">NAV {f.nav}</span>
-                      <div className="flex items-center justify-end gap-2">
-                        {f.access.hasAccess && (
-                          <span className="rounded-full border border-emerald-200/20 bg-emerald-200/10 px-2.5 py-1 text-[10px] font-medium text-emerald-100">
-                            Member
-                          </span>
-                        )}
-                        <span
-                          className="rounded-full bg-white/10 border px-3 py-1 text-xs font-medium"
-                          style={{ borderColor: tier.border, color: tier.text, boxShadow: tier.glow }}
-                        >
-                          ${f.coverK}k Loss-Protection
-                        </span>
-                      </div>
-                    </div>
-                  </div>
-                )
-              })}
-            </div>
+                  )
+                })}
+              </div>
             )}
           </main>
         </div>
@@ -687,16 +690,25 @@ export default function NuvemFundHero({ audioDisabled = false }: NuvemFundHeroPr
       <VaultAccessModal
         vault={selectedVault}
         onClose={() => setSelectedVault(null)}
-        onOpenCommunity={(vault, preview) => {
+        onOpenCommunity={(vault) => {
           setSelectedVault(null)
-          setCommunity({ vault, preview })
+          setCommunity(vault)
         }}
+        onChanged={() => void refreshVaults()}
       />
 
       <VaultCommunityView
-        vault={community?.vault ?? null}
-        preview={community?.preview}
+        vault={community}
         onClose={() => setCommunity(null)}
+      />
+
+      <VaultCreatorModal
+        open={creatorOpen}
+        onClose={() => setCreatorOpen(false)}
+        onCreated={() => {
+          void refreshVaults()
+          window.setTimeout(() => void refreshVaults(), 1_500)
+        }}
       />
 
       {/* ---------- DOCS (overlay, lazy) ---------- */}

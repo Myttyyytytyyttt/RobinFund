@@ -10,44 +10,6 @@ const ACCENT = '#6ee7b7'
 const LOSS = '#fca5a5'
 const PROFILE_BACKGROUND = '/ctavid2.mp4'
 
-const DEMO_SERIES = [
-  10000, 10120, 10080, 10250, 10400, 10310, 10180, 10420, 10680, 10590,
-  10740, 11020, 10910, 11180, 11450, 11320, 11600, 11880, 11740, 12050,
-  12310, 12180, 11990, 12420, 12680, 12540, 12900, 13210, 13080, 14180,
-]
-
-const DEMO_POSITIONS: PortfolioPosition[] = [
-  {
-    fundAddress: '0x01', fund: 'Alpine Alpha', symbol: 'ALP', manager: '0x01',
-    managerLabel: '@sofia.eth', shares: 0n, invested: 5000, value: 6180,
-    pnl: 1180, pnlPct: 23.6, accent: '#6ee7b7',
-  },
-  {
-    fundAddress: '0x02', fund: 'Momentum Seven', symbol: 'M7', manager: '0x02',
-    managerLabel: '@kenji_t', shares: 0n, invested: 3000, value: 3890,
-    pnl: 890, pnlPct: 29.7, accent: '#bfdbfe',
-  },
-  {
-    fundAddress: '0x03', fund: 'Blue Chip Basket', symbol: 'BCB', manager: '0x03',
-    managerLabel: '@marchetti', shares: 0n, invested: 4000, value: 4110,
-    pnl: 110, pnlPct: 2.8, accent: '#fde68a',
-  },
-]
-
-const DEMO_PORTFOLIO: PortfolioData = {
-  positions: DEMO_POSITIONS,
-  invested: 12000,
-  value: 14180,
-  pnl: 2180,
-  pnlPct: 18.2,
-  series: DEMO_SERIES,
-  seriesLabels: DEMO_SERIES.map((_, index) => {
-    const daysAgo = DEMO_SERIES.length - 1 - index
-    return daysAgo === 0 ? 'Today' : `${daysAgo}d ago`
-  }),
-  hasIndexedHistory: true,
-}
-
 const EMPTY_PORTFOLIO: PortfolioData = {
   positions: [],
   invested: 0,
@@ -71,32 +33,20 @@ export default function ProfileView({
   avatarUrl,
   onClose,
   onConnectTwitter,
-  previewData = false,
 }: {
   profile: Profile
   avatarUrl?: string | null
   onClose: () => void
   onConnectTwitter?: () => unknown
-  previewData?: boolean
 }) {
   const [parallax, setParallax] = useState({ x: 0, y: 0 })
-  const [portfolio, setPortfolio] = useState<PortfolioData>(
-    previewData ? DEMO_PORTFOLIO : EMPTY_PORTFOLIO,
-  )
-  const [portfolioStatus, setPortfolioStatus] = useState<'loading' | 'ready' | 'error'>(
-    previewData ? 'ready' : 'loading',
-  )
+  const [portfolio, setPortfolio] = useState<PortfolioData>(EMPTY_PORTFOLIO)
+  const [portfolioStatus, setPortfolioStatus] = useState<'loading' | 'ready' | 'error'>('loading')
 
   const { positions, invested, value, pnl, pnlPct, series, seriesLabels } = portfolio
   const trajectoryPct = series[0] === 0 ? 0 : ((series[series.length - 1] - series[0]) / series[0]) * 100
 
   useEffect(() => {
-    if (previewData) {
-      setPortfolio(DEMO_PORTFOLIO)
-      setPortfolioStatus('ready')
-      return
-    }
-
     let cancelled = false
     setPortfolio(EMPTY_PORTFOLIO)
     setPortfolioStatus('loading')
@@ -115,7 +65,7 @@ export default function ProfileView({
     return () => {
       cancelled = true
     }
-  }, [previewData, profile.address])
+  }, [profile.address])
 
   useEffect(() => {
     const onEscape = (event: KeyboardEvent) => event.key === 'Escape' && onClose()
@@ -256,11 +206,9 @@ export default function ProfileView({
           </div>
 
           <p className="animate-fade-rise-delay-2 text-center text-white/40 text-xs mt-6">
-            {previewData
-              ? 'Design preview. Financial values on this screen are simulated.'
-              : portfolioStatus === 'error'
-                ? 'Could not refresh the NuvemFund indexer. Financial values remain hidden.'
-                : 'Live positions valued from the NuvemFund indexer and latest settled NAV.'}
+            {portfolioStatus === 'error'
+              ? 'Could not refresh the NuvemFund indexer. Financial values remain hidden.'
+              : 'Live positions valued from the NuvemFund indexer and latest settled NAV.'}
           </p>
         </main>
       </div>

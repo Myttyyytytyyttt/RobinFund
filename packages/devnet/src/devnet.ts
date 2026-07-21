@@ -23,9 +23,11 @@ import {
 import { createFund, deployProtocol, pushFeeds, type Protocol } from "./deploy.js";
 import { fundAbi, stakeEscrowAbi } from "./abis.js";
 import { buildServices, startServices, stopServices } from "./services.js";
+import { startCreatorServer } from "./creator.js";
 
 const PORT = 8545;
 const INDEXER_PORT = 42069;
+const CREATOR_PORT = 8788;
 
 async function seedDemo(d: Devnet, p: Protocol, fund: Address): Promise<void> {
   const stake = (await d.pub.readContract({ address: fund, abi: fundAbi, functionName: "stakeEscrow" })) as Address;
@@ -57,11 +59,13 @@ async function main(): Promise<void> {
     keeperIntervalS: 5,
   });
   await seedDemo(d, p, fund);
+  const creator = startCreatorServer(d, p, CREATOR_PORT);
 
   const line = "─".repeat(56);
   console.log(`\n\x1b[1m\x1b[32mDEVNET VIVO\x1b[0m\n${line}`);
   console.log(`  RPC          ${d.rpcUrl}   (chainId ${d.chainId})`);
   console.log(`  GraphQL      http://127.0.0.1:${INDEXER_PORT}/graphql`);
+  console.log(`  Creator API  http://127.0.0.1:${CREATOR_PORT}`);
   console.log(`${line}`);
   console.log("  Contratos:");
   console.log(`    FundRegistry     ${p.fundRegistry}`);
@@ -80,6 +84,7 @@ async function main(): Promise<void> {
   const shutdown = (): void => {
     console.log("\nParando devnet…");
     stopServices(services);
+    creator.close();
     clearInterval(d.heartbeat);
     d.anvil.kill();
     process.exit(0);

@@ -13,7 +13,7 @@ pricing las exige.
 
 ```bash
 pnpm drill     # el drill: la vida entera de un fondo, 27 asserts, scorecard, y teardown
-pnpm devnet    # deja un devnet VIVO con un fondo demo, para conectar el frontend (Ctrl-C para parar)
+pnpm devnet    # devnet vivo con fondo demo + creator API local para el frontend (Ctrl-C para parar)
 ```
 
 Ambos necesitan `RH_RPC_MAINNET` en el `.env` raíz y `foundry` en el PATH. `pnpm devnet` imprime
