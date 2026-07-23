@@ -1,0 +1,122 @@
+specVersion: 1.3.0
+indexerHints:
+  prune: auto
+schema:
+  file: ./schema.graphql
+dataSources:
+  - kind: ethereum
+    name: AgentRegistry
+    network: robinhood
+    source:
+      address: "0x0000000000000000000000000000000000000001"
+      abi: AgentRegistry
+      startBlock: 0
+    mapping:
+      kind: ethereum/events
+      apiVersion: 0.0.9
+      language: wasm/assemblyscript
+      entities: [Agent, AgentController]
+      abis:
+        - name: AgentRegistry
+          file: ./abis/AgentRegistry.json
+      eventHandlers:
+        - event: AgentRegistered(indexed bytes32,indexed address,indexed address,string)
+          handler: handleAgentRegistered
+        - event: WorldBackingAccepted(indexed bytes32,indexed bytes32,uint64,uint48)
+          handler: handleWorldBackingAccepted
+        - event: SignerRotated(indexed bytes32,indexed address,indexed address)
+          handler: handleSignerRotated
+        - event: ControllerSet(indexed bytes32,indexed address,bool)
+          handler: handleControllerSet
+        - event: MetadataUpdated(indexed bytes32,string)
+          handler: handleMetadataUpdated
+        - event: StatusChanged(indexed bytes32,uint8)
+          handler: handleStatusChanged
+      file: ./src/agent-registry.ts
+  - kind: ethereum
+    name: FundRegistry
+    network: robinhood
+    source:
+      address: "0x0000000000000000000000000000000000000002"
+      abi: FundRegistry
+      startBlock: 0
+    mapping:
+      kind: ethereum/events
+      apiVersion: 0.0.9
+      language: wasm/assemblyscript
+      entities: [Vault]
+      abis:
+        - name: FundRegistry
+          file: ./abis/FundRegistry.json
+      eventHandlers:
+        - event: FundRegistered(indexed address,indexed address)
+          handler: handleFundRegistered
+      file: ./src/fund-registry.ts
+templates:
+  - kind: ethereum
+    name: Fund
+    network: robinhood
+    source:
+      abi: Fund
+    mapping:
+      kind: ethereum/events
+      apiVersion: 0.0.9
+      language: wasm/assemblyscript
+      entities: [Vault, Holding, Trade, Settlement]
+      abis:
+        - name: Fund
+          file: ./abis/Fund.json
+      eventHandlers:
+        - event: EntryFeeCharged(indexed uint256,uint256,uint256,uint256)
+          handler: handleEntryFeeCharged
+        - event: DepositExecuted(indexed uint256,indexed address,uint256,uint256)
+          handler: handleDepositExecuted
+        - event: WithdrawExecuted(indexed uint256,indexed address,uint256,uint256,bool)
+          handler: handleWithdrawExecuted
+        - event: InKindSlice(indexed uint256,address,uint256,uint256)
+          handler: handleInKindSlice
+        - event: PerfFeeCrystallized(indexed uint64,uint256,uint256)
+          handler: handlePerfFeeCrystallized
+        - event: Settled(indexed uint64,uint256,uint256,uint256,bool)
+          handler: handleSettled
+        - event: AssetRegistered(indexed address)
+          handler: handleAssetRegistered
+        - event: Traded(indexed uint256,address,address,uint256,uint256,uint256)
+          handler: handleFundTraded
+        - event: WindingRequested(uint48)
+          handler: handleWindingRequested
+        - event: StateChanged(uint8)
+          handler: handleStateChanged
+      blockHandlers:
+        - handler: handleBlock
+          filter:
+            kind: polling
+            every: 20
+      file: ./src/fund.ts
+  - kind: ethereum
+    name: AgentVaultController
+    network: robinhood
+    source:
+      abi: AgentVaultController
+    mapping:
+      kind: ethereum/events
+      apiVersion: 0.0.9
+      language: wasm/assemblyscript
+      entities: [AgentController, Vault, Policy, Holding, Trade]
+      abis:
+        - name: AgentVaultController
+          file: ./abis/AgentVaultController.json
+      eventHandlers:
+        - event: FundBound(indexed address)
+          handler: handleFundBound
+        - event: TradeExecuted(indexed uint256,indexed bytes32,indexed address,address,address,uint256,uint256,uint256,uint256)
+          handler: handleTradeExecuted
+        - event: Paused(bool)
+          handler: handlePaused
+        - event: PolicyProposed(indexed bytes32,uint48)
+          handler: handlePolicyProposed
+        - event: PolicyCancelled(indexed bytes32)
+          handler: handlePolicyCancelled
+        - event: PolicyActivated(indexed bytes32)
+          handler: handlePolicyActivated
+      file: ./src/controller.ts

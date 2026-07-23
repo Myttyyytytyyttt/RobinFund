@@ -48,7 +48,23 @@ export async function startServices(
 ): Promise<Services> {
   const logs: Record<string, string> = {};
   const procs: ChildProcess[] = [];
-  const common = { ...process.env, RH_RPC_MAINNET: undefined } as NodeJS.ProcessEnv;
+  const common = { ...process.env } as NodeJS.ProcessEnv;
+  // The drill owns every endpoint below. Do not let a shell or root .env value
+  // leak a public/testnet RPC or a persistent database into an isolated run.
+  for (const key of [
+    "RH_RPC_MAINNET",
+    "RH_RPC_TESTNET",
+    "RH_RPC_URL",
+    "KEEPER_RPC_URL",
+    "INDEXER_RPC_URL",
+    "INDEXER_CHAIN_ID",
+    "INDEXER_START_BLOCK",
+    "PONDER_PGLITE_DIR",
+    "DATABASE_URL",
+    "PORT",
+  ]) {
+    delete common[key];
+  }
 
   // --- keeper (bucle) ---
   const keeper = spawn("node", ["dist/main.js"], {
@@ -82,6 +98,8 @@ export async function startServices(
         INDEXER_START_BLOCK: String(p.deployBlock),
         PONDER_PGLITE_DIR: pgliteDir,
         DATABASE_URL: "",
+        // Ponder gives PORT precedence over its --port CLI flag.
+        PORT: String(opts.indexerPort),
       },
       stdio: ["ignore", "pipe", "pipe"],
     },

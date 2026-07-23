@@ -356,6 +356,9 @@ beforeAll(async () => {
         INDEXER_START_BLOCK: String(startBlock),
         PONDER_PGLITE_DIR: pgliteDir,
         DATABASE_URL: "",
+        // Ponder gives PORT precedence over the explicit --port flag. Pin it so
+        // a developer shell or root .env cannot redirect this isolated E2E.
+        PORT: String(PONDER_PORT),
       },
       stdio: ["ignore", "pipe", "pipe"],
     },

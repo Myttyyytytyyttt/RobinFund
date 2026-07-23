@@ -14,6 +14,140 @@ export type Database = {
   }
   public: {
     Tables: {
+      agent_decisions: {
+        Row: {
+          agent_id: string
+          amount_in: string | null
+          block_number: number | null
+          chain_id: number
+          created_at: string
+          decision: string
+          evidence_refs: Json
+          id: string
+          min_amount_out: string | null
+          occurred_at: string
+          policy_result: string
+          quoted_amount_out: string | null
+          slippage_bps: number | null
+          summary: string
+          token_in: string | null
+          token_out: string | null
+          transaction_hash: string | null
+          vault_address: string
+        }
+        Insert: {
+          agent_id: string
+          amount_in?: string | null
+          block_number?: number | null
+          chain_id: number
+          created_at?: string
+          decision: string
+          evidence_refs?: Json
+          id?: string
+          min_amount_out?: string | null
+          occurred_at?: string
+          policy_result: string
+          quoted_amount_out?: string | null
+          slippage_bps?: number | null
+          summary: string
+          token_in?: string | null
+          token_out?: string | null
+          transaction_hash?: string | null
+          vault_address: string
+        }
+        Update: {
+          agent_id?: string
+          amount_in?: string | null
+          block_number?: number | null
+          chain_id?: number
+          created_at?: string
+          decision?: string
+          evidence_refs?: Json
+          id?: string
+          min_amount_out?: string | null
+          occurred_at?: string
+          policy_result?: string
+          quoted_amount_out?: string | null
+          slippage_bps?: number | null
+          summary?: string
+          token_in?: string | null
+          token_out?: string | null
+          transaction_hash?: string | null
+          vault_address?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "agent_decisions_agent_id_fkey"
+            columns: ["agent_id"]
+            isOneToOne: false
+            referencedRelation: "agent_profiles"
+            referencedColumns: ["agent_id"]
+          },
+        ]
+      }
+      agent_profiles: {
+        Row: {
+          agent_id: string
+          avatar_url: string | null
+          controller_address: string | null
+          created_at: string
+          display_name: string
+          last_heartbeat_at: string | null
+          metadata_uri: string
+          policy: Json
+          policy_hash: string | null
+          runtime_kind: string
+          signer_address: string
+          sponsor_wallet: string
+          status: string
+          strategy_summary: string
+          updated_at: string
+          vault_address: string | null
+          world_backed: boolean
+          world_backed_until: string | null
+        }
+        Insert: {
+          agent_id: string
+          avatar_url?: string | null
+          controller_address?: string | null
+          created_at?: string
+          display_name: string
+          last_heartbeat_at?: string | null
+          metadata_uri?: string
+          policy?: Json
+          policy_hash?: string | null
+          runtime_kind?: string
+          signer_address: string
+          sponsor_wallet: string
+          status?: string
+          strategy_summary?: string
+          updated_at?: string
+          vault_address?: string | null
+          world_backed?: boolean
+          world_backed_until?: string | null
+        }
+        Update: {
+          agent_id?: string
+          avatar_url?: string | null
+          controller_address?: string | null
+          created_at?: string
+          display_name?: string
+          last_heartbeat_at?: string | null
+          metadata_uri?: string
+          policy?: Json
+          policy_hash?: string | null
+          runtime_kind?: string
+          signer_address?: string
+          sponsor_wallet?: string
+          status?: string
+          strategy_summary?: string
+          updated_at?: string
+          vault_address?: string | null
+          world_backed?: boolean
+          world_backed_until?: string | null
+        }
+        Relationships: []
+      }
       follows: {
         Row: {
           created_at: string

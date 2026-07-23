@@ -24,12 +24,17 @@ Los secretos nunca se escriben aquí. Las claves privadas, RPC autenticados y cr
 | [STATUS.md](./STATUS.md) | Estado actual, decisiones y bloqueadores |
 | [RUNBOOK.md](./RUNBOOK.md) | Procedimiento reproducible por entorno |
 | [TESTNET-ASSET-PACK.md](./TESTNET-ASSET-PACK.md) | Diseño de los activos equivalentes para chain 46630 |
+| [AGENT-RUNBOOK.md](./AGENT-RUNBOOK.md) | Promoción, operación e incidentes de Nuvem Agents/BYOA |
 | [outputs/2026-07-21-baseline.md](./outputs/2026-07-21-baseline.md) | Evidencia inicial antes del reinicio |
 | [outputs/2026-07-21-devnet-restart.md](./outputs/2026-07-21-devnet-restart.md) | Output del reinicio permissionless |
 | [outputs/2026-07-21-testnet-asset-pack.md](./outputs/2026-07-21-testnet-asset-pack.md) | Build, tests, E2E 46630 local y preflight público |
 | [outputs/2026-07-21-testnet-public.md](./outputs/2026-07-21-testnet-public.md) | CAs, coste, smoke, servicios y browser flow de la testnet pública |
 | [outputs/2026-07-21-testbots-public.md](./outputs/2026-07-21-testbots-public.md) | Tres bots, trades, fees, retiros y cierre público reconciliado |
 | [outputs/2026-07-21-dynamic-entry-public.md](./outputs/2026-07-21-dynamic-entry-public.md) | Curva 0%-5%, tres tasas FIFO y transfers reconciliados |
+| [outputs/2026-07-22-nuvem-agents-local.md](./outputs/2026-07-22-nuvem-agents-local.md) | CAs, txs y E2E local/fork de Agents |
+| [outputs/2026-07-22-world-managed-onboarding.md](./outputs/2026-07-22-world-managed-onboarding.md) | Signer gestionado + AgentBook |
+| [outputs/2026-07-22-world-id-v4-nuvem-app.md](./outputs/2026-07-22-world-id-v4-nuvem-app.md) | App/RP/action propia, gateway y Supabase World ID 4.0 |
+| [outputs/2026-07-22-nuvem-agents-testnet.md](./outputs/2026-07-22-nuvem-agents-testnet.md) | Gateway/frontend públicos, World Portal, AgentRegistry y adapter AI en 46630 |
 
 ## Comandos del paquete
 
@@ -42,6 +47,8 @@ pnpm smoke:testnet   # stake, LP, keeper, buy/sell, safety checks y Ponder sobre
 pnpm services:testnet # keeper + Ponder persistente + frontend público-testnet
 pnpm test:testbots   # 3 wallets, fees, 4 trades, retiros completos y cierre en 46630 pública
 pnpm test:dynamic-entry # curva 0%-5%, 3 depósitos FIFO y verificación exacta en 46630
+pnpm deploy:agent-adapter:testnet # adapter AI determinista para lifecycle 46630; no es Uniswap
+pnpm --dir ../devnet test:agent-e2e # 10 actos BYOA sobre la devnet levantada
 ```
 
 Deployment público vigente: FundRegistry

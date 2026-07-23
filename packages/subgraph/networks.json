@@ -1,0 +1,6 @@
+{
+  "robinhood": {
+    "AgentRegistry": { "address": "0x0000000000000000000000000000000000000001", "startBlock": 0 },
+    "FundRegistry": { "address": "0x0000000000000000000000000000000000000002", "startBlock": 0 }
+  }
+}

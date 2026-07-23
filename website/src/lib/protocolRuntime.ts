@@ -1,4 +1,5 @@
 import type { Address } from 'viem'
+import { getAddress, isAddress } from 'viem'
 
 export type ProtocolRuntime = {
   rpcUrl: string
@@ -7,6 +8,13 @@ export type ProtocolRuntime = {
   creatorUrl?: string
   fundRegistry?: Address
   usdg?: Address
+  agentRegistry?: Address
+  uniswapApiAdapter?: Address
+  uniswapApiAdapterId?: string
+  uniswapApprovalProxy?: Address
+  uniswapUniversalRouter?: Address
+  agentAssets: Address[]
+  agentGatewayUrl?: string
   creatorEnabled: boolean
   mode: 'devnet' | 'network'
 }
@@ -18,6 +26,15 @@ const localCreatorUrl = creatorDisabled
     (import.meta.env.DEV ? 'http://127.0.0.1:8788' : '')
 
 let cached: Promise<ProtocolRuntime> | null = null
+
+function configuredAgentAssets(): Address[] {
+  const raw = import.meta.env.VITE_AGENT_ASSETS?.trim()
+  if (!raw) return []
+  const assets = raw.split(',').map((entry) => entry.trim()).filter(Boolean)
+  if (assets.some((asset) => !isAddress(asset))) return []
+  const normalized = assets.map((asset) => getAddress(asset))
+  return new Set(normalized.map((asset) => asset.toLowerCase())).size === normalized.length ? normalized : []
+}
 
 async function creatorConfig(url: string): Promise<Partial<ProtocolRuntime> | null> {
   const controller = new AbortController()
@@ -31,6 +48,12 @@ async function creatorConfig(url: string): Promise<Partial<ProtocolRuntime> | nu
       chainId?: number
       fundRegistry?: Address
       usdg?: Address
+      agentRegistry?: Address
+      uniswapApiAdapter?: Address
+      uniswapApiAdapterId?: string
+      uniswapApprovalProxy?: Address
+      uniswapUniversalRouter?: Address
+      defaultAgentAssets?: Address[]
       creatorEnabled?: boolean
     }
     return {
@@ -38,6 +61,12 @@ async function creatorConfig(url: string): Promise<Partial<ProtocolRuntime> | nu
       chainId: data.chainId,
       fundRegistry: data.fundRegistry,
       usdg: data.usdg,
+      agentRegistry: data.agentRegistry,
+      uniswapApiAdapter: data.uniswapApiAdapter,
+      uniswapApiAdapterId: data.uniswapApiAdapterId,
+      uniswapApprovalProxy: data.uniswapApprovalProxy,
+      uniswapUniversalRouter: data.uniswapUniversalRouter,
+      agentAssets: data.defaultAgentAssets,
       creatorEnabled: data.creatorEnabled,
       mode: data.mode === 'devnet' ? 'devnet' : 'network',
     }
@@ -65,6 +94,13 @@ export function loadProtocolRuntime(force = false): Promise<ProtocolRuntime> {
       creatorUrl: localCreatorUrl || undefined,
       fundRegistry: remote?.fundRegistry || envRegistry,
       usdg: remote?.usdg || envUsdg,
+      agentRegistry: remote?.agentRegistry || (import.meta.env.VITE_AGENT_REGISTRY_ADDRESS?.trim() as Address | undefined),
+      uniswapApiAdapter: remote?.uniswapApiAdapter || (import.meta.env.VITE_UNISWAP_API_ADAPTER_ADDRESS?.trim() as Address | undefined),
+      uniswapApiAdapterId: remote?.uniswapApiAdapterId || import.meta.env.VITE_UNISWAP_API_ADAPTER_ID?.trim(),
+      uniswapApprovalProxy: remote?.uniswapApprovalProxy || (import.meta.env.VITE_UNISWAP_APPROVAL_PROXY?.trim() as Address | undefined),
+      uniswapUniversalRouter: remote?.uniswapUniversalRouter || (import.meta.env.VITE_UNISWAP_UNIVERSAL_ROUTER?.trim() as Address | undefined),
+      agentAssets: remote?.agentAssets?.length ? remote.agentAssets : configuredAgentAssets(),
+      agentGatewayUrl: import.meta.env.VITE_AGENT_GATEWAY_URL?.trim() || undefined,
       creatorEnabled: Boolean(remote?.creatorEnabled && localCreatorUrl),
       mode: remote?.mode === 'devnet' ? 'devnet' : 'network',
     }

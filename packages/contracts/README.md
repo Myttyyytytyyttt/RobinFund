@@ -11,11 +11,12 @@ capital de terceros. Los LPs entran/salen a NAV; el stake del manager cubre sus 
 
 ---
 
-## Estado (2026-07-21)
+## Estado (2026-07-22)
 
-**Capa de contratos on-chain COMPLETA.** 128 tests en verde (unit con mocks + fork contra estado real
-de mainnet 4663 + fuzzing de invariantes). Cada sub-fase pasó por revisión adversarial y aplicó los
-hallazgos. Tres `HIGH` cerrados en revisión (ver más abajo).
+**Core on-chain y extensión Agents implementados.** La suite completa incluye unit con mocks, fork
+contra estado real de mainnet 4663 y fuzzing de invariantes. La extensión no toca `Fund.sol`: un
+`AgentVaultController` separado actúa como su manager. Esto está probado local/fork, pero no equivale
+a una auditoría ni a un deployment Agents público.
 
 | Fase | Contratos | Tests | Estado |
 |---|---|---|---|
@@ -26,6 +27,7 @@ hallazgos. Tres `HIGH` cerrados en revisión (ver más abajo).
 | 1.4a | `AdapterRegistry`, `UniswapV4Adapter` + `Fund.execute` | +10 | ✅ revisado |
 | 1.5 | `OpenEligibilityGate`, `FeeSplitter`, `Guardian`, `FundRegistry` + scripts de deploy | +23 | ✅ acceso abierto |
 | 1.6 | `TestnetAssetPack` + scripts exclusivos 31337/46630 | +8 | ✅ local + público 46630 |
+| 1.7 | `AgentRegistry`, `AgentVaultController`, `UniswapApiAdapter` | +18 | ✅ local/fork; público pendiente |
 
 Todos los contratos < 24.5KB (EIP-170); deploy completo simulado OK contra fork de mainnet, y
 **ejercitado end-to-end** por el test de integración del keeper (anvil forkeando mainnet + estos mismos
@@ -182,6 +184,20 @@ especificar): el keeper-trust de S3, y el fee-fondo rompiendo el precio seed con
 - **Fill parcial del cap (C19)** — hoy es total-o-siguiente-batch.
 
 ---
+
+## Extensión Nuvem Agents (1.7)
+
+- `AgentRegistry`: sponsor, signer, controllers, metadata y backing World EIP-712 con nonce/caducidad.
+- `AgentVaultController`: manager inmutable por vault; acepta solo intenciones EIP-712, llama
+  exclusivamente `Fund.execute` y aplica policy adicional antes/después del swap.
+- `UniswapApiAdapter`: ruta CLASSIC por proxy no-Permit2, approval exacta, minOut por delta real,
+  revocación de allowance y cero residuos.
+- Pausa/rotación inmediatas; policy con timelock de 24 h; fees/stake solo al sponsor fijo.
+- LPs siguen completamente permissionless y nunca necesitan World/KYC.
+
+Arquitectura, demo y operación: [AGENT_ARCHITECTURE.md](../../docs/AGENT_ARCHITECTURE.md),
+[AGENT-RUNBOOK.md](../deploy/AGENT-RUNBOOK.md) y
+[output local](../deploy/outputs/2026-07-22-nuvem-agents-local.md).
 
 ## Convenciones (mantener en cualquier cambio)
 

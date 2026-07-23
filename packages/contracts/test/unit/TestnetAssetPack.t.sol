@@ -149,6 +149,19 @@ contract TestnetAssetPackTest is Test {
         assertEq(stock.balanceOf(address(adapter)), 0);
     }
 
+    function test_adapter_valida_payload_del_controller_agentico() public view {
+        bytes memory plan = abi.encode(9e18, uint48(block.timestamp + 5 minutes));
+        assertTrue(adapter.validateExecution(address(usdg), address(stock), 1_000e6, address(this), 9e18, plan));
+        assertFalse(adapter.validateExecution(address(usdg), address(stock), 1_000e6, address(this), 8e18, plan));
+        assertFalse(
+            adapter.validateExecution(
+                address(usdg), address(stock), 1_000e6, address(this), 9e18,
+                abi.encode(9e18, uint48(block.timestamp - 1))
+            )
+        );
+        assertFalse(adapter.validateExecution(address(usdg), address(stock), 1_000e6, address(this), 9e18, ""));
+    }
+
     function test_venue_solo_paga_al_adapter_y_queda_bloqueado() public {
         vm.prank(alice);
         vm.expectRevert(TestnetLiquidityVenue.NotAdapter.selector);

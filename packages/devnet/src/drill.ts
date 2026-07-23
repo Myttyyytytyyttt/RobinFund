@@ -21,6 +21,7 @@ import {
   LP2,
   LP3,
   acct,
+  finalizeIndexerBootstrap,
   USDG,
   TSLA,
   type Devnet,
@@ -128,6 +129,8 @@ async function main(): Promise<void> {
     const { share, stake, feeSplitter } = await fundChildren(d, fund);
     console.log(`  fondo: ${fund}`);
 
+    console.log("Finalizando eventos de descubrimiento para Ponder…");
+    await finalizeIndexerBootstrap(d);
     console.log("Arrancando servicios (keeper + indexer; sin KYC)…");
     services = await startServices(d.rpcUrl, d.chainId, p, {
       indexerPort: INDEXER_PORT,

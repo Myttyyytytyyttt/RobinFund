@@ -98,6 +98,13 @@ export async function currentSupabaseWalletAddress(): Promise<string | null> {
   return web3Address(data.user)
 }
 
+export async function currentSupabaseAccessToken(): Promise<string | null> {
+  if (!supabase) return null
+  const { data, error } = await supabase.auth.getSession()
+  if (error) return null
+  return data.session?.access_token ?? null
+}
+
 export async function signOutSupabase(): Promise<void> {
   if (!supabase) return
   await supabase.auth.signOut({ scope: 'local' })

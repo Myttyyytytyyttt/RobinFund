@@ -1,0 +1,99 @@
+# Nuvem Agent Gateway
+
+Backend model-neutral para agentes externos y el agente de referencia. Autentica AgentKit/SIWE,
+exige datos Graph frescos, obtiene planes CLASSIC de Uniswap, verifica intenciones EIP-712 y las
+entrega a workers durables. Una sesión nunca autoriza fondos por sí sola.
+
+## Procesos
+
+```powershell
+pnpm build
+pnpm start          # HTTP, OpenAPI, SSE y MCP
+pnpm worker         # intents: simulate -> broadcast -> receipt
+pnpm worker:vaults  # controller -> Fund -> register; espera bind/stake sponsor
+```
+
+El HTTP gateway puede desplegarse como Vercel Function mediante `api/[...route].ts`; su base
+pública será `https://<proyecto>.vercel.app` (los rewrites internos apuntan a `/api`). Los loops `worker` y `worker:vaults` son procesos
+durables y deben correr en un VPS/container, no dentro de una Function efímera.
+
+`TRADING_ENABLED=false` deja disponibles onboarding/World/vault jobs pero devuelve `503` en
+context, quotes, intents y MCP. Es el modo correcto para una red sin Graph + venue reales; nunca se
+debe habilitar para hacer que una demo incompleta parezca ejecutable.
+
+En desarrollo, los procesos cargan el `.env` gitignored de la raíz sin sobrescribir variables ya
+inyectadas por el entorno. Producción debe usar el secret manager del runtime.
+
+## API v1
+
+| Ruta | Auth |
+|---|---|
+| `POST /v1/agent-sessions/challenge` | pública, idempotente |
+| `POST /v1/agent-sessions` | header AgentKit |
+| `GET /v1/agents/:id/context` | sesión agente |
+| `POST /v1/agents/:id/quotes` | sesión agente |
+| `POST /v1/intents` | sesión + firma EIP-712 |
+| `GET /v1/intents/:id` | agente o sponsor |
+| `GET /v1/agents/:id/events` | sesión, SSE con cursor |
+| `POST /v1/agents/:id/heartbeat` | sesión agente |
+| `POST /v1/agents/:id/decisions` | sesión agente; solo resumen sanitizado |
+| `POST /v1/managed-signers` | sponsor SIWE; identidad Nuvem sin devolver clave |
+| `POST /v1/agent-vaults` | sponsor SIWE |
+| `GET /v1/agent-vaults/:id` | sponsor SIWE |
+| `POST /v1/agents/:id/world-id/request` | sponsor SIWE; request RP de la app Nuvem |
+| `POST /v1/agents/:id/world-id/verify` | sponsor SIWE; verifica/consume proof World ID 4.0 |
+| `GET /v1/agents/:id/world-registration` | sponsor SIWE; nonce/estado AgentBook |
+| `POST /v1/agents/:id/world-registration` | sponsor SIWE; relay del proof oficial |
+| `POST /v1/agents/:id/world-backing` | sponsor SIWE |
+| `POST /v1/agents/:id/sync` | sponsor SIWE |
+| `POST /v1/agents/:id/pause` | sponsor SIWE |
+| `/mcp` | MCP remoto read-only |
+
+OpenAPI: `GET /openapi.json`. Health: `GET /healthz`. Toda mutación requiere
+`Idempotency-Key` de 8–128 caracteres.
+
+## Variables backend
+
+La plantilla completa está en [`.env.example`](../../.env.example). Grupos:
+
+- control plane: `DATABASE_URL`, Supabase URL/publishable key, session secret;
+- chain: `RH_RPC_URL` + `RH_CHAIN_ID`, AgentRegistry, USDG y confirmaciones;
+- World: app/RP/action Nuvem, RP signing key, RPC/relay AgentBook, pepper y verifier key dedicada;
+- signer Nuvem: `MANAGED_SIGNER_SECRET` solo para dev/canario; KMS/HSM no exportable en producción;
+- Graph: endpoint y deployment ID;
+- Uniswap: API key, base URL, approval proxy verificado contra `swap.to` y Universal Router oficial de la chain;
+- relay: relayer key dedicada;
+- vault worker: operator key, registries, adapter, NAVLib y asset allowlist.
+
+Nunca usar una misma hot key para verifier, relayer y deploy operator. Ninguna de ellas se expone con
+prefijo `VITE_` ni se devuelve por API.
+
+## Garantías operativas
+
+- Challenge/nonce AgentKit persistido y no reutilizable.
+- La action propia `sponsor-ai-vault` exige World ID 4.0, liga signal a sponsor + signer + agentId y
+  solo persiste HMACs/hashes. El RP signing key nunca llega al browser.
+- Un sponsor World ya verificado puede vincular otros agentes desde la misma wallet sin otro scan;
+  el límite de Nuvem-managed agents se serializa por hash humano.
+- El registro AgentBook fija contrato, World Chain, app/action oficial y nonce actual; nunca devuelve
+  el human ID al browser.
+- El backing on-chain combina la evidencia Nuvem World ID y la evidencia AgentBook; ninguna basta sola.
+- Sesión opaca revocable de 15 minutos; rotar/pausar revoca sesiones.
+- Graph >20 bloques o >2 minutos stale: quote rechazada.
+- Quote no CLASSIC, Permit2, target/from/chain/value inesperados: rechazada.
+- El calldata del proxy se decodifica y liga al Universal Router, token de entrada, amount y un deadline no menor que el firmado. Token de salida/recipient quedan ligados por quote + delta real del Fund + minOut.
+- Quote e intención se persisten antes de relay; workers concurrentes usan claims atómicos.
+- Caída después de broadcast recupera receipt por hash y no emite otra transacción.
+- Creación reserva nonces serializados y persiste las tres raw tx antes de emitir la primera.
+
+## Verificación
+
+```powershell
+pnpm typecheck
+pnpm test
+```
+
+Los tests usan dependencias inyectadas y cubren replay RP, signal equivocado, rechazo World,
+reutilización segura, cuota, AgentBook, sesiones, binding Uniswap, idempotencia, dos workers,
+crash/restart y jobs de creación. El smoke Postgres real se activa con `SUPABASE_E2E=1`. La evidencia multi-capa está en
+[`packages/deploy/outputs/2026-07-22-nuvem-agents-local.md`](../../packages/deploy/outputs/2026-07-22-nuvem-agents-local.md).

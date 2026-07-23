@@ -7,9 +7,12 @@
   "scripts": {
     "devnet": "tsx src/devnet.ts",
     "drill": "tsx src/drill.ts",
+    "test:agent-e2e": "tsx src/agent-e2e.ts",
+    "test:uniswap-api-fork": "tsx src/uniswap-api-fork.ts",
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {
+    "@nuvem/managed-signer": "workspace:*",
     "viem": "^2.21.0"
   },
   "devDependencies": {

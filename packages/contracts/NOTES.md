@@ -14,6 +14,7 @@ Estado y decisiones que no viven en el código ni en la spec. Para retomar sin r
 | 1.4a | Trading: AdapterRegistry + UniswapV4Adapter + fund.execute con guardarraíl + presupuesto | 103 | ✅ revisado (falta 0x RFQ, liquidación keeper-asistida) |
 | 1.5 | `OpenEligibilityGate` por defecto, `FeeSplitter`, `Guardian` (timelock), `FundRegistry` | suite completa | ✅ permissionless |
 | 1.6 | `TestnetAssetPack`, scripts 46630 y Fund canario | 128 contratos + E2E completo | ✅ desplegado + smoke público |
+| 1.7 | Nuvem Agents: registry, controller y API adapter | 18 unit + E2E 19 checks | ✅ local/fork; deploy público pendiente |
 
 Los comandos, gas, CAs públicas y resultados están en [`packages/deploy`](../deploy/README.md).
 Las addresses del E2E local siguen siendo efímeras; para testnet/Vercel solo valen las CAs del output
@@ -110,6 +111,20 @@ clones ERC-1167 + initialize → v2.
 
 Scripts: `script/Deploy.s.sol` (protocolo compartido), `script/CreateFund.s.sol` (un fondo). Deploy
 completo simulado OK contra fork de mainnet.
+
+## Fase 1.7 (2026-07-22): manager agentic sin modificar Fund.sol
+
+- Decisión: un controller por vault es el `MANAGER`; no se añade superficie agentic al Fund, que
+  conserva su margen EIP-170 de 309 bytes.
+- World solo activa AI vaults públicos. LPs y human vaults continúan con `OpenEligibilityGate`.
+- La firma del agente liga fund, assets, amount, minOut, policy, adapter calldata, evidencia, nonce y
+  ventana temporal al chain/controller concreto; no es autorización de calldata arbitraria.
+- Policy: trade 1–20%, concentración 10–50%, turnover 5–100%, slippage 0.10–1%, 1–200 trades/día,
+  intervalo 1–60 min e intención ≤5 min. Cambios: timelock 24 h.
+- Adapter, gateway y SDK decodifican el selector del proxy
+  `execute(address,address,uint256,bytes,bytes[],uint256)` y ligan tokenIn/out, amount y deadline.
+- El E2E local usa `DevnetApprovalProxy` solo en 31337 y backing World no canónico explícito.
+- Pendiente: AgentBook real, subgraph publicado, quote CLASSIC real, CAs Agents 46630 y canario 4663.
 
 ## RESUELTO (2026-07-20): valor in-kind no eventeado — `InKindSlice` desde NAVLib
 

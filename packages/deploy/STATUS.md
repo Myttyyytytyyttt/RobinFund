@@ -1,11 +1,11 @@
 # Estado de despliegue
 
-Última actualización: 2026-07-21 (Europe/Lisbon).
+Última actualización: 2026-07-22 (Europe/Lisbon).
 
 ## Punto de partida
 
 - Rama: `main`
-- Commit base: `085ca02`
+- Commit base/tag de continuidad: `pre-lisbon-2026` → `6846e4ade51fb5dcf9d31be4e2fcb863cbf58cd0`
 - Modelo de acceso: permissionless mediante `OpenEligibilityGate`
 - Cambios de esta fase todavía sin commit
 - La devnet anterior se sustituyó por un deployment permissionless limpio
@@ -23,6 +23,8 @@
 | D6 · Soak | Pendiente | 72 h con reinicios y fallos controlados |
 | D7 · TestBots público | Completada | 3 bots, 4 trades, fees, retiros y cierre reconciliados |
 | D8 · Entry fee dinámica | Completada | Curva 0%-5%, 3 tasas FIFO y transfers reconciliados |
+| D9 · Nuvem Agents local | Completada | Controller, LP abierto, fee, policy, trade, replay, Ponder y rotación |
+| D10 · Nuvem Agents público | En progreso | Gateway/frontend + World app + AgentRegistry/adapter 46630 listos; faltan proof humano, Graph y canario público |
 
 ## Hallazgos iniciales
 
@@ -119,8 +121,31 @@ Output íntegro: `outputs/2026-07-21-testnet-asset-pack.md`.
 - Open gate verificado: 188 bytes, wallet arbitraria elegible
 - Fondo demo indexado: 8,000 USDG de depósitos lifetime
 - Revalidación final: RPC chain ID 31337 y HTTP 200 en GraphQL, Creator API y frontend
+- Drill económico/lifecycle `27/27`; Agents BYOA `21/21`; keeper `4/4`, signer `9/9` e indexer `7/7` E2E
 
 Direcciones y outputs completos: `outputs/2026-07-21-devnet-restart.md`.
+
+## Nuvem Agents / BYOA
+
+- Línea base de continuidad: `pre-lisbon-2026` → `6846e4ade51fb5dcf9d31be4e2fcb863cbf58cd0`.
+- Implementados: AgentRegistry, controller por vault, API adapter, gateway/relayer, vault worker,
+  Supabase, SDK/CLI/Python, reference agent, subgraph, MCP y frontend.
+- Devnet 31337 sobre estado 4663: 21/21 checks con policy reject, trade, replay, Ponder, fee y rotación.
+- Supabase NuvemFund: cuatro migraciones Agents aplicadas, RLS e integración SIWE verificadas.
+- Matriz final: 148 contratos, 55 gateway, 9 SDK, 4 runtime, 5 MCP, 21 devnet Agents y todos los
+  E2E keeper/indexer/compliance/deploy verdes.
+- Frontend verificado en 1440×1000 y 390×844, sin overlay, page errors ni overflow horizontal.
+- Público: gateway y frontend Vercel, Supabase real, World app/RP/action, AgentRegistry y adapter AI
+  determinista registrados en 46630. El worker de vaults está preparado y la cola está vacía.
+- Trading API real: quote + calldata CLASSIC + ejecución en fork 4663 verdes, con minOut respetado,
+  allowance final cero y adapter sin residuos. No se envió ninguna transacción pública.
+- Pendiente público: proof humano Nuvem + AgentBook canónico, primer controller/Fund, pipeline
+  Firehose/Substreams y canario público tras resolver/documentar el target de Approval Proxy.
+- El adapter ID 1 de 46630 usa un venue de test sin valor. No es Uniswap y solo valida
+  controller/lifecycle.
+
+Evidencia: `outputs/2026-07-22-nuvem-agents-local.md` y
+`outputs/2026-07-22-nuvem-agents-testnet.md`. Operación: `AGENT-RUNBOOK.md`.
 
 ## Bloqueadores mainnet que no se omiten
 

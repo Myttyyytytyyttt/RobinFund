@@ -60,6 +60,16 @@ export interface Devnet {
   heartbeat: ReturnType<typeof setInterval>;
 }
 
+/**
+ * Ponder only discovers dynamic Fund contracts once FundRegistered is in its
+ * finalized historical range. Mine a generous deterministic cushion before
+ * starting the indexer; otherwise the realtime heartbeat can keep moving the
+ * head while a fresh Ponder process is still trying to catch up.
+ */
+export async function finalizeIndexerBootstrap(d: Devnet): Promise<void> {
+  await d.test.mine({ blocks: 256 });
+}
+
 export function loadRootEnv(): void {
   const p = resolve(rootDir, ".env");
   if (!existsSync(p)) return;
@@ -113,15 +123,16 @@ export async function bootAnvil(port: number): Promise<Devnet> {
   const pub = createPublicClient({ chain, transport: http(rpcUrl) });
   const test = createTestClient({ mode: "anvil", chain, transport: http(rpcUrl) });
 
-  // Forked EOAs retain their Robinhood-mainnet nonces. The standard Anvil test accounts have
-  // occasionally been used on public chains, which can make local CREATE addresses collide and
-  // leave a Foundry broadcast queued behind old nonce history. Reset only the disposable devnet
-  // accounts before any local transaction; forked token/protocol state remains untouched.
+  // Forked EOAs retain their Robinhood-mainnet nonces and can also carry EIP-7702 delegation code.
+  // The standard Anvil accounts have been used publicly: leaving that code makes an intended EOA
+  // verifier enter the EIP-1271 path and reject otherwise valid local signatures. Reset nonce and
+  // code only for these disposable devnet accounts; forked token/protocol state remains untouched.
   for (const account of acct) {
     await test.request({
       method: "anvil_setNonce" as never,
       params: [account.address, numberToHex(0)] as never,
     });
+    await test.setCode({ address: account.address, bytecode: "0x" });
   }
 
   const wallets = acct.map((a) => createWalletClient({ account: a, chain, transport: http(rpcUrl) }));

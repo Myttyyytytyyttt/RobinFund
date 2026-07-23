@@ -1,0 +1,21 @@
+{
+  "name": "@nuvem/subgraph",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Nuvem agent and vault subgraph for Robinhood Chain",
+  "scripts": {
+    "configure": "node scripts/configure-network.mjs",
+    "codegen": "graph codegen",
+    "build": "graph build",
+    "build:robinhood": "pnpm configure && graph codegen --network robinhood && graph build --network robinhood",
+    "test": "graph test"
+  },
+  "dependencies": {
+    "@graphprotocol/graph-ts": "^0.38.2"
+  },
+  "devDependencies": {
+    "@graphprotocol/graph-cli": "^0.98.1",
+    "matchstick-as": "^0.6.0",
+    "source-map-support": "^0.5.21"
+  }
+}

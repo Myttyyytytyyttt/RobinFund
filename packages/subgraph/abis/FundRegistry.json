@@ -1,0 +1,3 @@
+[
+  {"anonymous":false,"type":"event","name":"FundRegistered","inputs":[{"indexed":true,"name":"fund","type":"address"},{"indexed":true,"name":"manager","type":"address"}]}
+]

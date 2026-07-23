@@ -13,7 +13,7 @@ import {
 import { robinhoodChain } from './chains'
 import { loadProtocolRuntime } from './protocolRuntime'
 
-const stakeAbi = parseAbi(['function addStake(uint256 amount)'])
+const stakeAbi = parseAbi(['function addStake(uint256 amount)', 'function stakeAvailable() view returns (uint256)'])
 const fundAbi = parseAbi(['function requestDeposit(uint256 amount6) returns (uint256)'])
 
 export type BrowserWallet = {
@@ -84,7 +84,17 @@ export async function addInitialProtection(
   deployment: VaultDeployment,
 ): Promise<{ approveHash: Hash; stakeHash: Hash }> {
   const { publicClient, walletClient, account } = await clients(wallet)
-  const amount6 = BigInt(deployment.initialStake6)
+  const target6 = BigInt(deployment.initialStake6)
+  const current6 = await publicClient.readContract({
+    address: deployment.stakeEscrow,
+    abi: stakeAbi,
+    functionName: 'stakeAvailable',
+  })
+  if (current6 >= target6) {
+    const zero = '0x0000000000000000000000000000000000000000000000000000000000000000' as Hash
+    return { approveHash: zero, stakeHash: zero }
+  }
+  const amount6 = target6 - current6
   const approveHash = await walletClient.writeContract({
     address: deployment.usdg,
     abi: erc20Abi,

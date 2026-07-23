@@ -36,5 +36,12 @@ packages/compliance-signer/data/
 packages/indexer/.ponder/
 packages/indexer/generated/
 
+# The Graph (regenerados por codegen/build)
+packages/subgraph/generated/
+packages/subgraph/build/
+
 # Devnet (Ponder store efímero por si acaso)
 packages/devnet/.ponder/
+
+.vercel
+.env*

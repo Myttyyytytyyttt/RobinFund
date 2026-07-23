@@ -103,11 +103,12 @@ contract TradingForkTest is Test {
     }
 
     function test_slippage_guardrail_rechaza_amount_absurdo() public {
-        _fundHasUsdg(5000_000000);
+        // Notional extremo: la profundidad del pool vivo cambia y 4k dejó de garantizar >1%.
+        _fundHasUsdg(1_000_000_000000);
         // comprar un tamaño enorme mueve mucho el pool → slippage > 1% vs oráculo → revierte
         vm.prank(manager);
         vm.expectRevert(); // SlippageExceeded o BudgetExceeded
-        fund.execute(adapterId, AddressBook.USDG, AddressBook.TSLA, 4000_000000, _poolKey());
+        fund.execute(adapterId, AddressBook.USDG, AddressBook.TSLA, 900_000_000000, _poolKey());
     }
 
     function test_round_trip_y_freeze_pre_settlement() public {

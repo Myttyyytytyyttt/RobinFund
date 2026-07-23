@@ -4,6 +4,7 @@ pragma solidity ^0.8.26;
 import {IERC20} from "../interfaces/IERC20.sol";
 import {IAggregatorV3} from "../interfaces/IAggregatorV3.sol";
 import {ITradeAdapter} from "../interfaces/ITradeAdapter.sol";
+import {IAgentExecutionAdapter} from "../interfaces/IAgentExecutionAdapter.sol";
 import {SafeTransferLib} from "../libraries/SafeTransferLib.sol";
 
 /// @notice Base común para contratos de prueba. Un error de configuración jamás puede llevar este
@@ -341,7 +342,7 @@ interface IERC20Metadata is IERC20 {
 /// @title TestnetTradeAdapter — venue determinista al precio de los feeds del pack
 /// @notice El Fund mantiene toda la seguridad económica: mide deltas y aplica slippage. Este adapter
 /// mueve el input al venue y nunca custodia reservas entre llamadas.
-contract TestnetTradeAdapter is TestnetOwned, ITradeAdapter {
+contract TestnetTradeAdapter is TestnetOwned, ITradeAdapter, IAgentExecutionAdapter {
     using SafeTransferLib for IERC20;
 
     uint256 internal constant WAD = 1e18;
@@ -402,5 +403,23 @@ contract TestnetTradeAdapter is TestnetOwned, ITradeAdapter {
         VENUE.pay(tokenOut, recipient, amountOut);
         emit TestnetSwap(tokenIn, tokenOut, amountIn, amountOut, recipient);
     }
-}
 
+    /// @dev Payload exclusivo del controller AI en testnet:
+    /// `abi.encode(minAmountOut, deadline)`. El flujo humano puede seguir
+    /// usando payload vacio; Fund y controller miden siempre los deltas reales.
+    function validateExecution(
+        address tokenIn,
+        address tokenOut,
+        uint256 amountIn,
+        address recipient,
+        uint256 minAmountOut,
+        bytes calldata data
+    ) external view override returns (bool) {
+        if (
+            recipient == address(0) || recipient.code.length == 0 || amountIn == 0 || minAmountOut == 0
+                || tokenIn == tokenOut || data.length != 64 || !assets[tokenIn].enabled || !assets[tokenOut].enabled
+        ) return false;
+        (uint256 encodedMinOut, uint48 deadline) = abi.decode(data, (uint256, uint48));
+        return encodedMinOut == minAmountOut && deadline >= block.timestamp;
+    }
+}

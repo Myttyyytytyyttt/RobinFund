@@ -1,0 +1,133 @@
+type Agent @entity(immutable: false) {
+  id: ID!
+  agentId: Bytes!
+  sponsor: Bytes!
+  signer: Bytes!
+  metadataURI: String!
+  status: Int!
+  backingHash: Bytes
+  agentBookBlock: BigInt
+  backedUntil: BigInt
+  createdAt: BigInt!
+  updatedAt: BigInt!
+}
+
+type AgentController @entity(immutable: false) {
+  id: ID!
+  address: Bytes!
+  agent: Agent!
+  fund: Bytes
+  sponsor: Bytes
+  enabled: Boolean!
+  templateStarted: Boolean!
+  paused: Boolean!
+  policyHash: Bytes
+  pendingPolicyHash: Bytes
+  pendingPolicyEta: BigInt
+  createdAt: BigInt!
+  updatedAt: BigInt!
+}
+
+type Policy @entity(immutable: false) {
+  id: ID!
+  controller: Bytes!
+  policyHash: Bytes!
+  maxTradeBps: Int!
+  maxConcentrationBps: Int!
+  dailyTurnoverBps: Int!
+  maxSlippageBps: Int!
+  maxTradesPerDay: Int!
+  minTradeInterval: Int!
+  maxIntentLifetime: Int!
+  activatedAt: BigInt!
+}
+
+type Vault @entity(immutable: false) {
+  id: ID!
+  address: Bytes!
+  manager: Bytes!
+  controller: Bytes
+  agentId: Bytes
+  managerType: String!
+  isAgent: Boolean!
+  state: Int!
+  usdG: Bytes
+  navWad: BigInt!
+  totalShares: BigInt!
+  lastPeWad: BigInt!
+  lifetimeDeposited6: BigInt!
+  lifetimeWithdrawn6: BigInt!
+  pendingPerfFeeShares: BigInt!
+  policy: Policy
+  turnoverTodayWad: BigInt!
+  tradesToday: Int!
+  lastTradeAt: BigInt
+  createdAt: BigInt!
+  updatedAt: BigInt!
+  holdings: [Holding!]! @derivedFrom(field: "vault")
+  trades: [Trade!]! @derivedFrom(field: "vault")
+  settlements: [Settlement!]! @derivedFrom(field: "vault")
+}
+
+type Holding @entity(immutable: false) {
+  id: ID!
+  vault: Vault!
+  token: Bytes!
+  balance: BigInt!
+  valueWad: BigInt!
+  updatedAt: BigInt!
+}
+
+type Trade @entity(immutable: true) {
+  id: ID!
+  vault: Vault!
+  controller: Bytes
+  agentId: Bytes
+  nonce: BigInt
+  evidenceHash: Bytes
+  relayer: Bytes
+  adapterId: BigInt
+  tokenIn: Bytes!
+  tokenOut: Bytes!
+  spent: BigInt!
+  received: BigInt!
+  spentValueWad: BigInt!
+  receivedValueWad: BigInt!
+  adverseWad: BigInt!
+  transactionHash: Bytes!
+  blockNumber: BigInt!
+  timestamp: BigInt!
+}
+
+type Settlement @entity(immutable: true) {
+  id: ID!
+  vault: Vault!
+  period: BigInt!
+  peWad: BigInt!
+  navWad: BigInt!
+  fundingWad: BigInt!
+  lambdaWad: BigInt!
+  degraded: Boolean!
+  transactionHash: Bytes!
+  timestamp: BigInt!
+}
+
+type LiquiditySnapshot @entity(immutable: false) {
+  id: ID!
+  token0: Bytes!
+  token1: Bytes!
+  poolAddress: Bytes!
+  liquidityWad: BigInt!
+  source: String!
+  observedAt: BigInt!
+}
+
+type PendingEntryFee @entity(immutable: false) {
+  id: ID!
+  fee6: BigInt!
+}
+
+type PendingInKindExit @entity(immutable: false) {
+  id: ID!
+  valueWad: BigInt!
+}

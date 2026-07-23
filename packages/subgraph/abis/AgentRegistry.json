@@ -1,0 +1,8 @@
+[
+  {"anonymous":false,"type":"event","name":"AgentRegistered","inputs":[{"indexed":true,"name":"agentId","type":"bytes32"},{"indexed":true,"name":"sponsor","type":"address"},{"indexed":true,"name":"signer","type":"address"},{"indexed":false,"name":"metadataURI","type":"string"}]},
+  {"anonymous":false,"type":"event","name":"WorldBackingAccepted","inputs":[{"indexed":true,"name":"agentId","type":"bytes32"},{"indexed":true,"name":"backingHash","type":"bytes32"},{"indexed":false,"name":"agentBookBlock","type":"uint64"},{"indexed":false,"name":"validUntil","type":"uint48"}]},
+  {"anonymous":false,"type":"event","name":"SignerRotated","inputs":[{"indexed":true,"name":"agentId","type":"bytes32"},{"indexed":true,"name":"oldSigner","type":"address"},{"indexed":true,"name":"newSigner","type":"address"}]},
+  {"anonymous":false,"type":"event","name":"ControllerSet","inputs":[{"indexed":true,"name":"agentId","type":"bytes32"},{"indexed":true,"name":"controller","type":"address"},{"indexed":false,"name":"enabled","type":"bool"}]},
+  {"anonymous":false,"type":"event","name":"MetadataUpdated","inputs":[{"indexed":true,"name":"agentId","type":"bytes32"},{"indexed":false,"name":"metadataURI","type":"string"}]},
+  {"anonymous":false,"type":"event","name":"StatusChanged","inputs":[{"indexed":true,"name":"agentId","type":"bytes32"},{"indexed":false,"name":"status","type":"uint8"}]}
+]

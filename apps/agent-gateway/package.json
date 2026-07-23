@@ -1,0 +1,35 @@
+{
+  "name": "@nuvem/agent-gateway",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Nuvem Agents control plane, AgentKit session gateway and durable relayer",
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "start": "node dist/main.js",
+    "smoke:config": "tsx src/smoke-config.ts",
+    "dev": "tsx watch src/main.ts",
+    "worker": "tsx src/worker-main.ts",
+    "worker:vaults": "tsx src/vault-worker-main.ts",
+    "test": "vitest run",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "dependencies": {
+    "@hono/node-server": "^2.0.11",
+    "@nuvem/managed-signer": "workspace:*",
+    "@nuvem/vault-intelligence-mcp": "workspace:*",
+    "@worldcoin/agentkit": "^0.2.0",
+    "@worldcoin/agentkit-core": "0.2.0",
+    "@worldcoin/idkit-core": "4.2.1",
+    "hono": "4.12.31",
+    "postgres": "^3.4.9",
+    "viem": "2.55.4",
+    "zod": "4.4.3"
+  },
+  "devDependencies": {
+    "@types/node": "^22.20.1",
+    "tsx": "^4.19.0",
+    "typescript": "^5.6.0",
+    "vitest": "^2.1.0"
+  }
+}

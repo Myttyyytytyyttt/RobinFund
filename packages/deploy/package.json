@@ -6,7 +6,10 @@
   "description": "Runbooks y herramientas reproducibles de despliegue de NuvemFund",
   "scripts": {
     "check:testnet": "tsx src/check-testnet.ts",
+    "configure:agents": "tsx src/configure-agents-env.ts",
     "deploy:testnet": "tsx src/deploy-testnet.ts",
+    "deploy:agents:testnet": "tsx src/deploy-agents-testnet.ts",
+    "deploy:agent-adapter:testnet": "tsx src/deploy-agent-testnet-adapter.ts",
     "services:testnet": "tsx src/testnet-services.ts",
     "smoke:testnet": "tsx src/smoke-testnet.ts",
     "test:dynamic-entry": "tsx src/dynamic-entry-testnet.ts",

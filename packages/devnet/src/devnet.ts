@@ -18,6 +18,7 @@ import {
   LP2,
   LP3,
   USDG,
+  finalizeIndexerBootstrap,
   type Devnet,
 } from "./chain.js";
 import { createFund, deployProtocol, pushFeeds, type Protocol } from "./deploy.js";
@@ -54,6 +55,7 @@ async function main(): Promise<void> {
   const d = await bootAnvil(PORT);
   const p = await deployProtocol(d);
   const fund = await createFund(d, p, "Demo Fund", "DEMO");
+  await finalizeIndexerBootstrap(d);
   const services = await startServices(d.rpcUrl, d.chainId, p, {
     indexerPort: INDEXER_PORT,
     keeperIntervalS: 5,
@@ -71,6 +73,8 @@ async function main(): Promise<void> {
   console.log(`    FundRegistry     ${p.fundRegistry}`);
   console.log(`    OpenAccessGate   ${p.eligibilityGate}`);
   console.log(`    Guardian         ${p.guardian}`);
+  console.log(`    AgentRegistry    ${p.agentRegistry}`);
+  console.log(`    Agent API adapter ${p.uniswapApiAdapter}  (id ${p.uniswapApiAdapterId})`);
   console.log(`    Fondo demo       ${fund}`);
   console.log(`${line}`);
   console.log("  Cuentas (mnemonic anvil estándar):");

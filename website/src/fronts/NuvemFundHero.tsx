@@ -6,6 +6,7 @@ import WalletButton from '@/components/WalletButton'
 import { VaultAccessModal } from '@/features/vaults/VaultAccessModal'
 import { VaultCommunityView } from '@/features/vaults/VaultCommunityView'
 import { VaultCreatorModal } from '@/features/vaults/VaultCreatorModal'
+import { AgentDashboard } from '@/features/vaults/AgentDashboard'
 import type { Vault } from '@/features/vaults/types'
 import { groupVaultManagers, loadVaults } from '@/lib/vaultStore'
 
@@ -516,6 +517,7 @@ export default function NuvemFundHero({ audioDisabled = false }: NuvemFundHeroPr
 
             {vistaTab === 'managers' && (
               <div className="animate-fade-rise-delay-2 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-5">
+                <AgentDashboard sponsor={walletAddress} />
                 {vaultStatus === 'loading' && managers.length === 0 && (
                   <div className="sm:col-span-2 lg:col-span-3 rounded-2xl border border-white/15 bg-black/35 px-6 py-12 text-center text-sm text-white/55 backdrop-blur-md">
                     Reading managers from FundRegistry…

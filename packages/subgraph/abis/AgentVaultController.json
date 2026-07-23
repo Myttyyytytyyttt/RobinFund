@@ -1,0 +1,15 @@
+[
+  {"type":"function","name":"AGENT_ID","stateMutability":"view","inputs":[],"outputs":[{"type":"bytes32"}]},
+  {"type":"function","name":"SPONSOR","stateMutability":"view","inputs":[],"outputs":[{"type":"address"}]},
+  {"type":"function","name":"policyHash","stateMutability":"view","inputs":[],"outputs":[{"type":"bytes32"}]},
+  {"type":"function","name":"policy","stateMutability":"view","inputs":[],"outputs":[{"name":"maxTradeBps","type":"uint16"},{"name":"maxConcentrationBps","type":"uint16"},{"name":"dailyTurnoverBps","type":"uint16"},{"name":"maxSlippageBps","type":"uint16"},{"name":"maxTradesPerDay","type":"uint16"},{"name":"minTradeInterval","type":"uint32"},{"name":"maxIntentLifetime","type":"uint32"}]},
+  {"type":"function","name":"turnoverTodayWad","stateMutability":"view","inputs":[],"outputs":[{"type":"uint256"}]},
+  {"type":"function","name":"tradesToday","stateMutability":"view","inputs":[],"outputs":[{"type":"uint16"}]},
+  {"type":"function","name":"lastTradeAt","stateMutability":"view","inputs":[],"outputs":[{"type":"uint48"}]},
+  {"anonymous":false,"type":"event","name":"FundBound","inputs":[{"indexed":true,"name":"fund","type":"address"}]},
+  {"anonymous":false,"type":"event","name":"TradeExecuted","inputs":[{"indexed":true,"name":"nonce","type":"uint256"},{"indexed":true,"name":"evidenceHash","type":"bytes32"},{"indexed":true,"name":"relayer","type":"address"},{"indexed":false,"name":"tokenIn","type":"address"},{"indexed":false,"name":"tokenOut","type":"address"},{"indexed":false,"name":"spent","type":"uint256"},{"indexed":false,"name":"received","type":"uint256"},{"indexed":false,"name":"spentValueWad","type":"uint256"},{"indexed":false,"name":"receivedValueWad","type":"uint256"}]},
+  {"anonymous":false,"type":"event","name":"Paused","inputs":[{"indexed":false,"name":"paused","type":"bool"}]},
+  {"anonymous":false,"type":"event","name":"PolicyProposed","inputs":[{"indexed":true,"name":"policyHash","type":"bytes32"},{"indexed":false,"name":"executableAt","type":"uint48"}]},
+  {"anonymous":false,"type":"event","name":"PolicyCancelled","inputs":[{"indexed":true,"name":"policyHash","type":"bytes32"}]},
+  {"anonymous":false,"type":"event","name":"PolicyActivated","inputs":[{"indexed":true,"name":"policyHash","type":"bytes32"}]}
+]

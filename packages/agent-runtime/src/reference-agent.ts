@@ -1,0 +1,168 @@
+import { ToolLoopAgent, gateway, hasToolCall, isStepCount, tool } from "ai";
+import {
+  type Address,
+  keccak256,
+  stringToHex,
+  type Hex,
+} from "viem";
+import { z } from "zod";
+import type {
+  LocalSafetyConfig,
+  NuvemAgentClient,
+  QuoteInput,
+  QuoteResult,
+  VaultContext,
+} from "@nuvem/agent-sdk";
+
+export interface ReferenceAgentApi {
+  context(): Promise<VaultContext>;
+  quote(input: QuoteInput, context?: VaultContext): Promise<QuoteResult>;
+  signAndSubmit(quote: QuoteResult, input: QuoteInput, safety: LocalSafetyConfig): Promise<Record<string, unknown>>;
+  heartbeat(runtimeVersion: string, capabilities: string[]): Promise<void>;
+  recordDecision?(decision: "hold" | "rejected", summary: string, context: VaultContext): Promise<void>;
+}
+
+export interface ReferenceAgentOptions {
+  model: string;
+  execute: boolean;
+  expectedApprovalProxy: Address;
+  expectedUniversalRouter: Address;
+  expectedAdapter?: Address;
+  maxSlippageBps: number;
+}
+
+export function evidenceHash(
+  context: VaultContext,
+  proposal: { tokenIn: Address; tokenOut: Address; amountIn: bigint },
+): Hex {
+  return keccak256(stringToHex(JSON.stringify({
+    deploymentId: context.provenance.deploymentId,
+    blockNumber: context.provenance.blockNumber.toString(),
+    blockTimestamp: context.provenance.blockTimestamp.toISOString(),
+    vault: context.vault,
+    tokenIn: proposal.tokenIn,
+    tokenOut: proposal.tokenOut,
+    amountIn: proposal.amountIn.toString(),
+  })));
+}
+
+function serializable(value: unknown): unknown {
+  return JSON.parse(JSON.stringify(value, (_, entry) => {
+    if (typeof entry === "bigint") return entry.toString();
+    if (entry instanceof Date) return entry.toISOString();
+    return entry;
+  })) as unknown;
+}
+
+export function createReferenceTools(api: ReferenceAgentApi, options: ReferenceAgentOptions) {
+  const pending = new Map<string, { quote: QuoteResult; input: QuoteInput; context: VaultContext }>();
+  return {
+    readVault: tool({
+      description: "Read fresh Graph-backed NAV, holdings, recent trades and data provenance. Always call this first.",
+      inputSchema: z.object({}),
+      execute: async () => serializable(await api.context()),
+    }),
+    quoteTrade: tool({
+      description: "Request an exact-input CLASSIC Uniswap quote. This is a dry run and does not sign or spend funds.",
+      inputSchema: z.object({
+        tokenIn: z.string().regex(/^0x[0-9a-fA-F]{40}$/),
+        tokenOut: z.string().regex(/^0x[0-9a-fA-F]{40}$/),
+        amountIn: z.string().regex(/^[1-9][0-9]*$/),
+        maxSlippageBps: z.number().int().min(10).max(options.maxSlippageBps),
+        summary: z.string().min(1).max(2_000),
+        reasoning: z.string().min(1).max(4_000),
+      }),
+      execute: async ({ tokenIn, tokenOut, amountIn, maxSlippageBps, summary, reasoning }) => {
+        const context = await api.context();
+        const trade = {
+          tokenIn: tokenIn.toLowerCase() as Address,
+          tokenOut: tokenOut.toLowerCase() as Address,
+          amountIn: BigInt(amountIn),
+        };
+        const input: QuoteInput = {
+          ...trade,
+          maxSlippageBps,
+          evidenceHash: evidenceHash(context, trade),
+          reasoningHash: keccak256(stringToHex(reasoning)),
+          summary,
+        };
+        const quote = await api.quote(input, context);
+        pending.set(quote.executionPlan.quoteId, { quote, input, context });
+        return serializable({
+          quoteId: quote.executionPlan.quoteId,
+          quotedAmountOut: quote.executionPlan.quotedAmountOut,
+          minAmountOut: quote.executionPlan.minAmountOut,
+          deadline: quote.intent.deadline,
+          policyHash: quote.intent.policyHash,
+          executionHash: quote.intent.executionHash,
+          dryRun: !options.execute,
+        });
+      },
+    }),
+    executeQuotedTrade: tool({
+      description: "Sign and submit one previously quoted trade. The SDK revalidates every field locally first.",
+      inputSchema: z.object({ quoteId: z.string().uuid() }),
+      execute: async ({ quoteId }) => {
+        if (!options.execute) return { executed: false, reason: "Reference runtime is in dry-run mode" };
+        const item = pending.get(quoteId);
+        if (!item) return { executed: false, reason: "Unknown or already consumed quote" };
+        pending.delete(quoteId);
+        const result = await api.signAndSubmit(item.quote, item.input, {
+          chainId: item.quote.executionPlan.chainId,
+          expectedFund: item.context.vault,
+          expectedController: item.context.controller,
+          expectedAdapter: options.expectedAdapter,
+          expectedApprovalProxy: options.expectedApprovalProxy,
+          expectedUniversalRouter: options.expectedUniversalRouter,
+          maxSlippageBps: options.maxSlippageBps,
+        });
+        return serializable({ executed: true, result });
+      },
+    }),
+    hold: tool({
+      description: "Explicitly take no trade when evidence is weak, stale, unsafe or no rebalance is needed.",
+      inputSchema: z.object({ reason: z.string().min(1).max(2_000) }),
+      execute: async ({ reason }) => {
+        const context = await api.context();
+        if (api.recordDecision) await api.recordDecision("hold", reason, context);
+        return { held: true, reason };
+      },
+    }),
+  };
+}
+
+export class NuvemReferenceAgent {
+  private readonly agent;
+
+  constructor(private readonly api: ReferenceAgentApi, options: ReferenceAgentOptions) {
+    const tools = createReferenceTools(api, options);
+    this.agent = new ToolLoopAgent({
+      model: gateway(options.model),
+      instructions: `You are the Nuvem reference vault manager. You have no permission beyond the exposed tools.
+
+Rules:
+- Always call readVault before deciding.
+- Use only addresses and balances returned by fresh context.
+- Prefer hold when evidence is incomplete; never invent prices, liquidity, fills or performance.
+- At most one quote and one execution per cycle.
+- A quote is not a trade. Inspect minOut, deadline, policyHash and executionHash before executing.
+- Never ask for, reveal or transmit a private key, bearer token, API key or raw private prompt.
+- The controller is the final authority; a rejected policy check is a normal safety outcome.
+- Explain the decision briefly after the tool result.`,
+      tools,
+      stopWhen: [isStepCount(8), hasToolCall("executeQuotedTrade")],
+      maxRetries: 2,
+    });
+  }
+
+  async runCycle(): Promise<{ text: string; steps: number }> {
+    await this.api.heartbeat("nuvem-reference/0.1.0", ["graph-context", "uniswap-classic", "eip712", "hold"]);
+    const result = await this.agent.generate({
+      prompt: "Evaluate the current vault. Hold unless a policy-compliant rebalance is clearly supported by the provided data.",
+      timeout: { totalMs: 90_000, stepMs: 30_000 },
+    });
+    return { text: result.text, steps: result.steps.length };
+  }
+}
+
+export type ReferenceAgentClient = NuvemAgentClient;

@@ -1,0 +1,14 @@
+[
+  {"type":"function","name":"USDG","stateMutability":"view","inputs":[],"outputs":[{"type":"address"}]},
+  {"type":"function","name":"nav","stateMutability":"view","inputs":[],"outputs":[{"name":"snapshot","type":"tuple","components":[{"name":"navWad","type":"uint256"},{"name":"valid","type":"bool"}]}]},
+  {"anonymous":false,"type":"event","name":"EntryFeeCharged","inputs":[{"indexed":true,"name":"orderId","type":"uint256"},{"indexed":false,"name":"fee6","type":"uint256"},{"indexed":false,"name":"toManager6","type":"uint256"},{"indexed":false,"name":"toProtocol6","type":"uint256"}]},
+  {"anonymous":false,"type":"event","name":"DepositExecuted","inputs":[{"indexed":true,"name":"orderId","type":"uint256"},{"indexed":true,"name":"lp","type":"address"},{"indexed":false,"name":"amount6","type":"uint256"},{"indexed":false,"name":"sharesMinted","type":"uint256"}]},
+  {"anonymous":false,"type":"event","name":"WithdrawExecuted","inputs":[{"indexed":true,"name":"orderId","type":"uint256"},{"indexed":true,"name":"lp","type":"address"},{"indexed":false,"name":"shares","type":"uint256"},{"indexed":false,"name":"paid6","type":"uint256"},{"indexed":false,"name":"inKind","type":"bool"}]},
+  {"anonymous":false,"type":"event","name":"InKindSlice","inputs":[{"indexed":true,"name":"orderId","type":"uint256"},{"indexed":false,"name":"token","type":"address"},{"indexed":false,"name":"amount","type":"uint256"},{"indexed":false,"name":"valueWad","type":"uint256"}]},
+  {"anonymous":false,"type":"event","name":"PerfFeeCrystallized","inputs":[{"indexed":true,"name":"period","type":"uint64"},{"indexed":false,"name":"feeWad","type":"uint256"},{"indexed":false,"name":"sharesMinted","type":"uint256"}]},
+  {"anonymous":false,"type":"event","name":"Settled","inputs":[{"indexed":true,"name":"period","type":"uint64"},{"indexed":false,"name":"peWad","type":"uint256"},{"indexed":false,"name":"fundingWad","type":"uint256"},{"indexed":false,"name":"lambdaWad","type":"uint256"},{"indexed":false,"name":"degraded","type":"bool"}]},
+  {"anonymous":false,"type":"event","name":"AssetRegistered","inputs":[{"indexed":true,"name":"token","type":"address"}]},
+  {"anonymous":false,"type":"event","name":"Traded","inputs":[{"indexed":true,"name":"adapterId","type":"uint256"},{"indexed":false,"name":"tokenIn","type":"address"},{"indexed":false,"name":"tokenOut","type":"address"},{"indexed":false,"name":"spent","type":"uint256"},{"indexed":false,"name":"received","type":"uint256"},{"indexed":false,"name":"adverseWad","type":"uint256"}]},
+  {"anonymous":false,"type":"event","name":"WindingRequested","inputs":[{"indexed":false,"name":"due","type":"uint48"}]},
+  {"anonymous":false,"type":"event","name":"StateChanged","inputs":[{"indexed":false,"name":"newState","type":"uint8"}]}
+]

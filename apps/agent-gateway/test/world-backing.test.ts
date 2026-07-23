@@ -1,0 +1,112 @@
+import { describe, expect, it } from "vitest";
+import { privateKeyToAccount } from "viem/accounts";
+import { verifyTypedData, type Address, type Hex } from "viem";
+import { AgentSessionService } from "../src/agentkit.js";
+import { MemoryControlPlaneStore } from "../src/store.js";
+import { WorldBackingService } from "../src/world-backing.js";
+import { agentId, FakeChain, profile, signer, sponsor } from "./fixtures.js";
+
+const verifierKey = `0x${"77".repeat(32)}` as Hex;
+const wrongVerifierKey = `0x${"88".repeat(32)}` as Hex;
+const humanId = "anonymous-world-human-id-that-must-not-be-stored";
+
+function setup(options: { backed?: boolean; verifierKey?: Hex } = {}) {
+  const store = new MemoryControlPlaneStore();
+  store.profiles.set(agentId, profile({ status: "pending_backing", worldBacked: false, worldBackedUntil: null }));
+  store.worldIdAgentBindings.set(agentId, {
+    agentId,
+    sponsor,
+    signer,
+    humanHash: `0x${"99".repeat(32)}` as Hex,
+    verifiedAt: new Date(),
+    revokedAt: null,
+  });
+  const chain = new FakeChain();
+  chain.agent.active = false;
+  chain.agent.status = 0;
+  chain.agent.backedUntil = 0;
+  chain.backingNonce = 9n;
+  chain.worldVerifier = privateKeyToAccount(verifierKey).address.toLowerCase() as Address;
+  const sessions = new AgentSessionService(store, chain, {
+    publicBaseUrl: "https://agents.nuvem.fund",
+    rpcUrl: "https://rpc.invalid",
+    sessionSecret: "s".repeat(32),
+    worldIdPepper: "p".repeat(32),
+  }, {
+    lookupHuman: async () => options.backed === false ? null : humanId,
+    verifySignature: async () => ({ valid: true, address: signer }),
+  });
+  const service = new WorldBackingService(
+    store,
+    chain,
+    sessions,
+    options.verifierKey ?? verifierKey,
+    "https://world.invalid",
+    { getBlockNumber: async () => 12_345n },
+  );
+  return { store, chain, service };
+}
+
+describe("WorldBackingService", () => {
+  it("issues a registry-verifiable attestation using the canonical World block", async () => {
+    const { store, chain, service } = setup();
+    const result = await service.issue(agentId, sponsor);
+
+    expect(result.backing.agentBookBlock).toBe(12_345n);
+    expect(result.backing.nonce).toBe(9n);
+    expect(result.backing.signer).toBe(signer);
+    expect(result.backing.backingHash).toMatch(/^0x[0-9a-f]{64}$/);
+    expect(result.backing.backingHash).not.toContain(humanId);
+    expect(await verifyTypedData({
+      address: chain.worldVerifier,
+      domain: {
+        name: "Nuvem AgentRegistry",
+        version: "1",
+        chainId: chain.chainId,
+        verifyingContract: chain.registryAddress,
+      },
+      types: { WorldBacking: [
+        { name: "agentId", type: "bytes32" },
+        { name: "sponsor", type: "address" },
+        { name: "signer", type: "address" },
+        { name: "backingHash", type: "bytes32" },
+        { name: "agentBookBlock", type: "uint64" },
+        { name: "validUntil", type: "uint48" },
+        { name: "nonce", type: "uint256" },
+      ] },
+      primaryType: "WorldBacking",
+      message: result.backing,
+      signature: result.signature,
+    })).toBe(true);
+    expect(store.worldAttestations).toHaveLength(1);
+    expect(store.worldIdAgentBindings.size).toBe(1);
+    expect(JSON.stringify(store.worldAttestations, (_key, value) => typeof value === "bigint" ? value.toString() : value))
+      .not.toContain(humanId);
+    expect(JSON.stringify([...store.worldIdAgentBindings.values()])).not.toContain(humanId);
+  });
+
+  it("rejects a wallet that is not the on-chain sponsor", async () => {
+    const { service } = setup();
+    await expect(service.issue(agentId, "0x9000000000000000000000000000000000000001"))
+      .rejects.toMatchObject({ code: "NOT_SPONSOR", status: 403 });
+  });
+
+  it("fails closed when the configured verifier key differs from AgentRegistry", async () => {
+    const { service } = setup({ verifierKey: wrongVerifierKey });
+    await expect(service.issue(agentId, sponsor))
+      .rejects.toMatchObject({ code: "VERIFIER_MISCONFIGURED", status: 503 });
+  });
+
+  it("does not attest an AgentBook signer without human backing", async () => {
+    const { service } = setup({ backed: false });
+    await expect(service.issue(agentId, sponsor))
+      .rejects.toMatchObject({ code: "AGENTBOOK_NOT_BACKED", status: 403 });
+  });
+
+  it("does not attest AgentBook alone without the Nuvem World ID action", async () => {
+    const { store, service } = setup();
+    store.worldIdAgentBindings.clear();
+    await expect(service.issue(agentId, sponsor))
+      .rejects.toMatchObject({ code: "NUVEM_WORLD_ID_REQUIRED", status: 403 });
+  });
+});

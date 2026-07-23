@@ -8,7 +8,10 @@ import { spawn } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { encodeAbiParameters, parseAbi, type Address, type Hex } from "viem";
-import { acct, contractsDir, DEPLOYER, PK, TSLA, TSLA_FEED, USDG, write, type Devnet } from "./chain.js";
+import { acct, contractsDir, dealErc20, DEPLOYER, AUXILIARY, PK, TSLA, TSLA_FEED, USDG, write, type Devnet } from "./chain.js";
+
+export const UNISWAP_APPROVAL_PROXY = "0x0000000085E102724e78eCd2F45DC9cA239Affad" as Address;
+export const UNISWAP_UNIVERSAL_ROUTER = "0x8876789976dEcBfCbBbe364623C63652db8C0904" as Address;
 
 export interface Protocol {
   tokenRegistry: Address;
@@ -16,6 +19,11 @@ export interface Protocol {
   eligibilityGate: Address;
   guardian: Address;
   fundRegistry: Address;
+  agentRegistry: Address;
+  uniswapApiAdapter: Address;
+  uniswapApiAdapterId: bigint;
+  uniswapApprovalProxy: Address;
+  uniswapUniversalRouter: Address;
   usdgMockFeed: Address;
   tslaMockFeed: Address;
   deployBlock: bigint;
@@ -26,6 +34,7 @@ const registryAbi = parseAbi([
   "function setUsdgFeed(address feed, uint48 maxStaleness, int256 minAnswer, int256 maxAnswer)",
   "function setFeed(address token, address feed, uint48 maxStaleness, int256 minAnswer, int256 maxAnswer)",
   "function funds(uint256) view returns (address)",
+  "function count() view returns (uint256)",
 ]);
 const feedReadAbi = parseAbi([
   "function latestRoundData() view returns (uint80, int256, uint256, uint256, uint80)",
@@ -148,6 +157,27 @@ export async function deployProtocol(d: Devnet): Promise<Protocol> {
     if (!a[name]) throw new Error(`el broadcast no contiene ${name}`);
   }
 
+  await forgeScript("script/DeployAgents.s.sol", d.rpcUrl, {
+    ADAPTER_REGISTRY: a.AdapterRegistry!,
+    WORLD_VERIFIER: acct[AUXILIARY]!.address,
+    UNISWAP_APPROVAL_PROXY,
+    UNISWAP_UNIVERSAL_ROUTER,
+    DEVNET_MOCK_APPROVAL_PROXY: "true",
+  });
+  const agents = parseBroadcast("DeployAgents.s.sol", d.chainId);
+  if (!agents.AgentRegistry || !agents.UniswapApiAdapter || !agents.DevnetApprovalProxy) {
+    throw new Error("el broadcast agentico no contiene AgentRegistry/UniswapApiAdapter");
+  }
+  const approvalProxy = agents.DevnetApprovalProxy;
+  // Devnet-only inventory for deterministic policy/E2E swaps. Production uses
+  // the API-generated calldata and the official proxy instead.
+  await dealErc20(d, TSLA, approvalProxy, 10_000n * 10n ** 18n);
+  const adapterCount = (await d.pub.readContract({
+    address: a.AdapterRegistry!,
+    abi: registryAbi,
+    functionName: "count",
+  })) as bigint;
+
   // feeds → mocks sembrados con los precios REALES del fork (el deployer aún es owner: two-step)
   const usdgPx = await realAnswer(d, "0x61B7e5650328764B076A108EFF5fa7282a1B9aD2" as Address);
   const tslaPx = await realAnswer(d, TSLA_FEED);
@@ -168,11 +198,72 @@ export async function deployProtocol(d: Devnet): Promise<Protocol> {
     eligibilityGate: a.OpenEligibilityGate!,
     guardian: a.Guardian!,
     fundRegistry: a.FundRegistry!,
+    agentRegistry: agents.AgentRegistry,
+    uniswapApiAdapter: agents.UniswapApiAdapter,
+    uniswapApiAdapterId: adapterCount - 1n,
+    uniswapApprovalProxy: approvalProxy,
+    uniswapUniversalRouter: approvalProxy,
     usdgMockFeed,
     tslaMockFeed,
     deployBlock,
     funds: [],
   };
+}
+
+export type AgentVaultConfig = {
+  agentId: Hex;
+  sponsor: Address;
+  name: string;
+  symbol: string;
+  assets: Address[];
+  policy: {
+    maxTradeBps: number;
+    maxConcentrationBps: number;
+    dailyTurnoverBps: number;
+    maxSlippageBps: number;
+    maxTradesPerDay: number;
+    minTradeInterval: number;
+    maxIntentLifetime: number;
+  };
+  economy: Record<string, string>;
+};
+
+export async function createAgentVault(
+  d: Devnet,
+  p: Protocol,
+  input: AgentVaultConfig,
+): Promise<{ controller: Address; fund: Address }> {
+  await forgeScript("script/CreateAgentVault.s.sol", d.rpcUrl, {
+    TOKEN_REGISTRY: p.tokenRegistry,
+    ADAPTER_REGISTRY: p.adapterRegistry,
+    ELIGIBILITY_GATE: p.eligibilityGate,
+    FUND_REGISTRY: p.fundRegistry,
+    GUARDIAN: p.guardian,
+    KEEPER: acct[2]!.address,
+    PROTOCOL_TREASURY: acct[7]!.address,
+    AGENT_REGISTRY: p.agentRegistry,
+    AGENT_ID: input.agentId,
+    AGENT_SPONSOR: input.sponsor,
+    AGENT_ASSETS: input.assets.join(","),
+    UNISWAP_API_ADAPTER_ID: p.uniswapApiAdapterId.toString(),
+    UNISWAP_API_ADAPTER: p.uniswapApiAdapter,
+    MAX_TRADE_BPS: String(input.policy.maxTradeBps),
+    MAX_CONCENTRATION_BPS: String(input.policy.maxConcentrationBps),
+    DAILY_TURNOVER_BPS: String(input.policy.dailyTurnoverBps),
+    MAX_SLIPPAGE_BPS: String(input.policy.maxSlippageBps),
+    MAX_TRADES_PER_DAY: String(input.policy.maxTradesPerDay),
+    MIN_TRADE_INTERVAL: String(input.policy.minTradeInterval),
+    MAX_INTENT_LIFETIME: String(input.policy.maxIntentLifetime),
+    FUND_NAME: input.name,
+    FUND_SYMBOL: input.symbol,
+    ...input.economy,
+  });
+  const created = parseBroadcast("CreateAgentVault.s.sol", d.chainId);
+  if (!created.AgentVaultController || !created.Fund) {
+    throw new Error("el broadcast no contiene controller/Fund");
+  }
+  p.funds.push(created.Fund);
+  return { controller: created.AgentVaultController, fund: created.Fund };
 }
 
 export async function createFund(
