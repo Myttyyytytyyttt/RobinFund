@@ -182,7 +182,7 @@ export function VaultCreatorModal({ open, onClose, onCreated }: Props) {
   const { authenticated, user } = usePrivy()
   const { wallets } = useWallets()
   const [managerType, setManagerType] = useState<ManagerType>('human')
-  const [runtimeKind, setRuntimeKind] = useState<RuntimeKind>('external')
+  const [runtimeKind, setRuntimeKind] = useState<RuntimeKind>('nuvem_reference')
   const [form, setForm] = useState<FormState>(INITIAL)
   const [advanced, setAdvanced] = useState(false)
   const [status, setStatus] = useState<Status>('idle')
@@ -311,7 +311,7 @@ export function VaultCreatorModal({ open, onClose, onCreated }: Props) {
     if (!rawSigner || !isAddress(rawSigner)) {
       throw new Error(runtimeKind === 'nuvem_reference'
         ? 'Nuvem could not provision the isolated reference-agent signer.'
-        : 'Enter the public address of the agent signer. Its private key stays on the agent machine.')
+        : 'Enter the public address of the agent signer, or choose Nuvem reference for automatic provisioning.')
     }
     const agentSigner = getAddress(rawSigner)
     if (agentSigner.toLowerCase() === common.manager.toLowerCase()) throw new Error('Use a separate signer for the agent runtime.')
@@ -688,7 +688,7 @@ export function VaultCreatorModal({ open, onClose, onCreated }: Props) {
             <form className="space-y-5 border-b border-white/10 p-5 sm:p-8 md:border-b-0 md:border-r" onSubmit={(event) => { event.preventDefault(); void submit() }}>
               <div className="grid grid-cols-2 gap-3">
                 <Choice disabled={actionDisabled || Boolean(recovery)} active={managerType === 'human'} title="Human manager" text="Your connected wallet controls approved Fund trades." onClick={() => { setManagerType('human'); setError(null) }} />
-                <Choice disabled={actionDisabled || Boolean(recovery)} active={managerType === 'ai'} title="AI manager" text="A policy-limited controller verifies every signed agent intent." onClick={() => { setManagerType('ai'); setError(null) }} />
+                <Choice disabled={actionDisabled || Boolean(recovery)} active={managerType === 'ai'} title="AI manager" text="A policy-limited controller verifies every signed agent intent." onClick={() => { setManagerType('ai'); setRuntimeKind('nuvem_reference'); setAgentId(null); setManagedIdentity(null); setError(null) }} />
               </div>
 
               {error && <div role="alert" aria-live="assertive" className="rounded-xl border border-red-300/20 bg-red-300/10 px-4 py-3 text-xs leading-5 text-red-100">{error}<div className="mt-1 text-white/40">{worldProofReady ? 'World App already approved. Retry resubmits the proof held only in this tab; no new QR is needed.' : recovery ? 'Retry resumes this exact job; it does not register or deploy a second agent.' : 'Retry resumes completed onchain steps and creates a fresh QR only when needed.'}</div></div>}
@@ -700,7 +700,7 @@ export function VaultCreatorModal({ open, onClose, onCreated }: Props) {
               {managerType === 'ai' && (
                 <div className="space-y-4 rounded-2xl border border-emerald-200/15 bg-emerald-200/[0.045] p-4 sm:p-5">
                   <div><div className="text-[10px] uppercase tracking-[0.18em] text-emerald-200/65">Agent runtime</div><p className="mt-1 text-xs leading-5 text-white/45">{runtimeKind === 'external' ? 'Your signer stays on your PC or VPS and only its public address reaches Nuvem.' : 'Nuvem provisions an isolated signer for this vault. No wallet setup, seed phrase or private key is shown in the browser.'}</p></div>
-                  <div className="grid grid-cols-2 gap-3"><Choice disabled={actionDisabled || Boolean(recovery)} active={runtimeKind === 'external'} title="External agent" text="Run any model from your PC, VPS or cloud via the SDK." onClick={() => { setRuntimeKind('external'); setAgentId(null); setManagedIdentity(null) }} /><Choice disabled={actionDisabled || Boolean(recovery)} active={runtimeKind === 'nuvem_reference'} title="Nuvem reference" text="One-click identity and the transparent Nuvem runtime." onClick={() => { setRuntimeKind('nuvem_reference'); setAgentId(null) }} /></div>
+                  <div className="grid grid-cols-2 gap-3"><Choice disabled={actionDisabled || Boolean(recovery)} active={runtimeKind === 'nuvem_reference'} title="Nuvem reference" text="One-click identity and the transparent Nuvem runtime." onClick={() => { setRuntimeKind('nuvem_reference'); setAgentId(null) }} /><Choice disabled={actionDisabled || Boolean(recovery)} active={runtimeKind === 'external'} title="External agent" text="Run any model from your PC, VPS or cloud via the SDK." onClick={() => { setRuntimeKind('external'); setAgentId(null); setManagedIdentity(null) }} /></div>
                   <div className="grid gap-4 sm:grid-cols-2"><Field label="Agent display name" value={form.agentName} onChange={update('agentName')} placeholder={`${form.name || 'Vault'} Agent`} />{runtimeKind === 'external' ? <Field label="Agent signer address" hint="public only" value={form.agentSigner} onChange={update('agentSigner')} placeholder="0x…" /> : <div className="min-w-0"><div className="mb-2 text-[10px] uppercase tracking-[0.16em] text-white/45">Managed signer</div><div className="rounded-xl border border-white/12 bg-black/25 px-4 py-3 text-xs text-white/55">{managedIdentity ? <span className="font-mono text-emerald-100">{short(managedIdentity.signer)}</span> : 'Created automatically when you launch'}</div></div>}</div>
                   <Field label="Public strategy summary" value={form.strategySummary} onChange={update('strategySummary')} placeholder="What this agent optimizes for" />
                   <Field label="Metadata URI" hint="optional" value={form.metadataUri} onChange={update('metadataUri')} placeholder="ipfs://…" />
