@@ -30,10 +30,15 @@ function request(): QuoteRequest {
     summary: "Rebalance toward the strongest liquid asset",
     provenance: {
       deploymentId: "QmDeployment",
+      chainId: 4663,
       blockNumber: 100n,
+      blockHash: null,
       blockTimestamp: observedAt,
       chainHeadBlock: 100n,
+      blockLag: 0n,
+      indexingErrors: false,
       observedAt,
+      ageSeconds: 0,
     },
   };
 }

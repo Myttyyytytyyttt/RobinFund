@@ -6,16 +6,18 @@ schema:
 dataSources:
   - kind: ethereum
     name: AgentRegistry
-    network: robinhood
+    network: robinhood-testnet
     source:
-      address: "0x0000000000000000000000000000000000000001"
       abi: AgentRegistry
-      startBlock: 0
+      address: "0xa27e31af49cea5113fe84f69c2b91b999b48491b"
+      startBlock: 92357335
     mapping:
       kind: ethereum/events
       apiVersion: 0.0.9
       language: wasm/assemblyscript
-      entities: [Agent, AgentController]
+      entities:
+        - Agent
+        - AgentController
       abis:
         - name: AgentRegistry
           file: ./abis/AgentRegistry.json
@@ -35,16 +37,17 @@ dataSources:
       file: ./src/agent-registry.ts
   - kind: ethereum
     name: FundRegistry
-    network: robinhood
+    network: robinhood-testnet
     source:
-      address: "0x0000000000000000000000000000000000000002"
       abi: FundRegistry
-      startBlock: 0
+      address: "0x696553ad390428abf3d95c90a3452917cbaa453c"
+      startBlock: 92051088
     mapping:
       kind: ethereum/events
       apiVersion: 0.0.9
       language: wasm/assemblyscript
-      entities: [Vault]
+      entities:
+        - Vault
       abis:
         - name: FundRegistry
           file: ./abis/FundRegistry.json
@@ -52,20 +55,59 @@ dataSources:
         - event: FundRegistered(indexed address,indexed address)
           handler: handleFundRegistered
       file: ./src/fund-registry.ts
+  - kind: ethereum
+    name: CanaryFundSnapshot
+    network: robinhood-testnet
+    source:
+      abi: Fund
+      address: "0xec3a6902b3fdba7deef8139f16967da6429ce282"
+      startBlock: 93474000
+    mapping:
+      kind: ethereum/events
+      apiVersion: 0.0.9
+      language: wasm/assemblyscript
+      entities:
+        - Vault
+        - Holding
+      abis:
+        - name: Fund
+          file: ./abis/Fund.json
+        - name: ERC20
+          file: ./abis/ERC20.json
+        - name: TokenRegistry
+          file: ./abis/TokenRegistry.json
+        - name: AggregatorV3
+          file: ./abis/AggregatorV3.json
+      blockHandlers:
+        - handler: handleBlock
+          filter:
+            kind: polling
+            every: 300
+      file: ./src/fund.ts
 templates:
   - kind: ethereum
     name: Fund
-    network: robinhood
+    network: robinhood-testnet
     source:
       abi: Fund
     mapping:
       kind: ethereum/events
       apiVersion: 0.0.9
       language: wasm/assemblyscript
-      entities: [Vault, Holding, Trade, Settlement]
+      entities:
+        - Vault
+        - Holding
+        - Trade
+        - Settlement
       abis:
         - name: Fund
           file: ./abis/Fund.json
+        - name: ERC20
+          file: ./abis/ERC20.json
+        - name: TokenRegistry
+          file: ./abis/TokenRegistry.json
+        - name: AggregatorV3
+          file: ./abis/AggregatorV3.json
       eventHandlers:
         - event: EntryFeeCharged(indexed uint256,uint256,uint256,uint256)
           handler: handleEntryFeeCharged
@@ -87,29 +129,32 @@ templates:
           handler: handleWindingRequested
         - event: StateChanged(uint8)
           handler: handleStateChanged
-      blockHandlers:
-        - handler: handleBlock
-          filter:
-            kind: polling
-            every: 20
       file: ./src/fund.ts
   - kind: ethereum
     name: AgentVaultController
-    network: robinhood
+    network: robinhood-testnet
     source:
       abi: AgentVaultController
     mapping:
       kind: ethereum/events
       apiVersion: 0.0.9
       language: wasm/assemblyscript
-      entities: [AgentController, Vault, Policy, Holding, Trade]
+      entities:
+        - AgentController
+        - Vault
+        - Policy
+        - Holding
+        - Trade
       abis:
         - name: AgentVaultController
           file: ./abis/AgentVaultController.json
+        - name: Fund
+          file: ./abis/Fund.json
       eventHandlers:
         - event: FundBound(indexed address)
           handler: handleFundBound
-        - event: TradeExecuted(indexed uint256,indexed bytes32,indexed address,address,address,uint256,uint256,uint256,uint256)
+        - event: TradeExecuted(indexed uint256,indexed bytes32,indexed
+            address,address,address,uint256,uint256,uint256,uint256)
           handler: handleTradeExecuted
         - event: Paused(bool)
           handler: handlePaused
@@ -120,3 +165,30 @@ templates:
         - event: PolicyActivated(indexed bytes32)
           handler: handlePolicyActivated
       file: ./src/controller.ts
+  - kind: ethereum
+    name: AgentFundSnapshot
+    network: robinhood-testnet
+    source:
+      abi: Fund
+    mapping:
+      kind: ethereum/events
+      apiVersion: 0.0.9
+      language: wasm/assemblyscript
+      entities:
+        - Vault
+        - Holding
+      abis:
+        - name: Fund
+          file: ./abis/Fund.json
+        - name: ERC20
+          file: ./abis/ERC20.json
+        - name: TokenRegistry
+          file: ./abis/TokenRegistry.json
+        - name: AggregatorV3
+          file: ./abis/AggregatorV3.json
+      blockHandlers:
+        - handler: handleBlock
+          filter:
+            kind: polling
+            every: 300
+      file: ./src/fund.ts

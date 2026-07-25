@@ -1,39 +1,79 @@
 # Nuvem Agents subgraph
 
-The Graph read model used by autonomous agents on Robinhood Chain. It indexes the shared
-`AgentRegistry`, every registered `Fund`, and each controller discovered from the registry.
+The Graph read model used by autonomous agents on Robinhood Chain. It indexes:
 
-Indexed data:
+- the shared `AgentRegistry` and every registered `Fund`;
+- controller policy, pause, signer and World-backing lifecycle;
+- deposits, withdrawals, fees, settlements and trades;
+- on-chain NAV and per-token balances with explicit validity timestamps;
+- deployment, block, chain-head and indexing-health provenance consumed by the gateway and MCP.
 
-- agent sponsor, signer, World-backing status and metadata;
-- controller policy, pause state and signer/controller lifecycle;
-- dynamic Funds, holdings, trades, settlements, entry/performance fees and winding state;
-- provenance fields consumed by the read-only Vault Intelligence MCP.
+## Robinhood testnet
 
-The checked-in `subgraph.yaml` intentionally contains impossible placeholder addresses. A deployment
-must first generate `networks.json` from actual contract outputs; the configure command fails closed
-for missing or placeholder addresses.
+`networks.json` contains the verified Robinhood testnet (`46630`) registry deployments and a live
+Fund canary. Mainnet entries remain deliberate placeholders and `configure-network.mjs` refuses to
+build them until real addresses, start blocks and RPC bytecode checks are supplied.
+
+Build the committed testnet configuration:
 
 ```powershell
+pnpm build:testnet
+```
+
+To regenerate either network from deployment outputs:
+
+```powershell
+$env:SUBGRAPH_NETWORK = "robinhood-testnet" # or robinhood
 $env:AGENT_REGISTRY_ADDRESS = "0x..."
 $env:FUND_REGISTRY_ADDRESS = "0x..."
-$env:SUBGRAPH_START_BLOCK = "123456"
-pnpm build:robinhood
+$env:CANARY_FUND_ADDRESS = "0x..."
+$env:AGENT_REGISTRY_START_BLOCK = "..."
+$env:FUND_REGISTRY_START_BLOCK = "..."
+$env:CANARY_FUND_START_BLOCK = "..."
+$env:RH_RPC_URL = "<private RPC for the selected network>"
+pnpm configure
 ```
 
-Separate start blocks can be supplied through `AGENT_REGISTRY_START_BLOCK` and
-`FUND_REGISTRY_START_BLOCK`. Deploy only the generated Robinhood build to the chosen Graph Studio or
-Subgraph Studio slug, then set `GRAPH_URL` and `GRAPH_DEPLOYMENT_ID` on the gateway/MCP backend.
+The configure step checks the expected chain ID, address format, non-placeholder values, block
+ranges and deployed bytecode. It never prints the RPC URL.
+
+## Local Graph Node
+
+The repository pins Graph Node `v0.44.0`, Postgres 16 and Kubo `v0.36.0`. All HTTP/admin ports bind
+to loopback, so this stack is a local data plane rather than a public production endpoint.
 
 ```powershell
-graph auth --studio <deploy-key>
-graph deploy --studio <slug> --network robinhood
+$env:RH_RPC_URL = "<private Robinhood testnet RPC>"
+pnpm graph-node:up
+pnpm create:local   # first run only
+pnpm deploy:local
 ```
 
-No deploy key, endpoint or service secret belongs in this package. Keep those in the root gitignored
-`.env` or the production secret manager. Until a real deployment ID is configured, the gateway must
-not advertise Graph-backed trading as live.
+The deploy command prints the immutable IPFS deployment ID. Pin that exact value in the MCP and
+gateway; do not rely only on the mutable subgraph name:
 
-The controller template is started when `ControllerSet(agentId, controller, true)` is observed. Since
-the controller emits its constructor events before discovery, that handler snapshots the initial
-sponsor and policy directly from chain and is idempotent across disable/re-enable events.
+```powershell
+$env:GRAPH_URL = "http://127.0.0.1:8000/subgraphs/name/nuvem/robinhood-testnet"
+$env:GRAPH_DEPLOYMENT_ID = "Qm..."
+pnpm smoke:local
+```
+
+The smoke rejects GraphQL errors, indexing errors, a missing cursor or a deployment mismatch. The
+MCP adds RPC chain-ID, block-lag and block-age checks before returning data.
+
+Stop the local stack without deleting its indexed volumes:
+
+```powershell
+$env:RH_RPC_URL = "<private Robinhood testnet RPC>"
+pnpm graph-node:down
+```
+
+## Indexing model
+
+Registry and Fund history is event-driven. A single configured canary polls on-chain NAV and
+holdings every 300 blocks; dynamic Fund templates do not install a block handler per historical
+Fund. Controller templates begin when `ControllerSet(agentId, controller, true)` is observed and
+snapshot constructor-era policy state directly from chain.
+
+No deploy key, endpoint credential or service secret belongs in this package. Keep them in the root
+gitignored `.env` or the production secret manager.

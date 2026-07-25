@@ -53,6 +53,7 @@ const schema = z.object({
   SUPABASE_PUBLISHABLE_KEY: z.string().min(1),
   RH_RPC_URL: z.url(),
   RH_CHAIN_ID: z.coerce.number().int().positive().max(Number.MAX_SAFE_INTEGER),
+  GRAPH_ENABLED: boolean.default(true),
   TRADING_ENABLED: boolean.default(true),
   WORLD_CHAIN_RPC: z.url(),
   WORLD_AGENTBOOK_RELAY_URL: z.url().default("https://x402-worldchain.vercel.app"),
@@ -71,6 +72,9 @@ const schema = z.object({
   USDG_ADDRESS: address,
   GRAPH_URL: z.url().optional(),
   GRAPH_DEPLOYMENT_ID: z.string().min(1).optional(),
+  GRAPH_MAX_BLOCK_LAG: z.coerce.bigint().nonnegative().default(50n),
+  GRAPH_MAX_AGE_SECONDS: z.coerce.number().int().min(1).max(3_600).default(300),
+  GRAPH_TIMEOUT_MS: z.coerce.number().int().min(1_000).max(30_000).default(10_000),
   UNISWAP_API_BASE_URL: z.url().default("https://trade-api.gateway.uniswap.org/v1"),
   UNISWAP_API_KEY: z.string().min(1).optional(),
   // Chain-specific and fail-closed: it must match the target returned by the
@@ -102,15 +106,34 @@ const schema = z.object({
       message: "Robinhood Chain testnet (46630) must use World Identity staging",
     });
   }
-  if (!value.TRADING_ENABLED) return;
-  for (const name of [
-    "GRAPH_URL",
-    "GRAPH_DEPLOYMENT_ID",
-    "UNISWAP_API_KEY",
-    "UNISWAP_APPROVAL_PROXY",
-    "UNISWAP_UNIVERSAL_ROUTER",
-  ] as const) {
-    if (!value[name]) context.addIssue({ code: "custom", path: [name], message: `${name} required when trading is enabled` });
+  if (value.GRAPH_ENABLED) {
+    for (const name of ["GRAPH_URL", "GRAPH_DEPLOYMENT_ID"] as const) {
+      if (!value[name]) context.addIssue({
+        code: "custom",
+        path: [name],
+        message: `${name} required when Graph is enabled`,
+      });
+    }
+  }
+  if (value.TRADING_ENABLED) {
+    if (!value.GRAPH_ENABLED) {
+      context.addIssue({
+        code: "custom",
+        path: ["GRAPH_ENABLED"],
+        message: "GRAPH_ENABLED must be true when trading is enabled",
+      });
+    }
+    for (const name of [
+      "UNISWAP_API_KEY",
+      "UNISWAP_APPROVAL_PROXY",
+      "UNISWAP_UNIVERSAL_ROUTER",
+    ] as const) {
+      if (!value[name]) context.addIssue({
+        code: "custom",
+        path: [name],
+        message: `${name} required when trading is enabled`,
+      });
+    }
   }
 });
 
@@ -156,6 +179,7 @@ function normalizedEnvironment(environment: NodeJS.ProcessEnv): NodeJS.ProcessEn
     ...environment,
     RH_CHAIN_ID: chainId,
     RH_RPC_URL: rpcUrl,
+    GRAPH_ENABLED: environment.GRAPH_ENABLED ?? environment.TRADING_ENABLED ?? "true",
     WORLD_ID_ENVIRONMENT: worldIdEnvironment,
   };
 }

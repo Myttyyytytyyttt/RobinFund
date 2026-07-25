@@ -198,6 +198,7 @@ export interface GatewayAppDependencies {
   registryAddress: Address;
   mcpHandler: (request: Request) => Promise<Response>;
   allowedOrigins?: string[];
+  graphEnabled?: boolean;
   tradingEnabled?: boolean;
 }
 
@@ -236,7 +237,10 @@ async function runMutation(
   }
 }
 
-function errorBody(error: unknown): { status: number; body: unknown } {
+function errorBody(error: unknown): {
+  status: number;
+  body: { error: { code: string; message: string } };
+} {
   if (
     error instanceof AgentAuthError
     || error instanceof IntentValidationError
@@ -266,9 +270,51 @@ export function createGatewayApp(dependencies: GatewayAppDependencies): Hono {
     maxAge: 600,
   }));
 
-  app.get("/healthz", (c) => c.json({ ok: true, service: "nuvem-agent-gateway", version: "v1" }));
+  app.get("/healthz", (c) => c.json({
+    ok: true,
+    service: "nuvem-agent-gateway",
+    version: "v1",
+    graphEnabled: dependencies.graphEnabled !== false,
+    tradingEnabled: dependencies.tradingEnabled !== false,
+  }));
+  app.get("/readyz", async () => {
+    if (dependencies.graphEnabled === false) {
+      return response({ ok: true, graph: { enabled: false } });
+    }
+    try {
+      const status = await dependencies.graph.listVaults(1);
+      return response({
+        ok: true,
+        graph: {
+          enabled: true,
+          indexedVaultsSampled: status.vaults.length,
+          provenance: status.provenance,
+        },
+      });
+    } catch (error) {
+      const formatted = errorBody(error);
+      return response({
+        ok: false,
+        graph: { enabled: true },
+        error: formatted.body.error,
+      }, 503);
+    }
+  });
   app.get("/openapi.json", (c) => c.json(openApiDocument()));
   app.all("/mcp", (c) => dependencies.mcpHandler(c.req.raw));
+  app.get("/v1/graph/status", async () => {
+    if (dependencies.graphEnabled === false) {
+      return response({
+        error: { code: "GRAPH_NOT_CONFIGURED", message: "The Graph data plane is not enabled" },
+      }, 503);
+    }
+    const status = await dependencies.graph.listVaults(1);
+    return response({
+      healthy: true,
+      indexedVaultsSampled: status.vaults.length,
+      provenance: status.provenance,
+    });
+  });
 
   app.post("/v1/agent-sessions/challenge", async (c) => {
     const raw = await body(c);
@@ -294,8 +340,8 @@ export function createGatewayApp(dependencies: GatewayAppDependencies): Hono {
   });
 
   app.get("/v1/agents/:id/context", async (c) => {
-    if (dependencies.tradingEnabled === false) {
-      return response({ error: { code: "TRADING_NOT_CONFIGURED", message: "Graph-backed trading is not enabled on this deployment" } }, 503);
+    if (dependencies.graphEnabled === false) {
+      return response({ error: { code: "GRAPH_NOT_CONFIGURED", message: "Graph-backed context is not enabled on this deployment" } }, 503);
     }
     const agentId = parseAgentId(c.req.param("id"));
     await sessionForAgent(c, dependencies.sessions, agentId);
@@ -319,6 +365,22 @@ export function createGatewayApp(dependencies: GatewayAppDependencies): Hono {
         dependencies.graph.getVaultContext(profile),
         dependencies.chain.getController(profile.controller),
       ]);
+      if (
+        !context.navValid
+        || context.state !== 0
+        || !context.controllerEnabled
+        || context.controllerPaused
+        || context.agentStatus !== 1
+        || context.backedUntil == null
+        || context.backedUntil <= new Date()
+        || context.holdings.some((holding) => holding.balance > 0n && !holding.valid)
+      ) {
+        throw new GraphDataError(
+          "GRAPH_CONTEXT_UNSAFE",
+          "Indexed NAV, lifecycle, backing or holding validity does not permit a quote",
+          409,
+        );
+      }
       if (
         context.provenance.deploymentId !== input.contextDeploymentId
         || context.provenance.blockNumber !== input.contextBlockNumber
@@ -404,8 +466,8 @@ export function createGatewayApp(dependencies: GatewayAppDependencies): Hono {
   });
 
   app.post("/v1/agents/:id/decisions", async (c) => {
-    if (dependencies.tradingEnabled === false) {
-      return response({ error: { code: "TRADING_NOT_CONFIGURED", message: "Graph-backed decisions are not enabled on this deployment" } }, 503);
+    if (dependencies.graphEnabled === false) {
+      return response({ error: { code: "GRAPH_NOT_CONFIGURED", message: "Graph-backed decisions are not enabled on this deployment" } }, 503);
     }
     const agentId = parseAgentId(c.req.param("id"));
     const session = await sessionForAgent(c, dependencies.sessions, agentId);
@@ -856,6 +918,10 @@ function openApiDocument(): Record<string, unknown> {
     openapi: "3.1.0",
     info: { title: "Nuvem Agents API", version: "1.0.0", description: "Model-neutral BYOA gateway. Agent sessions never authorize funds." },
     paths: {
+      "/healthz": { get: { summary: "Read process health and Graph/trading feature flags" } },
+      "/readyz": { get: { summary: "Verify the pinned Graph deployment is healthy and fresh" } },
+      "/v1/graph/status": { get: { summary: "Read public Graph deployment, chain and freshness provenance" } },
+      "/mcp": { post: { summary: "Call the read-only Vault Intelligence MCP over Streamable HTTP" } },
       "/v1/agent-sessions/challenge": { post: { summary: "Create AgentKit challenge" } },
       "/v1/agent-sessions": { post: { summary: "Exchange AgentKit proof for a 15-minute session" } },
       "/v1/agents/{id}/context": { get: { summary: "Read fresh Graph-backed vault context" } },

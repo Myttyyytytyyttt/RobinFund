@@ -57,7 +57,18 @@ function fixture(options: { router?: Address; proxyDeadlineOffset?: number } = {
         domain: { name: "Nuvem AgentVaultController", version: "1", chainId: 4663, verifyingContract: controller },
         types: tradeIntentTypes, primaryType: "TradeIntentV1", message: intent,
       },
-      provenance: { deploymentId: "d", blockNumber: 1n, blockTimestamp: new Date(), chainHeadBlock: 1n, observedAt: new Date() },
+      provenance: {
+        deploymentId: "d",
+        chainId: 4663,
+        blockNumber: 1n,
+        blockHash: null,
+        blockTimestamp: new Date(),
+        chainHeadBlock: 1n,
+        blockLag: 0n,
+        indexingErrors: false,
+        observedAt: new Date(),
+        ageSeconds: 0,
+      },
     },
   };
 }

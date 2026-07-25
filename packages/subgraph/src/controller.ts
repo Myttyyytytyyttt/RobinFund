@@ -1,4 +1,4 @@
-import { BigInt, Bytes } from "@graphprotocol/graph-ts";
+import { Address, BigInt, Bytes } from "@graphprotocol/graph-ts";
 import {
   AgentVaultController,
   FundBound,
@@ -8,6 +8,8 @@ import {
   PolicyProposed,
   TradeExecuted,
 } from "../generated/templates/AgentVaultController/AgentVaultController";
+import { Fund } from "../generated/templates/AgentVaultController/Fund";
+import { AgentFundSnapshot } from "../generated/templates";
 import { Agent, AgentController, Holding, Policy, Trade, Vault } from "../generated/schema";
 
 function controllerEntity(address: string): AgentController | null {
@@ -23,7 +25,11 @@ function holding(vault: Vault, tokenHex: string, tokenBytes: Bytes, timestamp: B
     entity.token = tokenBytes;
     entity.balance = BigInt.zero();
     entity.valueWad = BigInt.zero();
+    entity.valid = false;
+    entity.observedAt = timestamp;
   }
+  entity.valid = false;
+  entity.observedAt = timestamp;
   entity.updatedAt = timestamp;
   return entity;
 }
@@ -39,12 +45,21 @@ export function handleFundBound(event: FundBound): void {
   const vault = Vault.load(event.params.fund.toHexString());
   if (vault == null) return;
   vault.controller = event.address;
+  vault.controllerRecord = controller.id;
   vault.managerType = "agent";
   vault.isAgent = true;
   const agent = Agent.load(controller.agent);
-  if (agent != null) vault.agentId = agent.agentId;
+  if (agent != null) {
+    vault.agentId = agent.agentId;
+    vault.agent = agent.id;
+  }
+  const policyHash = controller.policyHash;
+  if (policyHash) vault.policy = controller.id + "-" + policyHash.toHexString();
   vault.updatedAt = event.block.timestamp;
   vault.save();
+  // Only AI-managed Funds receive a polling data source. Historical human
+  // Funds remain event-only, avoiding one block handler per registry entry.
+  AgentFundSnapshot.create(event.params.fund);
 }
 
 export function handleTradeExecuted(event: TradeExecuted): void {
@@ -93,6 +108,15 @@ export function handleTradeExecuted(event: TradeExecuted): void {
   if (!count.reverted) vault.tradesToday = count.value;
   const last = contract.try_lastTradeAt();
   if (!last.reverted) vault.lastTradeAt = last.value;
+  const nav = Fund.bind(Address.fromBytes(fund)).try_nav();
+  vault.navObservedAt = event.block.timestamp;
+  if (nav.reverted || !nav.value.valid) {
+    vault.navValid = false;
+  } else {
+    vault.navWad = nav.value.navWad;
+    vault.navValid = true;
+    vault.navUpdatedAt = event.block.timestamp;
+  }
   vault.updatedAt = event.block.timestamp;
   vault.save();
 }

@@ -14,6 +14,8 @@ export function handleFundRegistered(event: FundRegistered): void {
     vault.isAgent = false;
     vault.state = 0;
     vault.navWad = BigInt.zero();
+    vault.navValid = false;
+    vault.navObservedAt = event.block.timestamp;
     vault.totalShares = BigInt.zero();
     vault.lastPeWad = BigInt.zero();
     vault.lifetimeDeposited6 = BigInt.zero();
@@ -29,8 +31,14 @@ export function handleFundRegistered(event: FundRegistered): void {
     vault.managerType = "agent";
     vault.isAgent = true;
     vault.controller = event.params.manager;
+    vault.controllerRecord = controller.id;
     const agent = Agent.load(controller.agent);
-    if (agent != null) vault.agentId = agent.agentId;
+    if (agent != null) {
+      vault.agentId = agent.agentId;
+      vault.agent = agent.id;
+    }
+    const policyHash = controller.policyHash;
+    if (policyHash) vault.policy = controller.id + "-" + policyHash.toHexString();
     controller.fund = event.params.fund;
     controller.updatedAt = event.block.timestamp;
     controller.save();

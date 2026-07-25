@@ -25,6 +25,15 @@ function address(value: string): Address {
 export function createVaultIntelligenceServer(source: IntelligenceSource, stablecoin: Address): McpServer {
   const server = new McpServer({ name: "nuvem-vault-intelligence", version: "0.1.0" });
 
+  server.registerTool("get_indexer_status", {
+    title: "Verify Graph indexer",
+    description: "Verify deployment identity, Robinhood chain, indexing health and freshness before using any vault data.",
+    inputSchema: {},
+  }, async () => {
+    const value = await source.listVaults(1);
+    return result({ healthy: true, sampledVaults: value.data.length }, value.provenance);
+  });
+
   server.registerTool("list_vaults", {
     title: "List Nuvem vaults",
     description: "List Graph-indexed Nuvem vaults with a provenance cursor.",
@@ -55,6 +64,8 @@ export function createVaultIntelligenceServer(source: IntelligenceSource, stable
     return result({
       lastPeWad: value.data.lastPeWad,
       navWad: value.data.navWad,
+      navValid: value.data.navValid,
+      navUpdatedAt: value.data.navUpdatedAt,
       totalShares: value.data.totalShares,
       lifetimeDeposited6: value.data.lifetimeDeposited6,
       lifetimeWithdrawn6: value.data.lifetimeWithdrawn6,
@@ -79,18 +90,6 @@ export function createVaultIntelligenceServer(source: IntelligenceSource, stable
   }, async ({ vault, limit }) => {
     const value = await source.vault(address(vault));
     return result(value.data.recentTrades.slice(0, limit), value.provenance);
-  });
-
-  server.registerTool("get_market_liquidity", {
-    title: "Get market liquidity",
-    description: "Read the latest indexed liquidity snapshot for a token pair. Null means no indexed pool, not zero liquidity.",
-    inputSchema: {
-      tokenIn: z.string().regex(/^0x[0-9a-fA-F]{40}$/),
-      tokenOut: z.string().regex(/^0x[0-9a-fA-F]{40}$/),
-    },
-  }, async ({ tokenIn, tokenOut }) => {
-    const value = await source.liquidity(address(tokenIn), address(tokenOut));
-    return result(value.data, value.provenance);
   });
 
   const rebalanceSchema = {

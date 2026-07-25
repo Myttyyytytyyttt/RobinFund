@@ -8,26 +8,35 @@ const stablecoin = "0x2222222222222222222222222222222222222222" as Address;
 const vault: VaultState = {
   address: "0x3333333333333333333333333333333333333333",
   controller: "0x4444444444444444444444444444444444444444",
+  controllerEnabled: true,
+  controllerPaused: false,
   agentId: `0x${"55".repeat(32)}` as Hex,
+  agentStatus: 1,
+  backedUntil: new Date("2100-01-01T00:00:00.000Z"),
   managerType: "agent",
   state: 0,
   navWad: 100_000n,
+  navValid: true,
+  navUpdatedAt: new Date(),
+  navObservedAt: new Date(),
   totalShares: 100_000n,
   lastPeWad: 1_000_000_000_000_000_000n,
   lifetimeDeposited6: 100n,
   lifetimeWithdrawn6: 0n,
   policy: {
+    policyHash: `0x${"66".repeat(32)}` as Hex,
     maxTradeBps: 1_000,
     maxConcentrationBps: 3_500,
     dailyTurnoverBps: 5_000,
     maxSlippageBps: 75,
     maxTradesPerDay: 24,
     minTradeInterval: 300,
+    maxIntentLifetime: 600,
   },
   turnoverTodayWad: 5_000n,
   tradesToday: 2,
   lastTradeAt: null,
-  holdings: [{ token: stock, balance: 20n, valueWad: 20_000n }],
+  holdings: [{ token: stock, balance: 20n, valueWad: 20_000n, valid: true, observedAt: new Date() }],
   recentTrades: [],
 };
 
@@ -55,6 +64,30 @@ describe("read-only risk simulation", () => {
 
   it("fails closed when the policy is absent", () => {
     const result = simulateRebalance({ ...vault, policy: null }, { tokenOut: stock, spentValueWad: 1n, receivedValueWad: 1n, stablecoin, maxSlippageBps: 75 });
+    expect(result.approved).toBe(false);
+  });
+
+  it("fails closed when NAV is invalid", () => {
+    const result = simulateRebalance({ ...vault, navValid: false }, { tokenOut: stock, spentValueWad: 1n, receivedValueWad: 1n, stablecoin, maxSlippageBps: 75 });
+    expect(result.checks.find((check) => check.name === "nav_valid")?.approved).toBe(false);
+    expect(result.approved).toBe(false);
+  });
+
+  it("fails closed when NAV or non-zero holdings are stale", () => {
+    const stale = new Date(Date.now() - 301_000);
+    const result = simulateRebalance({
+      ...vault,
+      navObservedAt: stale,
+      holdings: [{ ...vault.holdings[0]!, observedAt: stale }],
+    }, { tokenOut: stock, spentValueWad: 1n, receivedValueWad: 1n, stablecoin, maxSlippageBps: 75 });
+    expect(result.checks.find((check) => check.name === "nav_fresh")?.approved).toBe(false);
+    expect(result.checks.find((check) => check.name === "holdings_fresh")?.approved).toBe(false);
+    expect(result.approved).toBe(false);
+  });
+
+  it("fails closed when World backing has expired", () => {
+    const result = simulateRebalance({ ...vault, backedUntil: new Date(0) }, { tokenOut: stock, spentValueWad: 1n, receivedValueWad: 1n, stablecoin, maxSlippageBps: 75 });
+    expect(result.checks.find((check) => check.name === "world_backing")?.approved).toBe(false);
     expect(result.approved).toBe(false);
   });
 });

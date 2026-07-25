@@ -1,0 +1,22 @@
+[
+  {
+    "type": "function",
+    "name": "getAsset",
+    "stateMutability": "view",
+    "inputs": [{ "name": "token", "type": "address" }],
+    "outputs": [{
+      "name": "asset",
+      "type": "tuple",
+      "components": [
+        { "name": "feed", "type": "address" },
+        { "name": "maxStaleness", "type": "uint48" },
+        { "name": "listed", "type": "bool" },
+        { "name": "suspended", "type": "bool" },
+        { "name": "beacon", "type": "address" },
+        { "name": "implAtListing", "type": "address" },
+        { "name": "minAnswer", "type": "int256" },
+        { "name": "maxAnswer", "type": "int256" }
+      ]
+    }]
+  }
+]

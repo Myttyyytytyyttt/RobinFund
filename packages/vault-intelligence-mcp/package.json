@@ -17,11 +17,12 @@
     "start": "node dist/main.js",
     "build": "tsc -p tsconfig.json",
     "typecheck": "tsc -p tsconfig.json --noEmit",
-    "test": "vitest run"
+    "test": "vitest run",
+    "smoke:live": "node scripts/smoke-live.mjs"
   },
   "dependencies": {
     "@hono/node-server": "^2.0.11",
-    "@modelcontextprotocol/sdk": "latest",
+    "@modelcontextprotocol/sdk": "1.29.0",
     "hono": "4.12.31",
     "viem": "2.55.4",
     "zod": "4.4.3"

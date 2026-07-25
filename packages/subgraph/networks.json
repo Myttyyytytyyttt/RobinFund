@@ -1,6 +1,21 @@
 {
   "robinhood": {
     "AgentRegistry": { "address": "0x0000000000000000000000000000000000000001", "startBlock": 0 },
-    "FundRegistry": { "address": "0x0000000000000000000000000000000000000002", "startBlock": 0 }
+    "FundRegistry": { "address": "0x0000000000000000000000000000000000000002", "startBlock": 0 },
+    "CanaryFundSnapshot": { "address": "0x0000000000000000000000000000000000000003", "startBlock": 0 }
+  },
+  "robinhood-testnet": {
+    "AgentRegistry": {
+      "address": "0xa27e31af49cea5113fe84f69c2b91b999b48491b",
+      "startBlock": 92357335
+    },
+    "FundRegistry": {
+      "address": "0x696553ad390428abf3d95c90a3452917cbaa453c",
+      "startBlock": 92051088
+    },
+    "CanaryFundSnapshot": {
+      "address": "0xec3a6902b3fdba7deef8139f16967da6429ce282",
+      "startBlock": 93474000
+    }
   }
 }

@@ -12,11 +12,17 @@ function required(name: string): string {
 }
 
 const port = Number(process.env.MCP_PORT ?? 8790);
-const source = new SubgraphIntelligenceSource(
-  required("GRAPH_URL"),
-  required("RH_RPC_MAINNET"),
-  required("GRAPH_DEPLOYMENT_ID"),
-);
+const chainId = Number(required("RH_CHAIN_ID"));
+if (!Number.isSafeInteger(chainId) || chainId <= 0) throw new Error("RH_CHAIN_ID must be a positive integer");
+const source = new SubgraphIntelligenceSource({
+  graphUrl: required("GRAPH_URL"),
+  rpcUrl: required("RH_RPC_URL"),
+  deploymentId: required("GRAPH_DEPLOYMENT_ID"),
+  expectedChainId: chainId,
+  maxBlockLag: BigInt(process.env.GRAPH_MAX_BLOCK_LAG ?? 50),
+  maxAgeSeconds: Number(process.env.GRAPH_MAX_AGE_SECONDS ?? 300),
+  requestTimeoutMs: Number(process.env.GRAPH_TIMEOUT_MS ?? 10_000),
+});
 const handler = createMcpHandler(source, getAddress(required("USDG_ADDRESS")).toLowerCase() as Address);
 const app = new Hono();
 app.use("*", cors({

@@ -54,6 +54,23 @@ describe("gateway chain configuration", () => {
     expect(chain.rpcUrls.default.http).toEqual(["https://testnet.example.com"]);
   });
 
+  it("allows Graph intelligence while trade execution stays disabled", () => {
+    const config = loadConfig(environment({
+      RH_CHAIN_ID: "46630",
+      GRAPH_ENABLED: "true",
+      TRADING_ENABLED: "false",
+    }));
+    expect(config.GRAPH_ENABLED).toBe(true);
+    expect(config.TRADING_ENABLED).toBe(false);
+  });
+
+  it("does not allow trading without the Graph data plane", () => {
+    expect(() => loadConfig(environment({
+      GRAPH_ENABLED: "false",
+      TRADING_ENABLED: "true",
+    }))).toThrow("GRAPH_ENABLED");
+  });
+
   it("uses the registered v4 app and RP in the server-authorized staging environment", () => {
     const config = loadConfig(environment({
       RH_CHAIN_ID: "46630",

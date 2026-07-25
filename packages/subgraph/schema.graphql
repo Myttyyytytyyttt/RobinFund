@@ -47,12 +47,17 @@ type Vault @entity(immutable: false) {
   address: Bytes!
   manager: Bytes!
   controller: Bytes
+  controllerRecord: AgentController
   agentId: Bytes
+  agent: Agent
   managerType: String!
   isAgent: Boolean!
   state: Int!
   usdG: Bytes
   navWad: BigInt!
+  navValid: Boolean!
+  navUpdatedAt: BigInt
+  navObservedAt: BigInt!
   totalShares: BigInt!
   lastPeWad: BigInt!
   lifetimeDeposited6: BigInt!
@@ -75,6 +80,8 @@ type Holding @entity(immutable: false) {
   token: Bytes!
   balance: BigInt!
   valueWad: BigInt!
+  valid: Boolean!
+  observedAt: BigInt!
   updatedAt: BigInt!
 }
 
@@ -110,16 +117,6 @@ type Settlement @entity(immutable: true) {
   degraded: Boolean!
   transactionHash: Bytes!
   timestamp: BigInt!
-}
-
-type LiquiditySnapshot @entity(immutable: false) {
-  id: ID!
-  token0: Bytes!
-  token1: Bytes!
-  poolAddress: Bytes!
-  liquidityWad: BigInt!
-  source: String!
-  observedAt: BigInt!
 }
 
 type PendingEntryFee @entity(immutable: false) {

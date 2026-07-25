@@ -37,10 +37,15 @@ function execution(): { request: QuoteRequest; plan: ExecutionPlan } {
       summary: "Test decision",
       provenance: {
         deploymentId: "deployment",
+        chainId: 4663,
         blockNumber: 1n,
+        blockHash: null,
         blockTimestamp: now,
         chainHeadBlock: 1n,
+        blockLag: 0n,
+        indexingErrors: false,
         observedAt: now,
+        ageSeconds: 0,
       },
     },
     plan: {

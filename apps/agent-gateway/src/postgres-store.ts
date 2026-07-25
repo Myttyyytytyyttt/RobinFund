@@ -1276,14 +1276,18 @@ export class PostgresControlPlaneStore implements ControlPlaneStore {
       await tx`
         insert into agent_private.proposals (
           id, agent_id, vault_address, proposal, evidence_hash, reasoning_hash,
-          graph_deployment_id, graph_block_number, graph_block_timestamp
-          , graph_chain_head_block, graph_observed_at
+          graph_deployment_id, graph_chain_id, graph_block_number, graph_block_hash,
+          graph_block_timestamp, graph_chain_head_block, graph_block_lag,
+          graph_indexing_errors, graph_observed_at, graph_age_seconds
         ) values (
           ${plan.proposalId}, ${request.agentId.toLowerCase()}, ${plan.fund.toLowerCase()},
           ${tx.json(jsonValue(proposal) as never)}, ${request.evidenceHash.toLowerCase()},
           ${request.reasoningHash.toLowerCase()}, ${request.provenance.deploymentId},
-          ${request.provenance.blockNumber.toString()}, ${request.provenance.blockTimestamp},
-          ${request.provenance.chainHeadBlock.toString()}, ${request.provenance.observedAt}
+          ${request.provenance.chainId}, ${request.provenance.blockNumber.toString()},
+          ${request.provenance.blockHash}, ${request.provenance.blockTimestamp},
+          ${request.provenance.chainHeadBlock.toString()}, ${request.provenance.blockLag.toString()},
+          ${request.provenance.indexingErrors}, ${request.provenance.observedAt},
+          ${request.provenance.ageSeconds}
         )
       `;
       await tx`
@@ -1307,8 +1311,10 @@ export class PostgresControlPlaneStore implements ControlPlaneStore {
     const rows = await this.sql`
       select
         proposal.agent_id, proposal.proposal, proposal.evidence_hash, proposal.reasoning_hash,
-        proposal.graph_deployment_id, proposal.graph_block_number, proposal.graph_block_timestamp,
-        proposal.graph_chain_head_block, proposal.graph_observed_at,
+        proposal.graph_deployment_id, proposal.graph_chain_id, proposal.graph_block_number,
+        proposal.graph_block_hash, proposal.graph_block_timestamp,
+        proposal.graph_chain_head_block, proposal.graph_block_lag,
+        proposal.graph_indexing_errors, proposal.graph_observed_at, proposal.graph_age_seconds,
         quote.id as quote_id, quote.proposal_id, quote.quote_hash, quote.adapter_address,
         quote.approval_proxy, quote.adapter_id, quote.fund_address, quote.controller_address,
         quote.chain_id, quote.token_in, quote.token_out, quote.amount_in, quote.execution_hash,
@@ -1333,10 +1339,15 @@ export class PostgresControlPlaneStore implements ControlPlaneStore {
       summary: String(storedProposal.summary),
       provenance: {
         deploymentId: String(row.graph_deployment_id),
+        chainId: Number(row.graph_chain_id),
         blockNumber: numeric(row.graph_block_number),
+        blockHash: row.graph_block_hash == null ? null : hex(row.graph_block_hash),
         blockTimestamp: date(row.graph_block_timestamp),
         chainHeadBlock: numeric(row.graph_chain_head_block),
+        blockLag: numeric(row.graph_block_lag),
+        indexingErrors: false,
         observedAt: date(row.graph_observed_at),
+        ageSeconds: Number(row.graph_age_seconds),
       },
     };
     const plan: ExecutionPlan = {
