@@ -50,6 +50,10 @@ import {
   type EthereumProvider,
 } from '@/lib/supabase'
 import {
+  resolveAgentRuntimeKind,
+  type AgentRuntimeKind,
+} from '@/lib/agentRuntimeMode'
+import {
   addInitialProtection,
   deployVault,
   type BrowserWallet,
@@ -59,7 +63,7 @@ import {
 
 type Props = { open: boolean; onClose: () => void; onCreated: (address: Address) => void }
 type ManagerType = 'human' | 'ai'
-type RuntimeKind = 'external' | 'nuvem_reference'
+type RuntimeKind = AgentRuntimeKind
 type Status = 'idle' | 'provisioning' | 'preparing' | 'registering' | 'world_identity' | 'world_agentbook' | 'backing' | 'deploying' | 'binding' | 'approving' | 'queued' | 'success'
 type PendingIdentityProof = {
   agentId: Hex
@@ -304,12 +308,15 @@ export function VaultCreatorModal({ open, onClose, onCreated }: Props) {
     return input
   }
 
-  const agentInput = async (managed?: ManagedSignerIdentity): Promise<AgentVaultCreationInput> => {
+  const agentInput = async (
+    managed?: ManagedSignerIdentity,
+    selectedRuntimeKind: RuntimeKind = runtimeKind,
+  ): Promise<AgentVaultCreationInput> => {
     const common = commonInput()
     const runtime = await loadProtocolRuntime(true)
-    const rawSigner = runtimeKind === 'nuvem_reference' ? managed?.signer : form.agentSigner.trim()
+    const rawSigner = selectedRuntimeKind === 'nuvem_reference' ? managed?.signer : form.agentSigner.trim()
     if (!rawSigner || !isAddress(rawSigner)) {
-      throw new Error(runtimeKind === 'nuvem_reference'
+      throw new Error(selectedRuntimeKind === 'nuvem_reference'
         ? 'Nuvem could not provision the isolated reference-agent signer.'
         : 'Enter the public address of the agent signer, or choose Nuvem reference for automatic provisioning.')
     }
@@ -325,7 +332,7 @@ export function VaultCreatorModal({ open, onClose, onCreated }: Props) {
       displayName: form.agentName.trim() || `${common.name} Agent`,
       strategySummary: form.strategySummary.trim(),
       metadataUri: form.metadataUri.trim(),
-      runtimeKind,
+      runtimeKind: selectedRuntimeKind,
       policy: {
         maxTradeBps: bps(form.maxTrade), maxConcentrationBps: bps(form.maxConcentration), dailyTurnoverBps: bps(form.dailyTurnover),
         maxSlippageBps: bps(form.maxSlippage), maxTradesPerDay: Number(form.maxTradesPerDay), minTradeInterval: Number(form.minTradeInterval) * 60,
@@ -602,14 +609,20 @@ export function VaultCreatorModal({ open, onClose, onCreated }: Props) {
       }
 
       if (agentDeployment) return await finishAgent(agentDeployment)
+      const launchRuntimeKind = resolveAgentRuntimeKind(runtimeKind, form.agentSigner)
+      if (launchRuntimeKind !== runtimeKind) {
+        setRuntimeKind(launchRuntimeKind)
+        setAgentId(null)
+        setManagedIdentity(null)
+      }
       let managed: ManagedSignerIdentity | undefined
-      if (runtimeKind === 'nuvem_reference') {
+      if (launchRuntimeKind === 'nuvem_reference') {
         setStatus('provisioning')
         managed = await provisionManagedSigner(getAddress(signer.address), provisioningKey, token ?? undefined)
         setManagedIdentity(managed)
         setAgentId(managed.agentId)
       }
-      const input = await agentInput(managed)
+      const input = await agentInput(managed, launchRuntimeKind)
 
       if (runtime.creatorEnabled) {
         setStatus('preparing')
