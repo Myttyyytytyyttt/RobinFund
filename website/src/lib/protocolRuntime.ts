@@ -20,12 +20,34 @@ export type ProtocolRuntime = {
 }
 
 const creatorDisabled = import.meta.env.VITE_DISABLE_LOCAL_CREATOR === '1'
+const defaultLocalIndexerUrl = 'http://127.0.0.1:42069/graphql'
 const localCreatorUrl = creatorDisabled
   ? ''
   : import.meta.env.VITE_VAULT_CREATOR_URL?.trim() ||
     (import.meta.env.DEV ? 'http://127.0.0.1:8788' : '')
 
 let cached: Promise<ProtocolRuntime> | null = null
+
+function isLoopbackUrl(value: string): boolean {
+  try {
+    const hostname = new URL(value).hostname
+    return hostname === 'localhost' || hostname === '127.0.0.1' || hostname === '[::1]'
+  } catch {
+    return false
+  }
+}
+
+export function resolveProtocolIndexerUrl(
+  configuredUrl: string | undefined,
+  development: boolean,
+  localCreatorDisabled: boolean,
+): string | undefined {
+  const configured = configuredUrl?.trim()
+  if (configured) {
+    return localCreatorDisabled && isLoopbackUrl(configured) ? undefined : configured
+  }
+  return development && !localCreatorDisabled ? defaultLocalIndexerUrl : undefined
+}
 
 function configuredAgentAssets(): Address[] {
   const raw = import.meta.env.VITE_AGENT_ASSETS?.trim()
@@ -88,9 +110,11 @@ export function loadProtocolRuntime(force = false): Promise<ProtocolRuntime> {
     return {
       rpcUrl: remote?.rpcUrl || import.meta.env.VITE_RH_RPC_URL || 'https://rpc.mainnet.chain.robinhood.com',
       chainId: remote?.chainId || Number(import.meta.env.VITE_RH_CHAIN_ID || 4663),
-      indexerUrl:
-        import.meta.env.VITE_INDEXER_GRAPHQL_URL?.trim() ||
-        (import.meta.env.DEV ? 'http://127.0.0.1:42069/graphql' : undefined),
+      indexerUrl: resolveProtocolIndexerUrl(
+        import.meta.env.VITE_INDEXER_GRAPHQL_URL,
+        import.meta.env.DEV,
+        creatorDisabled,
+      ),
       creatorUrl: localCreatorUrl || undefined,
       fundRegistry: remote?.fundRegistry || envRegistry,
       usdg: remote?.usdg || envUsdg,
