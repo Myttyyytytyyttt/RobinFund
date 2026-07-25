@@ -10,7 +10,12 @@ import { SupabaseSponsorAuth } from "./sponsor-auth.js";
 import { UniswapTradingApi } from "./uniswap.js";
 import { WorldBackingService } from "./world-backing.js";
 import { WorldIdSponsorService } from "./world-id.js";
+import {
+  AI_VAULT_IDENTITY_POLICY,
+  WorldIdentityCheckService,
+} from "./world-identity.js";
 import { WorldRegistrationService } from "./world-registration.js";
+import { createLazyVaultDeploymentService } from "./vault-worker-service.js";
 import { zeroAddress } from "viem";
 
 export function createServices(config: GatewayConfig) {
@@ -53,14 +58,39 @@ export function createServices(config: GatewayConfig) {
     verifyBaseUrl: config.WORLD_VERIFY_BASE_URL,
     maxManagedAgentsPerHuman: config.MAX_MANAGED_AGENTS_PER_HUMAN,
   });
+  const identityAction = config.WORLD_IDENTITY_ACTION ?? config.WORLD_ID_ACTION;
+  const worldIdentity = new WorldIdentityCheckService(store, chain, {
+    environment: config.WORLD_ID_ENVIRONMENT,
+    appId: config.WORLD_APP_ID as `app_${string}`,
+    rpId: config.WORLD_RP_ID,
+    rpSigningKey: config.WORLD_RP_SIGNING_KEY,
+    action: identityAction,
+    worldIdPepper: config.WORLD_ID_PEPPER,
+    verifyBaseUrl: config.WORLD_IDENTITY_VERIFY_BASE_URL,
+    requestLifetimeSeconds: config.WORLD_IDENTITY_REQUEST_TTL_SECONDS,
+    attestationLifetimeSeconds: config.WORLD_IDENTITY_ATTESTATION_TTL_SECONDS,
+    verifyTimeoutMs: config.WORLD_IDENTITY_VERIFY_TIMEOUT_MS,
+    maxManagedAgentsPerHuman: config.MAX_MANAGED_AGENTS_PER_HUMAN,
+  });
   const worldBacking = new WorldBackingService(
     store,
     chain,
     sessions,
     config.WORLD_VERIFIER_PRIVATE_KEY,
     config.WORLD_CHAIN_RPC,
+    undefined,
+    {
+      appId: config.WORLD_APP_ID as `app_${string}`,
+      rpId: config.WORLD_RP_ID,
+      environment: config.WORLD_ID_ENVIRONMENT,
+      policyId: AI_VAULT_IDENTITY_POLICY.id,
+      policyVersion: AI_VAULT_IDENTITY_POLICY.version,
+      policyHash: AI_VAULT_IDENTITY_POLICY.hash,
+      action: identityAction,
+    },
   );
   const managedSigners = new ManagedSignerService(store, config.MANAGED_SIGNER_SECRET);
+  const vaultDeployment = createLazyVaultDeploymentService(store, chain);
   const worldRegistration = new WorldRegistrationService(
     store,
     chain,
@@ -75,5 +105,20 @@ export function createServices(config: GatewayConfig) {
     : async () => new Response(JSON.stringify({
       error: { code: "TRADING_NOT_CONFIGURED", message: "Graph-backed MCP is not enabled on this deployment" },
     }), { status: 503, headers: { "content-type": "application/json" } });
-  return { store, chain, sessions, sponsors, graph, uniswap, intents, worldId, worldBacking, managedSigners, worldRegistration, mcpHandler };
+  return {
+    store,
+    chain,
+    sessions,
+    sponsors,
+    graph,
+    uniswap,
+    intents,
+    worldId,
+    worldIdentity,
+    worldBacking,
+    vaultDeployment,
+    managedSigners,
+    worldRegistration,
+    mcpHandler,
+  };
 }

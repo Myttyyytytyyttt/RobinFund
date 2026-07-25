@@ -5,12 +5,15 @@
   "type": "module",
   "description": "Nuvem Agents control plane, AgentKit session gateway and durable relayer",
   "scripts": {
-    "build": "tsc -p tsconfig.json",
+    "build": "pnpm check:vault-artifact-sources && tsc -p tsconfig.json",
     "start": "node dist/main.js",
     "smoke:config": "tsx src/smoke-config.ts",
     "dev": "tsx watch src/main.ts",
     "worker": "tsx src/worker-main.ts",
     "worker:vaults": "tsx src/vault-worker-main.ts",
+    "generate:vault-artifacts": "node scripts/generate-vault-artifacts.mjs",
+    "check:vault-artifacts": "node scripts/generate-vault-artifacts.mjs --check",
+    "check:vault-artifact-sources": "node scripts/generate-vault-artifacts.mjs --check-source",
     "test": "vitest run",
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },

@@ -1,23 +1,23 @@
-import { readFileSync } from "node:fs";
-import { resolve } from "node:path";
 import {
   createPublicClient,
   encodeDeployData,
   encodeFunctionData,
-  getAddress,
   getContractAddress,
   http,
   keccak256,
   parseAbi,
-  type Abi,
   type Address,
   type Hex,
 } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
-import { z } from "zod";
 import type { AgentChainReader } from "./chain.js";
 import { createRobinhoodChain } from "./chain.js";
 import type { VaultWorkerConfig } from "./config.js";
+import {
+  agentVaultControllerArtifact,
+  fundArtifact,
+  type GeneratedVaultArtifact,
+} from "./generated/vault-artifacts.js";
 import type {
   VaultDeploymentPlan,
   VaultDeploymentTransaction,
@@ -25,50 +25,10 @@ import type {
   VaultJobState,
 } from "./domain.js";
 import type { ControlPlaneStore } from "./store.js";
-
-const addressSchema = z.string().transform((value, context) => {
-  try { return getAddress(value).toLowerCase() as Address; }
-  catch {
-    context.addIssue({ code: "custom", message: "invalid address" });
-    return z.NEVER;
-  }
-});
-const hex32Schema = z.string().regex(/^0x[0-9a-fA-F]{64}$/).transform((value) => value.toLowerCase() as Hex);
-const vaultRequestSchema = z.object({
-  agentId: hex32Schema,
-  signer: addressSchema,
-  policy: z.object({
-    maxTradeBps: z.number().int().min(100).max(2_000),
-    maxConcentrationBps: z.number().int().min(1_000).max(5_000),
-    dailyTurnoverBps: z.number().int().min(500).max(10_000),
-    maxSlippageBps: z.number().int().min(10).max(100),
-    maxTradesPerDay: z.number().int().min(1).max(200),
-    minTradeInterval: z.number().int().min(60).max(3_600),
-    maxIntentLifetime: z.number().int().min(1).max(300),
-    allowedAssets: z.array(addressSchema).min(1).max(32),
-  }),
-  economy: z.object({
-    name: z.string().min(3).max(48),
-    symbol: z.string().regex(/^[A-Z0-9]{2,8}$/),
-    initialStake: z.string().regex(/^\d+(?:\.\d{1,6})?$/),
-    perfFeeBps: z.number().int().min(0).max(3_000),
-    feeMinBps: z.number().int().min(0).max(500),
-    feeMaxBps: z.number().int().min(0).max(500),
-    managerEntryShareBps: z.number().int().min(0).max(5_000),
-    kFactor: z.number().int().min(1).max(25),
-    periodDays: z.number().int().min(7).max(90),
-    cooldownHours: z.number().int().min(1).max(168),
-  }).refine((value) => value.feeMinBps <= value.feeMaxBps, "entry fee range is inverted"),
-});
-
-type VaultRequest = z.infer<typeof vaultRequestSchema>;
-type Artifact = {
-  abi: Abi;
-  bytecode: {
-    object: Hex;
-    linkReferences?: Record<string, Record<string, Array<{ start: number; length: number }>>>;
-  };
-};
+import {
+  parseInitialStake6,
+  vaultDeploymentRequestSchema as vaultRequestSchema,
+} from "./vault-request.js";
 
 export interface DeploymentReceipt {
   status: "success" | "reverted";
@@ -88,12 +48,18 @@ export interface VaultDeploymentTransport {
   verifyDeployment(plan: VaultDeploymentPlan): Promise<Address>;
 }
 
-function linkBytecode(artifact: Artifact, library: Address): Hex {
+export function linkVaultArtifactBytecode(
+  artifact: GeneratedVaultArtifact,
+  library: Address,
+): Hex {
   let object = artifact.bytecode.object.slice(2);
   const references = artifact.bytecode.linkReferences ?? {};
   let replacements = 0;
   for (const file of Object.values(references)) {
-    for (const positions of Object.values(file)) {
+    for (const [libraryName, positions] of Object.entries(file)) {
+      if (libraryName !== "NAVLib") {
+        throw new Error(`unsupported deployment library: ${libraryName}`);
+      }
       for (const position of positions) {
         if (position.length !== 20) throw new Error("unsupported library link length");
         const start = position.start * 2;
@@ -102,12 +68,11 @@ function linkBytecode(artifact: Artifact, library: Address): Hex {
       }
     }
   }
-  if (replacements === 0 || object.includes("__$")) throw new Error("Fund bytecode was not fully linked to NAVLib");
-  return `0x${object}` as Hex;
-}
-
-function artifact(directory: string, relative: string): Artifact {
-  return JSON.parse(readFileSync(resolve(directory, relative), "utf8")) as Artifact;
+  const linked = `0x${object}`;
+  if (replacements === 0 || !/^0x[0-9a-f]+$/i.test(linked)) {
+    throw new Error("deployment bytecode was not fully linked to NAVLib");
+  }
+  return linked as Hex;
 }
 
 function bufferedGas(value: bigint): bigint {
@@ -129,8 +94,9 @@ export class ViemVaultDeploymentTransport implements VaultDeploymentTransport {
   private readonly account;
   private readonly client;
   private readonly chain;
-  private readonly controllerArtifact: Artifact;
-  private readonly fundArtifact: Artifact;
+  private readonly controllerArtifact: GeneratedVaultArtifact;
+  private readonly fundArtifact: GeneratedVaultArtifact;
+  private readonly linkedControllerBytecode: Hex;
   private readonly linkedFundBytecode: Hex;
 
   constructor(private readonly config: VaultWorkerConfig) {
@@ -138,10 +104,10 @@ export class ViemVaultDeploymentTransport implements VaultDeploymentTransport {
     this.address = this.account.address.toLowerCase() as Address;
     this.chain = createRobinhoodChain(config.RH_CHAIN_ID, config.RH_RPC_URL);
     this.client = createPublicClient({ chain: this.chain, transport: http(config.RH_RPC_URL, { retryCount: 2 }) });
-    const artifacts = resolve(process.cwd(), config.CONTRACT_ARTIFACTS_DIR);
-    this.controllerArtifact = artifact(artifacts, "AgentVaultController.sol/AgentVaultController.json");
-    this.fundArtifact = artifact(artifacts, "Fund.sol/Fund.json");
-    this.linkedFundBytecode = linkBytecode(this.fundArtifact, config.NAV_LIB_ADDRESS);
+    this.controllerArtifact = agentVaultControllerArtifact;
+    this.fundArtifact = fundArtifact;
+    this.linkedControllerBytecode = linkVaultArtifactBytecode(this.controllerArtifact, config.NAV_LIB_ADDRESS);
+    this.linkedFundBytecode = linkVaultArtifactBytecode(this.fundArtifact, config.NAV_LIB_ADDRESS);
   }
 
   async pendingNonce(): Promise<bigint> {
@@ -175,7 +141,7 @@ export class ViemVaultDeploymentTransport implements VaultDeploymentTransport {
     const fund = getContractAddress({ from: this.address, nonce: nonceStart + 1n });
     const controllerData = encodeDeployData({
       abi: this.controllerArtifact.abi,
-      bytecode: this.controllerArtifact.bytecode.object,
+      bytecode: this.linkedControllerBytecode,
       args: [
         this.config.AGENT_REGISTRY_ADDRESS,
         this.config.TOKEN_REGISTRY_ADDRESS,
@@ -313,7 +279,12 @@ export class VaultDeploymentWorker {
     private readonly options: VaultDeploymentWorkerOptions,
   ) { this.now = options.now ?? (() => new Date()); }
 
-  async runOnce(): Promise<{ claimed: number; awaitingSponsor: number; failed: number }> {
+  async runOnce(): Promise<{
+    claimed: number;
+    awaitingSponsor: number;
+    failed: number;
+    jobId: string | null;
+  }> {
     const jobs = await this.store.claimVaultJobs(this.options.workerId, 1);
     let awaitingSponsor = 0;
     let failed = 0;
@@ -322,7 +293,7 @@ export class VaultDeploymentWorker {
       if (result === "awaiting_sponsor") awaitingSponsor++;
       if (result === "failed") failed++;
     }
-    return { claimed: jobs.length, awaitingSponsor, failed };
+    return { claimed: jobs.length, awaitingSponsor, failed, jobId: jobs[0]?.id ?? null };
   }
 
   private async process(job: VaultJobRecord): Promise<"pending" | "awaiting_sponsor" | "failed"> {
@@ -401,7 +372,8 @@ export class VaultDeploymentWorker {
       const classified = error instanceof VaultDeploymentError
         ? error
         : new VaultDeploymentError("DEPLOY_TEMPORARY_FAILURE", "Temporary vault deployment failure", true);
-      const retry = classified.retryable && job.attempts < 20;
+      const failureAttempt = job.attempts + 1;
+      const retry = classified.retryable && failureAttempt < 20;
       if (!retry && !planPersisted && nonceReserved) {
         await this.store.releaseUnusedVaultNonceRange(job.id, this.chain.chainId, this.transport.address);
       }
@@ -409,6 +381,7 @@ export class VaultDeploymentWorker {
         errorCode: classified.code,
         retryAt: retry ? new Date(this.now().getTime() + Math.min(60_000, 1_000 * 2 ** Math.min(job.attempts, 6))) : undefined,
         terminal: !retry,
+        incrementAttempts: true,
       });
       return retry ? "pending" : "failed";
     }
@@ -424,6 +397,5 @@ export class VaultDeploymentWorker {
 
 export function parseRequiredStake6(job: VaultJobRecord): bigint {
   const parsed = vaultRequestSchema.parse(job.request);
-  const [whole, fraction = ""] = parsed.economy.initialStake.split(".");
-  return BigInt(whole ?? "0") * 1_000_000n + BigInt(fraction.padEnd(6, "0"));
+  return parseInitialStake6(parsed.economy.initialStake);
 }

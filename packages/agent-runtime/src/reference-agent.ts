@@ -25,11 +25,23 @@ export interface ReferenceAgentApi {
 export interface ReferenceAgentOptions {
   model: string;
   execute: boolean;
+  expectedChainId: number;
+  expectedFund: Address;
+  expectedController: Address;
   expectedApprovalProxy: Address;
   expectedUniversalRouter: Address;
   expectedAdapter?: Address;
   maxSlippageBps: number;
   requoteBeforeMs?: number;
+}
+
+function assertTrustedContext(context: VaultContext, options: ReferenceAgentOptions): void {
+  if (
+    context.vault.toLowerCase() !== options.expectedFund.toLowerCase()
+    || context.controller.toLowerCase() !== options.expectedController.toLowerCase()
+  ) {
+    throw new Error("Gateway context does not match the runtime-pinned Fund/controller");
+  }
 }
 
 export function evidenceHash(
@@ -61,7 +73,11 @@ export function createReferenceTools(api: ReferenceAgentApi, options: ReferenceA
     readVault: tool({
       description: "Read fresh Graph-backed NAV, holdings, recent trades and data provenance. Always call this first.",
       inputSchema: z.object({}),
-      execute: async () => serializable(await api.context()),
+      execute: async () => {
+        const context = await api.context();
+        assertTrustedContext(context, options);
+        return serializable(context);
+      },
     }),
     quoteTrade: tool({
       description: "Request an exact-input CLASSIC Uniswap quote. This is a dry run and does not sign or spend funds.",
@@ -75,6 +91,7 @@ export function createReferenceTools(api: ReferenceAgentApi, options: ReferenceA
       }),
       execute: async ({ tokenIn, tokenOut, amountIn, maxSlippageBps, summary, reasoning }) => {
         const context = await api.context();
+        assertTrustedContext(context, options);
         const trade = {
           tokenIn: tokenIn.toLowerCase() as Address,
           tokenOut: tokenOut.toLowerCase() as Address,
@@ -114,6 +131,7 @@ export function createReferenceTools(api: ReferenceAgentApi, options: ReferenceA
         let requoted = false;
         if (quote.executionPlan.expiresAt.getTime() - Date.now() <= (options.requoteBeforeMs ?? 15_000)) {
           context = await api.context();
+          assertTrustedContext(context, options);
           input = {
             ...item.input,
             evidenceHash: evidenceHash(context, {
@@ -126,9 +144,9 @@ export function createReferenceTools(api: ReferenceAgentApi, options: ReferenceA
           requoted = true;
         }
         const result = await api.signAndSubmit(quote, input, {
-          chainId: quote.executionPlan.chainId,
-          expectedFund: context.vault,
-          expectedController: context.controller,
+          chainId: options.expectedChainId,
+          expectedFund: options.expectedFund,
+          expectedController: options.expectedController,
           expectedAdapter: options.expectedAdapter,
           expectedApprovalProxy: options.expectedApprovalProxy,
           expectedUniversalRouter: options.expectedUniversalRouter,

@@ -1,11 +1,13 @@
 import { createAgentkitClient } from "@worldcoin/agentkit";
 import { privateKeyToAccount } from "viem/accounts";
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { AgentAuthError, AgentSessionService } from "../src/agentkit.js";
 import { MemoryControlPlaneStore } from "../src/store.js";
 import { agentId, FakeChain, profile } from "./fixtures.js";
 
 const account = privateKeyToAccount(`0x${"01".repeat(32)}`);
+
+afterEach(() => vi.useRealTimers());
 
 function setup(lookupHuman: (address: string) => Promise<string | null> = async () => "anonymous-human") {
   const store = new MemoryControlPlaneStore();
@@ -45,6 +47,16 @@ describe("AgentKit session boundary", () => {
     expect([...store.sessions.values()]).toHaveLength(1);
   });
 
+  it("uses the documented millisecond maxAge so a normal signing delay is accepted", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-07-25T12:00:00.000Z"));
+    const { service, client } = setup();
+    const header = await client.createHeader(await service.createChallenge(agentId));
+    vi.advanceTimersByTime(2_000);
+
+    await expect(service.createSession(agentId, header)).resolves.toMatchObject({ agentId });
+  });
+
   it("atomically rejects replay of the same AgentKit challenge", async () => {
     const { service, client } = setup();
     const header = await client.createHeader(await service.createChallenge(agentId));
@@ -56,6 +68,18 @@ describe("AgentKit session boundary", () => {
     const { service, client } = setup(async () => null);
     const header = await client.createHeader(await service.createChallenge(agentId));
     await expect(service.createSession(agentId, header)).rejects.toMatchObject({ code: "AGENTBOOK_NOT_BACKED" });
+  });
+
+  it("rejects a proof signed for a chain not advertised by the challenge", async () => {
+    const { service, client } = setup();
+    const header = await client.createHeader(await service.createChallenge(agentId));
+    const payload = JSON.parse(Buffer.from(header, "base64").toString("utf8")) as Record<string, unknown>;
+    payload.chainId = "eip155:1";
+    const wrongChainHeader = Buffer.from(JSON.stringify(payload)).toString("base64");
+
+    await expect(service.createSession(agentId, wrongChainHeader)).rejects.toMatchObject({
+      code: "UNSUPPORTED_AGENTKIT_CHAIN",
+    });
   });
 
   it("rejects a rotated signer before issuing the session", async () => {
@@ -75,5 +99,30 @@ describe("AgentKit session boundary", () => {
   it("does not accept an arbitrary bearer token", async () => {
     const { service } = setup();
     await expect(service.authenticateBearer("Bearer attacker-token")).rejects.toBeInstanceOf(AgentAuthError);
+  });
+
+  it("revokes an issued session as soon as on-chain backing expires", async () => {
+    const { service, client, chain, store } = setup();
+    const header = await client.createHeader(await service.createChallenge(agentId));
+    const result = await service.createSession(agentId, header);
+    chain.agent.active = false;
+    chain.agent.backedUntil = Math.floor(Date.now() / 1_000) - 1;
+
+    await expect(service.authenticateBearer(`Bearer ${result.token}`)).rejects.toMatchObject({
+      code: "WORLD_BACKING_INACTIVE",
+    });
+    expect([...store.sessions.values()][0]?.revokedAt).toBeInstanceOf(Date);
+  });
+
+  it("revokes an issued session after signer rotation", async () => {
+    const { service, client, chain, store } = setup();
+    const header = await client.createHeader(await service.createChallenge(agentId));
+    const result = await service.createSession(agentId, header);
+    chain.agent.signer = "0x9999999999999999999999999999999999999999";
+
+    await expect(service.authenticateBearer(`Bearer ${result.token}`)).rejects.toMatchObject({
+      code: "STALE_AGENT_SIGNER",
+    });
+    expect([...store.sessions.values()][0]?.revokedAt).toBeInstanceOf(Date);
   });
 });

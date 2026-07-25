@@ -24,7 +24,7 @@ async function main(): Promise<void> {
     console.log(`Nuvem BYOA CLI
 
 Environment (kept only on this machine):
-  NUVEM_GATEWAY_URL, NUVEM_AGENT_ID, NUVEM_AGENT_PRIVATE_KEY,
+  NUVEM_GATEWAY_URL, NUVEM_AGENT_ID, NUVEM_AGENT_PRIVATE_KEY, NUVEM_CHAIN_ID,
   NUVEM_APPROVAL_PROXY, NUVEM_UNIVERSAL_ROUTER
 
 Commands:
@@ -37,7 +37,10 @@ trade is a dry-run by default. The private key never leaves this process.`);
   }
 
   const account = privateKeyToAccount(required("NUVEM_AGENT_PRIVATE_KEY") as Hex);
-  const chainId = Number(process.env.NUVEM_CHAIN_ID ?? 4663);
+  const chainId = Number(process.env.NUVEM_CHAIN_ID);
+  if (!Number.isSafeInteger(chainId) || chainId <= 0) {
+    throw new Error("NUVEM_CHAIN_ID is required and must match the chain advertised by the gateway (46630 for the Lisbon testnet deployment)");
+  }
   const signer = {
     address: account.address.toLowerCase() as Address,
     chainId,

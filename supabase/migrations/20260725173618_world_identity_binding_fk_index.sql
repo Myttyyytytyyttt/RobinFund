@@ -1,0 +1,2 @@
+create index world_identity_bindings_sponsor_binding_idx
+  on agent_private.world_identity_agent_bindings (sponsor_binding_id);

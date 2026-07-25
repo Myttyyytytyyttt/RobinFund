@@ -1,7 +1,7 @@
 import { Hono, type Context } from "hono";
 import { cors } from "hono/cors";
 import { streamSSE } from "hono/streaming";
-import { encodeFunctionData, getAddress, type Address, type Hex } from "viem";
+import { encodeFunctionData, type Address, type Hex } from "viem";
 import { z } from "zod";
 import { AgentAuthError, AgentSessionService } from "./agentkit.js";
 import type { AgentChainReader } from "./chain.js";
@@ -16,18 +16,22 @@ import type { ControlPlaneStore } from "./store.js";
 import { UniswapApiError, UniswapTradingApi } from "./uniswap.js";
 import { WorldBackingService } from "./world-backing.js";
 import { WorldIdSponsorService } from "./world-id.js";
+import {
+  AI_VAULT_IDENTITY_POLICY_ID,
+  type WorldIdentityCheckService,
+} from "./world-identity.js";
 import { WorldRegistrationService } from "./world-registration.js";
+import {
+  vaultAddressSchema as addressSchema,
+  vaultAgentIdSchema as hex32Schema,
+  vaultDeploymentRequestSchema,
+} from "./vault-request.js";
+import {
+  type LazyVaultDeploymentService,
+  VaultWorkerConfigurationError,
+} from "./vault-worker-service.js";
 import { parseRequiredStake6 } from "./vault-worker.js";
 
-const hex32Schema = z.string().regex(/^0x[0-9a-fA-F]{64}$/).transform((value) => value.toLowerCase() as Hex);
-const addressSchema = z.string().transform((value, context) => {
-  try {
-    return getAddress(value).toLowerCase() as Address;
-  } catch {
-    context.addIssue({ code: "custom", message: "invalid EVM address" });
-    return z.NEVER;
-  }
-});
 const decimalSchema = z.union([z.string(), z.number(), z.bigint()]).transform((value, context) => {
   try {
     const result = BigInt(value);
@@ -37,17 +41,6 @@ const decimalSchema = z.union([z.string(), z.number(), z.bigint()]).transform((v
     context.addIssue({ code: "custom", message: "invalid unsigned integer" });
     return z.NEVER;
   }
-});
-
-const policySchema = z.object({
-  maxTradeBps: z.number().int().min(100).max(2_000).default(1_000),
-  maxConcentrationBps: z.number().int().min(1_000).max(5_000).default(3_500),
-  dailyTurnoverBps: z.number().int().min(500).max(10_000).default(5_000),
-  maxSlippageBps: z.number().int().min(10).max(100).default(75),
-  maxTradesPerDay: z.number().int().min(1).max(200).default(24),
-  minTradeInterval: z.number().int().min(60).max(3_600).default(300),
-  maxIntentLifetime: z.number().int().min(1).max(300).default(300),
-  allowedAssets: z.array(addressSchema).min(1).max(32),
 });
 
 const quoteSchema = z.object({
@@ -84,15 +77,11 @@ const signedIntentSchema = z.object({
   signature: z.string().regex(/^0x[0-9a-fA-F]+$/).transform((value) => value as Hex),
 });
 
-const vaultJobSchema = z.object({
-  agentId: hex32Schema,
-  signer: addressSchema,
+const vaultJobSchema = vaultDeploymentRequestSchema.extend({
   displayName: z.string().trim().min(2).max(64),
   strategySummary: z.string().trim().max(1_000).default(""),
   metadataUri: z.string().trim().max(2_048).default(""),
   runtimeKind: z.enum(["external", "nuvem_reference"]),
-  policy: policySchema,
-  economy: z.record(z.string(), z.unknown()),
 });
 
 const heartbeatSchema = z.object({
@@ -116,9 +105,18 @@ const worldRegistrationSchema = z.object({
   proof: z.array(z.string().regex(/^0x[0-9a-fA-F]{64}$/).transform((value) => value.toLowerCase() as Hex)).length(8),
 });
 const worldIdVerifySchema = z.object({
+  credential: z.enum(["identity_check", "proof_of_human"]).optional(),
   requestId: z.string().uuid(),
   proof: z.unknown(),
 });
+const worldIdRequestSchema = z.union([
+  z.object({}).strict(),
+  z.object({
+    credential: z.literal("identity_check"),
+    environment: z.enum(["staging", "production"]),
+    policy: z.literal(AI_VAULT_IDENTITY_POLICY_ID),
+  }).strict(),
+]);
 
 type MutationResult = {
   status: number;
@@ -161,6 +159,14 @@ function parsed<T>(schema: z.ZodType<T>, value: unknown): T {
 }
 
 function publicVaultJob(job: VaultJobRecord): Record<string, unknown> {
+  let requiredStake6 = "0";
+  try {
+    requiredStake6 = parseRequiredStake6(job).toString();
+  } catch {
+    // Historical jobs created before strict ingress validation must remain
+    // inspectable so the worker can mark them failed instead of making GET
+    // status endpoints throw a 500.
+  }
   return {
     id: job.id,
     agentId: job.agentId,
@@ -171,7 +177,7 @@ function publicVaultJob(job: VaultJobRecord): Record<string, unknown> {
     transactionHashes: job.transactionHashes,
     attempts: job.attempts,
     errorCode: job.errorCode,
-    requiredStake6: parseRequiredStake6(job).toString(),
+    requiredStake6,
   };
 }
 
@@ -184,7 +190,9 @@ export interface GatewayAppDependencies {
   uniswap: UniswapTradingApi;
   intents: IntentService;
   worldId: WorldIdSponsorService;
+  worldIdentity?: WorldIdentityCheckService | null;
   worldBacking: WorldBackingService;
+  vaultDeployment?: Pick<LazyVaultDeploymentService, "processNextEligible">;
   managedSigners: ManagedSignerService;
   worldRegistration: WorldRegistrationService;
   registryAddress: Address;
@@ -459,15 +467,35 @@ export function createGatewayApp(dependencies: GatewayAppDependencies): Hono {
         if (existing.sponsor.toLowerCase() !== sponsor.toLowerCase()) {
           throw new SponsorAuthError("NOT_SPONSOR", "Agent deployment belongs to another sponsor", 403);
         }
-        if (requestHash(existing.request) !== requestHash(safe(input))) {
+        const storedRuntimeKind = existing.request.runtimeKind === "nuvem_reference"
+          ? "nuvem_reference"
+          : "external";
+        if (requestHash(existing.request) !== requestHash(safe({ ...input, runtimeKind: storedRuntimeKind }))) {
           throw new IntentValidationError("VAULT_JOB_CONFLICT", "This agent already has a different live deployment request", 409);
         }
         return { status: 202, body: { job: { id: existing.id, state: existing.state }, resumed: true } };
       }
-      if (input.runtimeKind === "nuvem_reference") {
-        await dependencies.managedSigners.assertVaultBinding(input.agentId, sponsor, input.signer);
+
+      const chainAgent = await dependencies.chain.getAgent(input.agentId);
+      if (chainAgent.sponsor.toLowerCase() !== sponsor.toLowerCase()) {
+        throw new SponsorAuthError("NOT_SPONSOR", "Wallet is not this onchain agent's sponsor", 403);
       }
-      const profile: AgentProfile & { displayName: string; strategySummary: string; metadataUri: string } = {
+      if (chainAgent.signer.toLowerCase() !== input.signer.toLowerCase()) {
+        throw new IntentValidationError(
+          "AGENT_SIGNER_MISMATCH",
+          "Vault signer does not match the signer registered in AgentRegistry",
+          409,
+        );
+      }
+      if (chainAgent.status === 2 || chainAgent.status === 3) {
+        throw new IntentValidationError(
+          "AGENT_NOT_DEPLOYABLE",
+          "Paused or retired agents cannot start a new vault deployment",
+          409,
+        );
+      }
+
+      const profile = {
         agentId: input.agentId,
         sponsor,
         signer: input.signer,
@@ -477,15 +505,63 @@ export function createGatewayApp(dependencies: GatewayAppDependencies): Hono {
         policy: input.policy as AgentPolicy,
         worldBacked: false,
         worldBackedUntil: null,
-        runtimeKind: input.runtimeKind,
         status: "pending_backing",
         displayName: input.displayName,
         strategySummary: input.strategySummary,
         metadataUri: input.metadataUri,
+      } satisfies Omit<AgentProfile, "runtimeKind"> & {
+        displayName: string;
+        strategySummary: string;
+        metadataUri: string;
       };
-      await dependencies.store.upsertAgentProfile(profile);
-      const job = await dependencies.store.createVaultJob({ agentId: input.agentId, sponsor, request: safe(input) as Record<string, unknown> });
-      return { status: 202, body: { job, next: "Register the agent and sign the controller/Fund deployment transactions" } };
+      const result = await dependencies.store.createAgentVault({
+        profile,
+        request: safe(input) as Record<string, unknown>,
+      });
+      if (result.kind === "profile_ownership_conflict") {
+        throw new IntentValidationError(
+          "AGENT_PROFILE_OWNERSHIP_CONFLICT",
+          "Stored agent ownership does not match AgentRegistry",
+          409,
+        );
+      }
+      if (result.kind === "vault_job_ownership_conflict") {
+        throw new SponsorAuthError("NOT_SPONSOR", "Agent deployment belongs to another sponsor", 403);
+      }
+      if (result.kind === "managed_signer_conflict") {
+        throw new AgentAuthError(
+          "MANAGED_SIGNER_MISMATCH",
+          "Managed signer ownership does not match AgentRegistry",
+          409,
+        );
+      }
+      if (result.kind === "managed_signer_required") {
+        throw new AgentAuthError(
+          "MANAGED_SIGNER_REQUIRED",
+          "Provision the Nuvem reference signer before creating its vault",
+          409,
+        );
+      }
+      if (result.kind === "existing") {
+        if (result.job.sponsor.toLowerCase() !== sponsor.toLowerCase()) {
+          throw new SponsorAuthError("NOT_SPONSOR", "Agent deployment belongs to another sponsor", 403);
+        }
+        const normalizedRequest = safe({ ...input, runtimeKind: result.runtimeKind });
+        if (requestHash(result.job.request) !== requestHash(normalizedRequest)) {
+          throw new IntentValidationError("VAULT_JOB_CONFLICT", "This agent already has a different live deployment request", 409);
+        }
+        return {
+          status: 202,
+          body: { job: { id: result.job.id, state: result.job.state }, resumed: true },
+        };
+      }
+      return {
+        status: 202,
+        body: {
+          job: result.job,
+          next: "Complete Identity Check and World backing to start vault deployment",
+        },
+      };
     });
   });
 
@@ -497,6 +573,75 @@ export function createGatewayApp(dependencies: GatewayAppDependencies): Hono {
       return response({ error: { code: "FORBIDDEN", message: "Vault deployment job belongs to another sponsor" } }, 403);
     }
     return response({ job: publicVaultJob(job) });
+  });
+
+  app.post("/v1/agent-vaults/:id/process", async (c) => {
+    const sponsor = await dependencies.sponsors.authenticate(c.req.header("authorization"));
+    const jobId = c.req.param("id");
+    const raw = await body(c).catch(() => ({}));
+    parsed(z.object({}).strict(), raw);
+    return runMutation(c, dependencies.store, `vault-process:${sponsor}:${jobId}`, raw, async () => {
+      const job = await dependencies.store.getVaultJob(jobId);
+      if (!job) {
+        throw new IntentValidationError("UNKNOWN_VAULT_JOB", "Vault deployment job not found", 404);
+      }
+      if (job.sponsor.toLowerCase() !== sponsor.toLowerCase()) {
+        throw new SponsorAuthError("NOT_SPONSOR", "Vault deployment job belongs to another sponsor", 403);
+      }
+      if (job.state === "failed" || job.state === "awaiting_sponsor_bind" || job.state === "ready") {
+        return { status: 200, body: { job: publicVaultJob(job), processed: false } };
+      }
+      if (!dependencies.vaultDeployment) {
+        throw new AgentAuthError(
+          "VAULT_WORKER_NOT_CONFIGURED",
+          "Vault deployment processing is not configured on this gateway",
+          503,
+        );
+      }
+
+      const [profile, chainAgent] = await Promise.all([
+        dependencies.store.getAgentProfile(job.agentId),
+        dependencies.chain.getAgent(job.agentId),
+      ]);
+      if (
+        !profile
+        || !profile.worldBacked
+        || !chainAgent.active
+        || profile.sponsor.toLowerCase() !== sponsor.toLowerCase()
+        || chainAgent.sponsor.toLowerCase() !== sponsor.toLowerCase()
+        || profile.signer.toLowerCase() !== chainAgent.signer.toLowerCase()
+      ) {
+        throw new AgentAuthError(
+          "VAULT_AGENT_NOT_ACTIVE",
+          "Complete Identity Check, AgentBook and onchain World backing before deployment",
+          409,
+        );
+      }
+
+      let processed = false;
+      try {
+        const tick = await dependencies.vaultDeployment.processNextEligible();
+        processed = tick.jobId === jobId;
+      } catch (error) {
+        if (error instanceof VaultWorkerConfigurationError) {
+          throw new AgentAuthError(
+            "VAULT_WORKER_NOT_CONFIGURED",
+            "Vault deployment processing is not configured on this gateway",
+            503,
+          );
+        }
+        throw new AgentAuthError(
+          "VAULT_WORKER_UNAVAILABLE",
+          "Vault deployment processing is temporarily unavailable or misconfigured",
+          503,
+        );
+      }
+      const current = await dependencies.store.getVaultJob(jobId);
+      if (!current || current.sponsor.toLowerCase() !== sponsor.toLowerCase()) {
+        throw new AgentAuthError("VAULT_JOB_CHANGED", "Vault deployment job changed while processing", 409);
+      }
+      return { status: 202, body: { job: publicVaultJob(current), processed } };
+    });
   });
 
   app.get("/v1/agents/:id/vault-job", async (c) => {
@@ -524,9 +669,32 @@ export function createGatewayApp(dependencies: GatewayAppDependencies): Hono {
     const agentId = parseAgentId(c.req.param("id"));
     const sponsor = await dependencies.sponsors.authenticate(c.req.header("authorization"));
     const raw = await body(c).catch(() => ({}));
+    const input = parsed(worldIdRequestSchema, raw);
     return runMutation(c, dependencies.store, `world-id-request:${sponsor}:${agentId}`, raw, async () => ({
       status: 201,
-      body: { worldId: await dependencies.worldId.request(agentId, sponsor) },
+      body: {
+        worldId: "credential" in input
+          ? await (() => {
+            if (!dependencies.worldIdentity) {
+              throw new AgentAuthError(
+                "WORLD_IDENTITY_NOT_CONFIGURED",
+                "World Identity Check is not configured on this deployment",
+                503,
+              );
+            }
+            return dependencies.worldIdentity.request(agentId, sponsor, input.environment, input.policy);
+          })()
+          : await dependencies.worldId.request(agentId, sponsor),
+      },
+      // RP nonces and signatures are short-lived capabilities. Return them
+      // once, but never persist them inside the idempotency replay body.
+      replayStatus: 409,
+      replayBody: {
+        error: {
+          code: "WORLD_ID_REQUEST_ALREADY_ISSUED",
+          message: "Request a fresh World ID challenge",
+        },
+      },
     }));
   });
 
@@ -537,7 +705,20 @@ export function createGatewayApp(dependencies: GatewayAppDependencies): Hono {
     const input = parsed(worldIdVerifySchema, raw);
     return runMutation(c, dependencies.store, `world-id-verify:${sponsor}:${agentId}:${input.requestId}`, raw, async () => ({
       status: 200,
-      body: { worldId: await dependencies.worldId.verify(agentId, sponsor, input.requestId, input.proof) },
+      body: {
+        worldId: input.credential === "identity_check"
+          ? await (() => {
+            if (!dependencies.worldIdentity) {
+              throw new AgentAuthError(
+                "WORLD_IDENTITY_NOT_CONFIGURED",
+                "World Identity Check is not configured on this deployment",
+                503,
+              );
+            }
+            return dependencies.worldIdentity.verify(agentId, sponsor, input.requestId, input.proof);
+          })()
+          : await dependencies.worldId.verify(agentId, sponsor, input.requestId, input.proof),
+      },
     }));
   });
 
@@ -621,7 +802,7 @@ export function createGatewayApp(dependencies: GatewayAppDependencies): Hono {
         worldBackedUntil: chainAgent.backedUntil > 0 ? new Date(chainAgent.backedUntil * 1_000) : null,
         status,
       };
-      await dependencies.store.upsertAgentProfile(synced);
+      await dependencies.store.syncAgentProfile(synced);
       await dependencies.store.appendEvent({ type: "agent", agentId, occurredAt: new Date(), payload: { action: "profile_synced", status, controller: controllerAddress, vault } });
       return { status: 200, body: { agent: synced, deploymentState } };
     });
@@ -687,10 +868,11 @@ function openApiDocument(): Record<string, unknown> {
       "/v1/managed-signers": { post: { summary: "Provision a sponsor-owned Nuvem reference signer without returning private key material" } },
       "/v1/agent-vaults": { post: { summary: "Create an AI vault deployment job (sponsor SIWE)" } },
       "/v1/agent-vaults/{id}": { get: { summary: "Read a sponsor-owned durable deployment job" } },
+      "/v1/agent-vaults/{id}/process": { post: { summary: "Advance one durable vault deployment transition (sponsor SIWE)" } },
       "/v1/agents/{id}/vault-job": { get: { summary: "Resume the sponsor-owned deployment for an agent" } },
-      "/v1/agents/{id}/world-backing": { post: { summary: "Issue a canonical AgentBook-backed activation attestation" } },
-      "/v1/agents/{id}/world-id/request": { post: { summary: "Create a Nuvem World ID 4.0 sponsor proof request" } },
-      "/v1/agents/{id}/world-id/verify": { post: { summary: "Verify and consume a Nuvem World ID 4.0 sponsor proof" } },
+      "/v1/agents/{id}/world-backing": { post: { summary: "Issue an Identity Check and AgentBook-backed activation attestation" } },
+      "/v1/agents/{id}/world-id/request": { post: { summary: "Create a World ID proof or Identity Check request" } },
+      "/v1/agents/{id}/world-id/verify": { post: { summary: "Verify and consume a one-time World ID request" } },
       "/v1/agents/{id}/world-registration": {
         get: { summary: "Read canonical AgentBook registration state without exposing the human id" },
         post: { summary: "Relay an official World ID AgentBook registration proof" },

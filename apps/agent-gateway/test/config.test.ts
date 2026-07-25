@@ -52,4 +52,45 @@ describe("gateway chain configuration", () => {
     expect(chain.name).toBe("Robinhood Chain Testnet");
     expect(chain.rpcUrls.default.http).toEqual(["https://testnet.example.com"]);
   });
+
+  it("accepts only app_staging IDs for the server-authorized staging environment", () => {
+    const config = loadConfig(environment({
+      RH_CHAIN_ID: "46630",
+      WORLD_ID_ENVIRONMENT: "staging",
+      WORLD_APP_ID: "app_staging_123abc",
+      WORLD_IDENTITY_ACTION: "ai-vault-identity-v1",
+    }));
+    expect(config.WORLD_ID_ENVIRONMENT).toBe("staging");
+    expect(config.WORLD_APP_ID).toBe("app_staging_123abc");
+  });
+
+  it("rejects World Identity staging on Robinhood mainnet", () => {
+    expect(() => loadConfig(environment({
+      RH_CHAIN_ID: "4663",
+      WORLD_ID_ENVIRONMENT: "staging",
+      WORLD_APP_ID: "app_staging_123abc",
+    }))).toThrow("RH_CHAIN_ID");
+  });
+
+  it("rejects production app IDs in staging and staging app IDs in production", () => {
+    expect(() => loadConfig(environment({
+      RH_CHAIN_ID: "46630",
+      WORLD_ID_ENVIRONMENT: "staging",
+      WORLD_APP_ID: "app_123abc",
+    }))).toThrow("WORLD_APP_ID");
+    expect(() => loadConfig(environment({
+      RH_CHAIN_ID: "46630",
+      WORLD_ID_ENVIRONMENT: "production",
+      WORLD_APP_ID: "app_staging_123abc",
+    }))).toThrow("WORLD_APP_ID");
+  });
+
+  it("derives production from a production app ID and permits an explicit Identity action", () => {
+    const config = loadConfig(environment({
+      RH_CHAIN_ID: "46630",
+      WORLD_IDENTITY_ACTION: "ai-vault-identity-v1",
+    }));
+    expect(config.WORLD_ID_ENVIRONMENT).toBe("production");
+    expect(config.WORLD_IDENTITY_ACTION).toBe("ai-vault-identity-v1");
+  });
 });

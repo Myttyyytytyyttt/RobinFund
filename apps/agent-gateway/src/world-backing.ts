@@ -3,6 +3,7 @@ import { privateKeyToAccount } from "viem/accounts";
 import { AgentAuthError, AgentSessionService } from "./agentkit.js";
 import type { AgentChainReader } from "./chain.js";
 import { requestHash } from "./crypto.js";
+import type { WorldIdentityEnvironment } from "./domain.js";
 import type { ControlPlaneStore } from "./store.js";
 
 const worldChain = defineChain({
@@ -26,6 +27,16 @@ export interface WorldBlockReader {
   getBlockNumber(): Promise<bigint>;
 }
 
+export interface WorldBackingIdentityGate {
+  appId: `app_${string}`;
+  rpId: string;
+  environment: WorldIdentityEnvironment;
+  policyId: string;
+  policyVersion: number;
+  policyHash: Hex;
+  action: string;
+}
+
 export class WorldBackingService {
   private readonly verifier;
   private readonly worldClient: WorldBlockReader;
@@ -37,6 +48,7 @@ export class WorldBackingService {
     verifierPrivateKey: Hex,
     worldRpcUrl: string,
     worldClient?: WorldBlockReader,
+    private readonly identityGate: WorldBackingIdentityGate | null = null,
   ) {
     this.verifier = privateKeyToAccount(verifierPrivateKey);
     this.worldClient = worldClient
@@ -44,13 +56,29 @@ export class WorldBackingService {
   }
 
   async issue(agentId: Hex, sponsor: Address): Promise<{ backing: WorldBackingPayload; signature: Hex; registry: Address }> {
-    const [profile, agent, configuredVerifier, agentBookBlock, nonce, worldIdBinding] = await Promise.all([
+    if (!this.identityGate) {
+      throw new AgentAuthError(
+        "WORLD_IDENTITY_NOT_CONFIGURED",
+        "World Identity Check is not configured for vault activation",
+        503,
+      );
+    }
+    const [profile, agent, configuredVerifier, agentBookBlock, nonce, identityBinding] = await Promise.all([
       this.store.getAgentProfile(agentId),
       this.chain.getAgent(agentId),
       this.chain.getWorldVerifier(),
       this.worldClient.getBlockNumber(),
       this.chain.getBackingNonce(agentId),
-      this.store.getWorldIdAgentBinding(agentId),
+      this.store.getWorldIdentityAgentBinding({
+        agentId,
+        appId: this.identityGate.appId,
+        rpId: this.identityGate.rpId,
+        environment: this.identityGate.environment,
+        policyId: this.identityGate.policyId,
+        policyVersion: this.identityGate.policyVersion,
+        policyHash: this.identityGate.policyHash,
+        action: this.identityGate.action,
+      }),
     ]);
     if (!profile) throw new AgentAuthError("UNKNOWN_AGENT", "Agent profile does not exist", 404);
     if (profile.sponsor.toLowerCase() !== sponsor.toLowerCase() || agent.sponsor.toLowerCase() !== sponsor.toLowerCase()) {
@@ -63,20 +91,43 @@ export class WorldBackingService {
       throw new AgentAuthError("VERIFIER_MISCONFIGURED", "World verifier key does not match AgentRegistry", 503);
     }
     if (
-      !worldIdBinding
-      || worldIdBinding.revokedAt
-      || worldIdBinding.sponsor.toLowerCase() !== sponsor.toLowerCase()
-      || worldIdBinding.signer.toLowerCase() !== agent.signer.toLowerCase()
-    ) throw new AgentAuthError("NUVEM_WORLD_ID_REQUIRED", "Complete the Nuvem World ID sponsor check first", 403);
+      !identityBinding
+      || identityBinding.revokedAt
+      || identityBinding.validUntil <= new Date()
+      || identityBinding.sponsor.toLowerCase() !== sponsor.toLowerCase()
+      || identityBinding.signer.toLowerCase() !== agent.signer.toLowerCase()
+    ) {
+      throw new AgentAuthError(
+        "NUVEM_WORLD_IDENTITY_REQUIRED",
+        "Complete the configured World Identity Check before activating this vault",
+        403,
+      );
+    }
     const identity = await this.sessions.worldIdentityForSigner(agentId, agent.signer);
     const backingHash = requestHash({
-      domain: "nuvem-world-backing-v2",
-      worldIdHumanHash: worldIdBinding.humanHash,
+      domain: "nuvem-world-backing-v3",
+      worldIdentitySubjectHash: identityBinding.subjectHash,
+      worldIdentityPolicyHash: identityBinding.policyHash,
+      worldIdentityAction: identityBinding.action,
+      worldIdentityEnvironment: identityBinding.environment,
+      worldIdentityAppId: identityBinding.appId,
+      worldIdentityRpId: identityBinding.rpId,
       agentBookBackingHash: identity.backingHash,
       agentId: agentId.toLowerCase(),
       signer: agent.signer.toLowerCase(),
     });
-    const validUntil = Math.floor(Date.now() / 1_000) + 7 * 24 * 60 * 60;
+    const nowSeconds = Math.floor(Date.now() / 1_000);
+    const validUntil = Math.min(
+      nowSeconds + 7 * 24 * 60 * 60,
+      Math.floor(identityBinding.validUntil.getTime() / 1_000),
+    );
+    if (validUntil <= nowSeconds) {
+      throw new AgentAuthError(
+        "NUVEM_WORLD_IDENTITY_REQUIRED",
+        "World Identity Check has expired; complete it again before activation",
+        403,
+      );
+    }
     const backing: WorldBackingPayload = {
       agentId,
       sponsor,

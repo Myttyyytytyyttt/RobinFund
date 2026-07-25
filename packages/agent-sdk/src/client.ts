@@ -169,6 +169,8 @@ export function verifyExecutionPlanLocally(
 
 export class NuvemAgentClient {
   private sessionToken: string | null = null;
+  private sessionExpiresAt = 0;
+  private connectInFlight: Promise<{ expiresAt: Date }> | null = null;
 
   constructor(
     readonly gatewayUrl: string,
@@ -178,6 +180,19 @@ export class NuvemAgentClient {
   ) {}
 
   async connect(): Promise<{ expiresAt: Date }> {
+    if (this.sessionToken && this.sessionExpiresAt > Date.now() + 30_000) {
+      return { expiresAt: new Date(this.sessionExpiresAt) };
+    }
+    if (this.connectInFlight) return this.connectInFlight;
+    this.connectInFlight = this.openAgentKitSession();
+    try {
+      return await this.connectInFlight;
+    } finally {
+      this.connectInFlight = null;
+    }
+  }
+
+  private async openAgentKitSession(): Promise<{ expiresAt: Date }> {
     const challenge = await this.request<{ agentkit: AgentkitExtension }>("/v1/agent-sessions/challenge", {
       method: "POST",
       body: { agentId: this.agentId },
@@ -197,12 +212,18 @@ export class NuvemAgentClient {
       body: { agentId: this.agentId },
       headers: { "x-agentkit": header },
     });
+    const expiresAt = new Date(session.expiresAt);
+    if (!session.token || !Number.isFinite(expiresAt.getTime()) || expiresAt <= new Date()) {
+      throw new NuvemSdkError("INVALID_SESSION", "Gateway returned an invalid AgentKit session");
+    }
     this.sessionToken = session.token;
-    return { expiresAt: new Date(session.expiresAt) };
+    this.sessionExpiresAt = expiresAt.getTime();
+    return { expiresAt };
   }
 
   disconnect(): void {
     this.sessionToken = null;
+    this.sessionExpiresAt = 0;
   }
 
   async context(): Promise<VaultContext> {
@@ -288,13 +309,24 @@ export class NuvemAgentClient {
 
   private async request<T = unknown>(
     path: string,
-    options: { method: "GET" | "POST"; body?: unknown; headers?: Record<string, string>; session?: boolean },
+    options: {
+      method: "GET" | "POST";
+      body?: unknown;
+      headers?: Record<string, string>;
+      session?: boolean;
+      idempotencyKey?: string;
+      retrySession?: boolean;
+    },
   ): Promise<T> {
+    if (options.session && (!this.sessionToken || this.sessionExpiresAt <= Date.now() + 30_000)) {
+      await this.connect();
+    }
     const headers: Record<string, string> = { ...options.headers };
     if (options.body !== undefined) headers["content-type"] = "application/json";
-    if (options.method === "POST") headers["idempotency-key"] = randomUUID();
+    const idempotencyKey = options.idempotencyKey ?? randomUUID();
+    if (options.method === "POST") headers["idempotency-key"] = idempotencyKey;
     if (options.session) {
-      if (!this.sessionToken) throw new NuvemSdkError("NOT_CONNECTED", "Call connect() before using the agent API");
+      if (!this.sessionToken) throw new NuvemSdkError("NOT_CONNECTED", "AgentKit session could not be established");
       headers.authorization = `Bearer ${this.sessionToken}`;
     }
     const response = await this.fetchImpl(new URL(path, this.gatewayUrl), {
@@ -303,8 +335,30 @@ export class NuvemAgentClient {
       body: options.body === undefined ? undefined : JSON.stringify(options.body, (_, value) => typeof value === "bigint" ? value.toString() : value),
       signal: AbortSignal.timeout(20_000),
     });
-    const value = await response.json() as T & { error?: { code?: string; message?: string } };
-    if (!response.ok) throw new NuvemSdkError(value.error?.code ?? "GATEWAY_ERROR", value.error?.message ?? `Gateway returned ${response.status}`, response.status);
+    let value: T & { error?: { code?: string; message?: string } };
+    try {
+      value = await response.json() as T & { error?: { code?: string; message?: string } };
+    } catch {
+      throw new NuvemSdkError("INVALID_GATEWAY_RESPONSE", `Gateway returned non-JSON HTTP ${response.status}`, response.status);
+    }
+    if (!response.ok) {
+      const code = value.error?.code ?? "GATEWAY_ERROR";
+      if (
+        options.session
+        && options.retrySession !== false
+        && response.status === 401
+        && ["SESSION_EXPIRED", "SESSION_REQUIRED"].includes(code)
+      ) {
+        this.disconnect();
+        await this.connect();
+        return this.request<T>(path, {
+          ...options,
+          idempotencyKey,
+          retrySession: false,
+        });
+      }
+      throw new NuvemSdkError(code, value.error?.message ?? `Gateway returned ${response.status}`, response.status);
+    }
     return value;
   }
 }

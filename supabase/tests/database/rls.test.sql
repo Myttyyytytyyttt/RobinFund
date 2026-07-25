@@ -1,7 +1,7 @@
 begin;
 
 create extension if not exists pgtap with schema extensions;
-select extensions.plan(11);
+select extensions.plan(20);
 
 select extensions.ok(
   not has_schema_privilege('anon', 'compliance_private', 'usage'),
@@ -10,6 +10,42 @@ select extensions.ok(
 select extensions.ok(
   not has_schema_privilege('authenticated', 'compliance_private', 'usage'),
   'authenticated clients cannot enter the compliance schema'
+);
+select extensions.ok(
+  not has_table_privilege('anon', 'agent_private.world_identity_requests', 'select'),
+  'anonymous clients cannot read World Identity requests'
+);
+select extensions.ok(
+  not has_table_privilege('authenticated', 'agent_private.world_identity_requests', 'select'),
+  'authenticated clients cannot read World Identity requests'
+);
+select extensions.ok(
+  not has_table_privilege('anon', 'agent_private.world_identity_sponsors', 'select'),
+  'anonymous clients cannot read World Identity sponsor ownership'
+);
+select extensions.ok(
+  not has_table_privilege('authenticated', 'agent_private.world_identity_sponsors', 'select'),
+  'authenticated clients cannot read World Identity sponsor ownership'
+);
+select extensions.ok(
+  not has_table_privilege('anon', 'agent_private.world_identity_agent_bindings', 'select'),
+  'anonymous clients cannot read World Identity bindings'
+);
+select extensions.ok(
+  not has_table_privilege('authenticated', 'agent_private.world_identity_agent_bindings', 'select'),
+  'authenticated clients cannot read World Identity bindings'
+);
+select extensions.ok(
+  not has_function_privilege('anon', 'agent_private.claim_vault_jobs(text, integer)', 'execute'),
+  'anonymous clients cannot trigger the serialized vault worker claim'
+);
+select extensions.ok(
+  not has_function_privilege('authenticated', 'agent_private.claim_vault_jobs(text, integer)', 'execute'),
+  'authenticated clients cannot trigger the serialized vault worker claim'
+);
+select extensions.ok(
+  has_function_privilege('service_role', 'agent_private.claim_vault_jobs(text, integer)', 'execute'),
+  'only the backend service role can trigger the serialized vault worker claim'
 );
 
 insert into auth.users (

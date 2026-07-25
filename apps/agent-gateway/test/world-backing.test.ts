@@ -4,23 +4,60 @@ import { verifyTypedData, type Address, type Hex } from "viem";
 import { AgentSessionService } from "../src/agentkit.js";
 import { MemoryControlPlaneStore } from "../src/store.js";
 import { WorldBackingService } from "../src/world-backing.js";
+import { AI_VAULT_IDENTITY_POLICY } from "../src/world-identity.js";
 import { agentId, FakeChain, profile, signer, sponsor } from "./fixtures.js";
 
 const verifierKey = `0x${"77".repeat(32)}` as Hex;
 const wrongVerifierKey = `0x${"88".repeat(32)}` as Hex;
 const humanId = "anonymous-world-human-id-that-must-not-be-stored";
+const identityAppId = "app_5fe197d24d83c55573c5d9d0356f3d6" as const;
+const identityRpId = "rp_db7d77ff9edef255";
+const identityAction = "ai-vault-identity-v1";
+const identityGate = {
+  appId: identityAppId,
+  rpId: identityRpId,
+  environment: "production" as const,
+  policyId: AI_VAULT_IDENTITY_POLICY.id,
+  policyVersion: AI_VAULT_IDENTITY_POLICY.version,
+  policyHash: AI_VAULT_IDENTITY_POLICY.hash,
+  action: identityAction,
+};
 
-function setup(options: { backed?: boolean; verifierKey?: Hex } = {}) {
+function setup(options: {
+  backed?: boolean;
+  verifierKey?: Hex;
+  identity?: false | {
+    environment?: "staging" | "production";
+    policyHash?: Hex;
+    revokedAt?: Date | null;
+    validUntil?: Date;
+  };
+} = {}) {
   const store = new MemoryControlPlaneStore();
   store.profiles.set(agentId, profile({ status: "pending_backing", worldBacked: false, worldBackedUntil: null }));
-  store.worldIdAgentBindings.set(agentId, {
-    agentId,
-    sponsor,
-    signer,
-    humanHash: `0x${"99".repeat(32)}` as Hex,
-    verifiedAt: new Date(),
-    revokedAt: null,
-  });
+  if (options.identity !== false) {
+    store.worldIdentityAgentBindings.set(agentId, {
+      agentId,
+      sponsorBindingId: "11111111-1111-4111-8111-111111111111",
+      sponsor,
+      signer,
+      subjectHash: `0x${"99".repeat(32)}` as Hex,
+      nullifierHash: `0x${"98".repeat(32)}` as Hex,
+      appId: identityAppId,
+      rpId: identityRpId,
+      environment: options.identity?.environment ?? "production",
+      policyId: AI_VAULT_IDENTITY_POLICY.id,
+      policyVersion: AI_VAULT_IDENTITY_POLICY.version,
+      policyHash: options.identity?.policyHash ?? AI_VAULT_IDENTITY_POLICY.hash,
+      attributesHash: `0x${"97".repeat(32)}` as Hex,
+      action: identityAction,
+      credentialIdentifier: "passport",
+      issuerSchemaId: 9_303,
+      verifiedAt: new Date(),
+      validUntil: options.identity?.validUntil ?? new Date(Date.now() + 7 * 24 * 60 * 60 * 1_000),
+      revokedAt: options.identity?.revokedAt ?? null,
+    });
+  }
   const chain = new FakeChain();
   chain.agent.active = false;
   chain.agent.status = 0;
@@ -43,6 +80,7 @@ function setup(options: { backed?: boolean; verifierKey?: Hex } = {}) {
     options.verifierKey ?? verifierKey,
     "https://world.invalid",
     { getBlockNumber: async () => 12_345n },
+    identityGate,
   );
   return { store, chain, service };
 }
@@ -79,10 +117,10 @@ describe("WorldBackingService", () => {
       signature: result.signature,
     })).toBe(true);
     expect(store.worldAttestations).toHaveLength(1);
-    expect(store.worldIdAgentBindings.size).toBe(1);
+    expect(store.worldIdentityAgentBindings.size).toBe(1);
     expect(JSON.stringify(store.worldAttestations, (_key, value) => typeof value === "bigint" ? value.toString() : value))
       .not.toContain(humanId);
-    expect(JSON.stringify([...store.worldIdAgentBindings.values()])).not.toContain(humanId);
+    expect(JSON.stringify([...store.worldIdentityAgentBindings.values()])).not.toContain(humanId);
   });
 
   it("rejects a wallet that is not the on-chain sponsor", async () => {
@@ -103,10 +141,34 @@ describe("WorldBackingService", () => {
       .rejects.toMatchObject({ code: "AGENTBOOK_NOT_BACKED", status: 403 });
   });
 
-  it("does not attest AgentBook alone without the Nuvem World ID action", async () => {
-    const { store, service } = setup();
-    store.worldIdAgentBindings.clear();
+  it("does not attest AgentBook alone without the configured Identity Check", async () => {
+    const { service } = setup({ identity: false });
     await expect(service.issue(agentId, sponsor))
-      .rejects.toMatchObject({ code: "NUVEM_WORLD_ID_REQUIRED", status: 403 });
+      .rejects.toMatchObject({ code: "NUVEM_WORLD_IDENTITY_REQUIRED", status: 403 });
+  });
+
+  it("does not allow a legacy PoH binding to substitute for Identity Check", async () => {
+    const { store, service } = setup({ identity: false });
+    store.worldIdAgentBindings.set(agentId, {
+      agentId,
+      sponsor,
+      signer,
+      humanHash: `0x${"99".repeat(32)}` as Hex,
+      verifiedAt: new Date(),
+      revokedAt: null,
+    });
+    await expect(service.issue(agentId, sponsor))
+      .rejects.toMatchObject({ code: "NUVEM_WORLD_IDENTITY_REQUIRED", status: 403 });
+  });
+
+  it.each([
+    ["staging", { environment: "staging" as const }],
+    ["old policy", { policyHash: `0x${"55".repeat(32)}` as Hex }],
+    ["revoked", { revokedAt: new Date() }],
+    ["expired", { validUntil: new Date(Date.now() - 1_000) }],
+  ])("rejects a %s Identity binding", async (_label, identity) => {
+    const { service } = setup({ identity });
+    await expect(service.issue(agentId, sponsor))
+      .rejects.toMatchObject({ code: "NUVEM_WORLD_IDENTITY_REQUIRED", status: 403 });
   });
 });

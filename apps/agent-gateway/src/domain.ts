@@ -234,6 +234,124 @@ export interface WorldIdVerificationResult {
   maxManagedAgents: number;
 }
 
+export type WorldIdentityEnvironment = "staging" | "production";
+
+export type WorldIdentityAttribute =
+  | { type: "document_type"; value: "passport" | "eid" | "mnc" }
+  | { type: "minimum_age"; value: number };
+
+export interface WorldIdentityPolicy {
+  id: string;
+  version: number;
+  attributes: WorldIdentityAttribute[];
+  hash: Hex;
+  requireUserPresence: boolean;
+}
+
+export interface WorldIdentityRequestRecord {
+  id: string;
+  agentId: Hex;
+  sponsor: Address;
+  signer: Address;
+  rpNonceHash: Hex;
+  signalHash: Hex;
+  appId: `app_${string}`;
+  rpId: string;
+  environment: WorldIdentityEnvironment;
+  policyId: string;
+  policyVersion: number;
+  policyHash: Hex;
+  attributes: WorldIdentityAttribute[];
+  attributesHash: Hex;
+  action: string;
+  requireUserPresence: boolean;
+  expiresAt: Date;
+  consumedAt: Date | null;
+}
+
+export interface WorldIdentityAgentBinding {
+  agentId: Hex;
+  sponsorBindingId: string;
+  sponsor: Address;
+  signer: Address;
+  subjectHash: Hex;
+  nullifierHash: Hex;
+  appId: `app_${string}`;
+  rpId: string;
+  environment: WorldIdentityEnvironment;
+  policyId: string;
+  policyVersion: number;
+  policyHash: Hex;
+  attributesHash: Hex;
+  action: string;
+  credentialIdentifier: string;
+  issuerSchemaId: number;
+  verifiedAt: Date;
+  validUntil: Date;
+  revokedAt: Date | null;
+}
+
+export interface WorldIdentitySponsorBinding {
+  id: string;
+  sponsor: Address;
+  subjectHash: Hex;
+  nullifierHash: Hex;
+  appId: `app_${string}`;
+  rpId: string;
+  environment: WorldIdentityEnvironment;
+  policyId: string;
+  policyVersion: number;
+  policyHash: Hex;
+  attributesHash: Hex;
+  action: string;
+  credentialIdentifier: string;
+  issuerSchemaId: number;
+  firstVerifiedAt: Date;
+  lastVerifiedAt: Date;
+  validUntil: Date;
+  revokedAt: Date | null;
+}
+
+export interface WorldIdentityVerificationInput {
+  requestId: string;
+  agentId: Hex;
+  sponsor: Address;
+  signer: Address;
+  rpNonceHash: Hex;
+  signalHash: Hex;
+  appId: `app_${string}`;
+  rpId: string;
+  environment: WorldIdentityEnvironment;
+  policyId: string;
+  policyVersion: number;
+  policyHash: Hex;
+  attributesHash: Hex;
+  action: string;
+  subjectHash: Hex;
+  nullifierHash: Hex;
+  proofHash: Hex;
+  credentialIdentifier: string;
+  issuerSchemaId: number;
+  verifiedAt: Date;
+  validUntil: Date;
+  maxManagedAgents: number;
+}
+
+export interface WorldIdentityVerificationResult {
+  accepted: boolean;
+  reason:
+    | "verified"
+    | "already_verified"
+    | "sponsor_unverified"
+    | "request_invalid"
+    | "binding_conflict"
+    | "human_bound_elsewhere"
+    | "managed_agent_limit";
+  binding: WorldIdentityAgentBinding | null;
+  managedAgentCount: number;
+  maxManagedAgents: number;
+}
+
 export type VaultJobState =
   | "requested"
   | "preparing"

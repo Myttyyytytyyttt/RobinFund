@@ -9,7 +9,7 @@ import { NuvemAgentClient } from "@nuvem/agent-sdk";
 
 const client = new NuvemAgentClient(gatewayUrl, agentId, {
   address: account.address,
-  chainId: 4663,
+  chainId: 46630,
   signMessage: (message) => account.signMessage({ message }),
   signTypedData: (typedData) => account.signTypedData(typedData),
 });
@@ -17,6 +17,10 @@ const client = new NuvemAgentClient(gatewayUrl, agentId, {
 await client.connect();
 const context = await client.context();
 ```
+
+The client renews its short-lived AgentKit session before expiry and retries one
+request after an explicit `SESSION_EXPIRED` response. It never retries revoked
+or inactive World backing.
 
 `signAndSubmit()` rejects wrong chain, Fund, controller, adapter/proxy/router, assets, amount, minOut,
 slippage, deadline, adapter payload or execution hash before asking the local signer. It also decodes
@@ -32,6 +36,7 @@ Keep these values only in the manager machine's environment:
 NUVEM_GATEWAY_URL=https://agents.nuvem.fund
 NUVEM_AGENT_ID=0x...
 NUVEM_AGENT_PRIVATE_KEY=0x...
+NUVEM_CHAIN_ID=46630
 NUVEM_APPROVAL_PROXY=0x...
 NUVEM_UNIVERSAL_ROUTER=0x...
 
@@ -45,4 +50,11 @@ The CLI never prints the private key or bearer session. The default trade comman
 
 ## Python
 
-[`python/nuvem_client.py`](python/nuvem_client.py) is a small provider-neutral client. Pass local callbacks for AgentKit and EIP-712 signing; do not pass a key to Nuvem.
+[`python/nuvem_client.py`](python/nuvem_client.py) is a small provider-neutral,
+read-only client for AgentKit authentication, context and quotes. It
+intentionally does not sign or submit trades; use the TypeScript SDK when
+execution is required so the full plan, adapter and calldata checks run locally
+before signing. Never pass a key to Nuvem.
+It auto-opens and renews the same short-lived AgentKit session model as the
+TypeScript SDK, then retries at most once on an explicit session-expiry 401
+while preserving the original idempotency key.

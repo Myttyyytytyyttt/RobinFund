@@ -41,6 +41,9 @@ const boolean = z.union([z.boolean(), z.string()]).transform((value, context) =>
   return z.NEVER;
 });
 
+const worldAppId = z.string().regex(/^app_(?:staging_)?[0-9a-z]+$/);
+const worldRpId = z.string().regex(/^rp_[0-9a-z]+$/);
+
 const schema = z.object({
   NODE_ENV: z.enum(["development", "test", "production"]).default("development"),
   PORT: z.coerce.number().int().min(1).max(65_535).default(8787),
@@ -53,11 +56,17 @@ const schema = z.object({
   TRADING_ENABLED: boolean.default(true),
   WORLD_CHAIN_RPC: z.url(),
   WORLD_AGENTBOOK_RELAY_URL: z.url().default("https://x402-worldchain.vercel.app"),
-  WORLD_APP_ID: z.string().regex(/^app_[0-9a-z]+$/),
-  WORLD_RP_ID: z.string().regex(/^rp_[0-9a-z]+$/),
+  WORLD_APP_ID: worldAppId,
+  WORLD_RP_ID: worldRpId,
   WORLD_RP_SIGNING_KEY: privateKey,
   WORLD_ID_ACTION: z.string().min(1).max(128),
   WORLD_VERIFY_BASE_URL: z.url().default("https://developer.worldcoin.org"),
+  WORLD_ID_ENVIRONMENT: z.enum(["staging", "production"]),
+  WORLD_IDENTITY_ACTION: z.string().min(1).max(128).optional(),
+  WORLD_IDENTITY_VERIFY_BASE_URL: z.url().default("https://developer.world.org"),
+  WORLD_IDENTITY_VERIFY_TIMEOUT_MS: z.coerce.number().int().min(1_000).max(30_000).default(10_000),
+  WORLD_IDENTITY_REQUEST_TTL_SECONDS: z.coerce.number().int().min(60).max(900).default(600),
+  WORLD_IDENTITY_ATTESTATION_TTL_SECONDS: z.coerce.number().int().min(300).max(2_592_000).default(604_800),
   AGENT_REGISTRY_ADDRESS: address,
   USDG_ADDRESS: address,
   GRAPH_URL: z.url().optional(),
@@ -79,6 +88,28 @@ const schema = z.object({
   WORKER_POLL_MS: z.coerce.number().int().min(250).max(60_000).default(2_000),
   CORS_ORIGINS: z.string().default("http://localhost:5173"),
 }).superRefine((value, context) => {
+  const stagingApp = value.WORLD_APP_ID.startsWith("app_staging_");
+  if (value.WORLD_ID_ENVIRONMENT === "staging" && !stagingApp) {
+    context.addIssue({
+      code: "custom",
+      path: ["WORLD_APP_ID"],
+      message: "WORLD_APP_ID must use app_staging_ prefix when WORLD_ID_ENVIRONMENT=staging",
+    });
+  }
+  if (value.WORLD_ID_ENVIRONMENT === "production" && stagingApp) {
+    context.addIssue({
+      code: "custom",
+      path: ["WORLD_APP_ID"],
+      message: "WORLD_APP_ID must not use app_staging_ prefix when WORLD_ID_ENVIRONMENT=production",
+    });
+  }
+  if (value.WORLD_ID_ENVIRONMENT === "staging" && value.RH_CHAIN_ID !== 46_630) {
+    context.addIssue({
+      code: "custom",
+      path: ["RH_CHAIN_ID"],
+      message: "World Identity staging is pinned to Robinhood Chain testnet (46630)",
+    });
+  }
   if (!value.TRADING_ENABLED) return;
   for (const name of [
     "GRAPH_URL",
@@ -115,7 +146,6 @@ const deploymentSchema = z.object({
       return z.NEVER;
     }
   }),
-  CONTRACT_ARTIFACTS_DIR: z.string().min(1).default("../../packages/contracts/out"),
   VAULT_WORKER_CONFIRMATIONS: z.coerce.number().int().min(1).max(20).default(2),
   VAULT_WORKER_POLL_MS: z.coerce.number().int().min(250).max(60_000).default(2_000),
 });
@@ -128,7 +158,14 @@ function normalizedEnvironment(environment: NodeJS.ProcessEnv): NodeJS.ProcessEn
     ?? "4663";
   const rpcUrl = environment.RH_RPC_URL
     ?? (chainId === "46630" ? environment.RH_RPC_TESTNET : environment.RH_RPC_MAINNET);
-  return { ...environment, RH_CHAIN_ID: chainId, RH_RPC_URL: rpcUrl };
+  const worldIdEnvironment = environment.WORLD_ID_ENVIRONMENT
+    ?? (environment.WORLD_APP_ID?.startsWith("app_staging_") ? "staging" : "production");
+  return {
+    ...environment,
+    RH_CHAIN_ID: chainId,
+    RH_RPC_URL: rpcUrl,
+    WORLD_ID_ENVIRONMENT: worldIdEnvironment,
+  };
 }
 
 export function loadConfig(environment: NodeJS.ProcessEnv = process.env): GatewayConfig {

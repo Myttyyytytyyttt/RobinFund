@@ -134,6 +134,37 @@ describe("VaultDeploymentWorker", () => {
     expect(await store.claimVaultJobs("worker-b", 1)).toHaveLength(0);
   });
 
+  it("does not claim a second unreserved job while the first serverless tick owns the queue", async () => {
+    const { store } = await setup();
+    const secondAgentId = `0x${"2".repeat(64)}` as Hex;
+    store.profiles.set(secondAgentId, {
+      ...profile(),
+      agentId: secondAgentId,
+    });
+    await store.createVaultJob({
+      agentId: secondAgentId,
+      sponsor,
+      request: { ...request(), agentId: secondAgentId },
+    });
+
+    expect(await store.claimVaultJobs("isolate-a", 1)).toHaveLength(1);
+    expect(await store.claimVaultJobs("isolate-b", 1)).toHaveLength(0);
+  });
+
+  it("does not consume the failure budget while waiting for a receipt", async () => {
+    const { transport, worker, job, releaseNow } = await setup();
+    expect(await worker().runOnce()).toMatchObject({ claimed: 1 });
+
+    for (let poll = 0; poll < 25; poll++) {
+      releaseNow();
+      expect(await worker().runOnce()).toMatchObject({ claimed: 1, failed: 0 });
+    }
+
+    expect(job().state).toBe("deploying_controller");
+    expect(job().attempts).toBe(0);
+    expect(transport.prepared).toBe(1);
+  });
+
   it("fails closed when World backing is paused before deployment", async () => {
     const { chain, worker, job } = await setup();
     chain.agent.active = false;

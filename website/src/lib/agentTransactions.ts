@@ -18,6 +18,13 @@ import { loadProtocolRuntime } from './protocolRuntime'
 import { addInitialProtection, type BrowserWallet, type VaultCreationInput, type VaultDeployment } from './vaultTransactions'
 import { AGENTBOOK_WORLD_ACTION, AGENTBOOK_WORLD_APP_ID, CANONICAL_AGENTBOOK } from './worldAgentBook'
 import { assertNuvemWorldIdRequest, type NuvemWorldIdRequest } from './worldIdNuvem'
+import {
+  AI_VAULT_IDENTITY_POLICY_HASH,
+  assertIdentityCheckRequest,
+  identityCheckGatewayBody,
+  type NuvemIdentityCheckRequest,
+  type WorldIdentityEnvironment,
+} from './worldIdentityCheck'
 
 const registryAbi = parseAbi([
   'function register(bytes32 agentId,address signer,string metadataURI)',
@@ -95,6 +102,24 @@ export type NuvemWorldIdStatus =
   | { verified: true; reused: boolean }
   | ({ verified: false; reused: false } & NuvemWorldIdRequest)
 
+export type NuvemIdentityCheckStatus =
+  | {
+    credential: 'identity_check'
+    verified: true
+    reused: boolean
+    environment: WorldIdentityEnvironment
+    action: string
+    policy: {
+      id: 'ai-vault-eligibility-v1'
+      version: number
+      hash: Hex
+    }
+    identityAttested: true
+    verifiedAt: string
+    validUntil: string
+  }
+  | NuvemIdentityCheckRequest
+
 export class AgentGatewayRequestError extends Error {
   constructor(
     readonly code: string,
@@ -156,6 +181,91 @@ export async function submitNuvemWorldIdProof(
       payload.error?.code || 'WORLD_ID_HTTP_ERROR',
       response.status,
       payload.error?.message || `Nuvem World verification returned HTTP ${response.status}`,
+    )
+  }
+}
+
+export async function createNuvemIdentityCheckRequest(
+  agentId: Hex,
+  accessToken: string,
+  environment: WorldIdentityEnvironment,
+): Promise<NuvemIdentityCheckStatus> {
+  const runtime = await loadProtocolRuntime(true)
+  if (!runtime.agentGatewayUrl) throw new Error('World Identity Check is not configured.')
+  const response = await fetch(new URL(`/v1/agents/${agentId}/world-id/request`, runtime.agentGatewayUrl), {
+    method: 'POST',
+    headers: {
+      authorization: `Bearer ${accessToken}`,
+      'content-type': 'application/json',
+      'idempotency-key': crypto.randomUUID(),
+    },
+    body: JSON.stringify(identityCheckGatewayBody(environment)),
+  })
+  const payload = await response.json() as {
+    worldId?: NuvemIdentityCheckStatus
+    error?: { code?: string; message?: string }
+  }
+  if (!response.ok || !payload.worldId) {
+    throw new AgentGatewayRequestError(
+      payload.error?.code || 'WORLD_IDENTITY_HTTP_ERROR',
+      response.status,
+      payload.error?.message || `World Identity Check request returned HTTP ${response.status}`,
+    )
+  }
+  if (payload.worldId.credential !== 'identity_check' || payload.worldId.environment !== environment) {
+    throw new Error('World Identity Check response belongs to a different credential or environment.')
+  }
+  if (!payload.worldId.verified) assertIdentityCheckRequest(payload.worldId, environment)
+  else if (
+    payload.worldId.identityAttested !== true
+    || payload.worldId.policy?.id !== identityCheckGatewayBody(environment).policy
+    || payload.worldId.policy.version !== 1
+    || payload.worldId.policy.hash.toLowerCase() !== AI_VAULT_IDENTITY_POLICY_HASH
+    || !payload.worldId.action
+    || !Number.isFinite(Date.parse(payload.worldId.validUntil))
+    || Date.parse(payload.worldId.validUntil) <= Date.now()
+  ) {
+    throw new Error('World Identity Check response does not contain an active attestation for this policy.')
+  }
+  return payload.worldId
+}
+
+export async function submitNuvemIdentityCheckProof(
+  agentId: Hex,
+  requestId: string,
+  proof: unknown,
+  accessToken: string,
+  idempotencyKey: string = crypto.randomUUID(),
+): Promise<void> {
+  const runtime = await loadProtocolRuntime(true)
+  if (!runtime.agentGatewayUrl) throw new Error('World Identity Check is not configured.')
+  const response = await fetch(new URL(`/v1/agents/${agentId}/world-id/verify`, runtime.agentGatewayUrl), {
+    method: 'POST',
+    headers: {
+      authorization: `Bearer ${accessToken}`,
+      'content-type': 'application/json',
+      'idempotency-key': idempotencyKey,
+    },
+    body: JSON.stringify({ credential: 'identity_check', requestId, proof }),
+  })
+  const payload = await response.json() as {
+    worldId?: {
+      credential?: string
+      verified?: boolean
+      identityAttested?: boolean
+    }
+    error?: { code?: string; message?: string }
+  }
+  if (
+    !response.ok
+    || payload.worldId?.credential !== 'identity_check'
+    || payload.worldId.verified !== true
+    || payload.worldId.identityAttested !== true
+  ) {
+    throw new AgentGatewayRequestError(
+      payload.error?.code || 'WORLD_IDENTITY_HTTP_ERROR',
+      response.status,
+      payload.error?.message || `World Identity Check verification returned HTTP ${response.status}`,
     )
   }
 }
@@ -484,7 +594,7 @@ export async function syncAgentProfile(
   agentId: Hex,
   accessToken: string,
   controller?: Address,
-): Promise<void> {
+): Promise<AgentSyncResult> {
   const runtime = await loadProtocolRuntime(true)
   if (!runtime.agentGatewayUrl) throw new Error('The Nuvem Agent Gateway is not configured.')
   const response = await fetch(new URL(`/v1/agents/${agentId}/sync`, runtime.agentGatewayUrl), {
@@ -496,13 +606,47 @@ export async function syncAgentProfile(
     },
     body: JSON.stringify(controller ? { controller } : {}),
   })
-  const payload = await response.json() as { error?: { message?: string } }
-  if (!response.ok) throw new Error(payload.error?.message || `Agent sync returned HTTP ${response.status}`)
+  const payload = await response.json() as AgentSyncResult & { error?: { code?: string; message?: string } }
+  if (!response.ok) {
+    throw new AgentGatewayRequestError(
+      payload.error?.code || 'AGENT_SYNC_HTTP_ERROR',
+      response.status,
+      payload.error?.message || `Agent sync returned HTTP ${response.status}`,
+    )
+  }
+  return payload
 }
+
+export type AgentSyncResult = {
+  agent?: {
+    agentId?: Hex
+    signer?: Address
+    status?: string
+    worldBacked?: boolean
+    worldBackedUntil?: string | null
+    controller?: Address | null
+    vault?: Address | null
+    [key: string]: unknown
+  }
+  deploymentState?: string | null
+  [key: string]: unknown
+}
+
+export type AgentVaultJobState =
+  | 'requested'
+  | 'preparing'
+  | 'deploying_controller'
+  | 'deploying_fund'
+  | 'registering'
+  | 'awaiting_sponsor_bind'
+  | 'ready'
+  | 'failed'
+  | (string & {})
 
 export type AgentVaultJobStatus = {
   id: string
-  state: 'requested' | 'preparing' | 'deploying_controller' | 'deploying_fund' | 'registering' | 'awaiting_sponsor_bind' | 'ready' | 'failed'
+  agentId: Hex
+  state: AgentVaultJobState
   controller: Address | null
   fund: Address | null
   stakeEscrow: Address | null
@@ -512,15 +656,99 @@ export type AgentVaultJobStatus = {
   requiredStake6: string
 }
 
+export function assertAgentVaultJobAgent(
+  job: AgentVaultJobStatus,
+  expectedAgentId: Hex,
+): AgentVaultJobStatus {
+  if (job.agentId.toLowerCase() !== expectedAgentId.toLowerCase()) {
+    throw new Error('The deployment job belongs to a different agent.')
+  }
+  return job
+}
+
+function normalizeAgentVaultJob(value: unknown): AgentVaultJobStatus {
+  if (!value || typeof value !== 'object') throw new Error('Gateway returned an invalid deployment job.')
+  const job = value as Partial<AgentVaultJobStatus>
+  if (
+    !job.id
+    || typeof job.id !== 'string'
+    || typeof job.agentId !== 'string'
+    || !/^0x[0-9a-fA-F]{64}$/.test(job.agentId)
+    || !job.state
+    || typeof job.state !== 'string'
+  ) {
+    throw new Error('Gateway returned a deployment job without a valid id, agent or state.')
+  }
+  return {
+    id: job.id,
+    agentId: job.agentId.toLowerCase() as Hex,
+    state: job.state,
+    controller: typeof job.controller === 'string' && isAddress(job.controller) ? getAddress(job.controller) : null,
+    fund: typeof job.fund === 'string' && isAddress(job.fund) ? getAddress(job.fund) : null,
+    stakeEscrow: typeof job.stakeEscrow === 'string' && isAddress(job.stakeEscrow) ? getAddress(job.stakeEscrow) : null,
+    transactionHashes: Array.isArray(job.transactionHashes)
+      ? job.transactionHashes.filter((hash): hash is Hex => typeof hash === 'string' && /^0x[0-9a-fA-F]{64}$/.test(hash))
+      : [],
+    attempts: Number.isFinite(Number(job.attempts)) ? Number(job.attempts) : 0,
+    errorCode: typeof job.errorCode === 'string' ? job.errorCode : null,
+    requiredStake6: job.requiredStake6 == null ? '0' : String(job.requiredStake6),
+  }
+}
+
 export async function getAgentVaultJob(jobId: string, accessToken: string): Promise<AgentVaultJobStatus> {
   const runtime = await loadProtocolRuntime(true)
   if (!runtime.agentGatewayUrl) throw new Error('The Nuvem Agent Gateway is not configured.')
   const response = await fetch(new URL(`/v1/agent-vaults/${jobId}`, runtime.agentGatewayUrl), {
     headers: { authorization: `Bearer ${accessToken}` },
   })
-  const payload = await response.json() as { job?: AgentVaultJobStatus; error?: { message?: string } }
-  if (!response.ok || !payload.job) throw new Error(payload.error?.message || `Deployment status returned HTTP ${response.status}`)
-  return payload.job
+  const payload = await response.json() as {
+    job?: unknown
+    vaultJob?: unknown
+    error?: { code?: string; message?: string }
+  }
+  const job = payload.job ?? payload.vaultJob
+  if (!response.ok || !job) {
+    throw new AgentGatewayRequestError(
+      payload.error?.code || 'VAULT_JOB_HTTP_ERROR',
+      response.status,
+      payload.error?.message || `Deployment status returned HTTP ${response.status}`,
+    )
+  }
+  return normalizeAgentVaultJob(job)
+}
+
+export async function processAgentVaultJob(
+  jobId: string,
+  accessToken: string,
+  idempotencyKey: string = crypto.randomUUID(),
+  signal?: AbortSignal,
+): Promise<AgentVaultJobStatus> {
+  const runtime = await loadProtocolRuntime(true)
+  if (!runtime.agentGatewayUrl) throw new Error('The Nuvem Agent Gateway is not configured.')
+  const response = await fetch(new URL(`/v1/agent-vaults/${jobId}/process`, runtime.agentGatewayUrl), {
+    method: 'POST',
+    headers: {
+      authorization: `Bearer ${accessToken}`,
+      'content-type': 'application/json',
+      'idempotency-key': idempotencyKey,
+    },
+    body: '{}',
+    signal,
+  })
+  const payload = await response.json() as {
+    job?: unknown
+    vaultJob?: unknown
+    error?: { code?: string; message?: string }
+  }
+  const job = payload.job ?? payload.vaultJob
+  if (!response.ok || !job) {
+    throw new AgentGatewayRequestError(
+      payload.error?.code || 'VAULT_PROCESS_HTTP_ERROR',
+      response.status,
+      payload.error?.message || `Deployment processing returned HTTP ${response.status}`,
+    )
+  }
+  return normalizeAgentVaultJob(job)
 }
 
 export async function getAgentVaultJobForAgent(agentId: Hex, accessToken: string): Promise<AgentVaultJobStatus> {
@@ -529,14 +757,37 @@ export async function getAgentVaultJobForAgent(agentId: Hex, accessToken: string
   const response = await fetch(new URL(`/v1/agents/${agentId}/vault-job`, runtime.agentGatewayUrl), {
     headers: { authorization: `Bearer ${accessToken}` },
   })
-  const payload = await response.json() as { job?: AgentVaultJobStatus; error?: { message?: string } }
-  if (!response.ok || !payload.job) throw new Error(payload.error?.message || `Deployment status returned HTTP ${response.status}`)
-  return payload.job
+  const payload = await response.json() as {
+    job?: unknown
+    vaultJob?: unknown
+    error?: { code?: string; message?: string }
+  }
+  const job = payload.job ?? payload.vaultJob
+  if (!response.ok || !job) {
+    throw new AgentGatewayRequestError(
+      payload.error?.code || 'VAULT_JOB_HTTP_ERROR',
+      response.status,
+      payload.error?.message || `Deployment status returned HTTP ${response.status}`,
+    )
+  }
+  return normalizeAgentVaultJob(job)
 }
 
 export async function deploymentFromAgentJob(agentId: Hex, job: AgentVaultJobStatus): Promise<AgentVaultDeployment> {
+  assertAgentVaultJobAgent(job, agentId)
   const runtime = await loadProtocolRuntime(true)
-  if (!job.controller || !job.fund || !job.stakeEscrow || !runtime.agentRegistry || !runtime.uniswapApiAdapter || !runtime.uniswapApiAdapterId || !runtime.usdg || !runtime.fundRegistry) {
+  if (
+    !job.controller
+    || !job.fund
+    || !job.stakeEscrow
+    || !/^\d+$/.test(job.requiredStake6)
+    || BigInt(job.requiredStake6) <= 0n
+    || !runtime.agentRegistry
+    || !runtime.uniswapApiAdapter
+    || !runtime.uniswapApiAdapterId
+    || !runtime.usdg
+    || !runtime.fundRegistry
+  ) {
     throw new Error('The deployment is not ready for sponsor binding or has an incomplete manifest.')
   }
   return {
@@ -557,35 +808,118 @@ export async function deploymentFromAgentJob(agentId: Hex, job: AgentVaultJobSta
 
 export async function waitForAgentVaultDeployment(
   jobId: string,
-  input: AgentVaultCreationInput,
+  input: AgentVaultCreationInput | Hex,
   accessToken: string,
-  timeoutMs = 10 * 60_000,
+  options: AgentVaultPollOptions | number = {},
 ): Promise<AgentVaultDeployment> {
-  const started = Date.now()
-  while (Date.now() - started < timeoutMs) {
-    const job = await getAgentVaultJob(jobId, accessToken)
-    if (job.state === 'failed') throw new Error(`Vault deployment failed: ${job.errorCode || 'unknown error'}`)
-    if (job.state === 'awaiting_sponsor_bind' || job.state === 'ready') {
-      return deploymentFromAgentJob(input.agentId, job)
-    }
-    await new Promise((resolve) => window.setTimeout(resolve, 2_500))
-  }
-  throw new Error('The deployment is still queued. It can be resumed from the agent dashboard.')
+  const agentId = typeof input === 'string' ? input : input.agentId
+  const normalized = typeof options === 'number' ? { timeoutMs: options } : options
+  const job = await pollAgentVaultJob(
+    () => getAgentVaultJob(jobId, accessToken),
+    {
+      ...normalized,
+      advance: normalized.advance ?? (() => (
+        processAgentVaultJob(jobId, accessToken, crypto.randomUUID(), normalized.signal)
+      )),
+    },
+  )
+  return deploymentFromAgentJob(agentId, job)
 }
 
 export async function waitForAgentVaultByAgent(
   agentId: Hex,
   accessToken: string,
-  timeoutMs = 10 * 60_000,
+  options: AgentVaultPollOptions | number = {},
 ): Promise<AgentVaultDeployment> {
-  const started = Date.now()
-  while (Date.now() - started < timeoutMs) {
-    const job = await getAgentVaultJobForAgent(agentId, accessToken)
-    if (job.state === 'failed') throw new Error(`Vault deployment failed: ${job.errorCode || 'unknown error'}`)
-    if (job.state === 'awaiting_sponsor_bind' || job.state === 'ready') return deploymentFromAgentJob(agentId, job)
-    await new Promise((resolve) => window.setTimeout(resolve, 2_500))
+  const normalized = typeof options === 'number' ? { timeoutMs: options } : options
+  const job = await pollAgentVaultJob(
+    () => getAgentVaultJobForAgent(agentId, accessToken),
+    {
+      ...normalized,
+      advance: normalized.advance ?? ((current) => (
+        processAgentVaultJob(current.id, accessToken, crypto.randomUUID(), normalized.signal)
+      )),
+    },
+  )
+  return deploymentFromAgentJob(agentId, job)
+}
+
+export type AgentVaultPollOptions = {
+  timeoutMs?: number
+  intervalMs?: number
+  signal?: AbortSignal
+  onStatus?: (job: AgentVaultJobStatus) => void
+  advance?: (job: AgentVaultJobStatus) => Promise<AgentVaultJobStatus | void>
+}
+
+export class AgentVaultPollingCancelled extends Error {
+  constructor() {
+    super('Vault deployment polling was paused.')
+    this.name = 'AgentVaultPollingCancelled'
   }
-  throw new Error('The deployment is still running. Retry Finish launch without creating a second vault.')
+}
+
+function pollingDelay(milliseconds: number, signal?: AbortSignal): Promise<void> {
+  if (signal?.aborted) return Promise.reject(new AgentVaultPollingCancelled())
+  return new Promise((resolve, reject) => {
+    const onAbort = () => {
+      globalThis.clearTimeout(timer)
+      reject(new AgentVaultPollingCancelled())
+    }
+    const timer = globalThis.setTimeout(() => {
+      signal?.removeEventListener('abort', onAbort)
+      resolve()
+    }, milliseconds)
+    signal?.addEventListener('abort', onAbort, { once: true })
+  })
+}
+
+export async function pollAgentVaultJob(
+  readStatus: () => Promise<AgentVaultJobStatus>,
+  options: AgentVaultPollOptions = {},
+): Promise<AgentVaultJobStatus> {
+  const timeoutMs = options.timeoutMs ?? 10 * 60_000
+  const intervalMs = options.intervalMs ?? 2_500
+  const started = Date.now()
+  let lastTemporaryError: Error | null = null
+  while (Date.now() - started < timeoutMs) {
+    if (options.signal?.aborted) throw new AgentVaultPollingCancelled()
+    try {
+      const job = await readStatus()
+      if (options.signal?.aborted) throw new AgentVaultPollingCancelled()
+      lastTemporaryError = null
+      options.onStatus?.(job)
+      if (job.state === 'failed') {
+        throw new Error(`Vault deployment failed: ${job.errorCode || 'unknown error'}`)
+      }
+      if (job.state === 'awaiting_sponsor_bind' || job.state === 'ready') return job
+      await options.advance?.(job)
+    } catch (error) {
+      if (error instanceof AgentVaultPollingCancelled) throw error
+      if (
+        error instanceof AgentGatewayRequestError
+        && error.code === 'VAULT_WORKER_NOT_CONFIGURED'
+      ) throw error
+      if (
+        error instanceof AgentGatewayRequestError
+        && error.status >= 400
+        && error.status < 500
+        && error.status !== 425
+        && error.status !== 429
+        && !(
+          error.status === 409
+          && ['VAULT_WORKER_BUSY', 'IDEMPOTENCY_IN_PROGRESS'].includes(error.code)
+        )
+      ) throw error
+      if (error instanceof Error && error.message.startsWith('Vault deployment failed:')) throw error
+      lastTemporaryError = error instanceof Error ? error : new Error('Deployment status is temporarily unavailable.')
+    }
+    await pollingDelay(intervalMs, options.signal)
+  }
+  if (lastTemporaryError) {
+    throw new Error(`The deployment is still queued and its last status check failed: ${lastTemporaryError.message}`)
+  }
+  throw new Error('The deployment is still queued. Close this window safely and resume it later.')
 }
 
 export async function rotateAgentSigner(wallet: BrowserWallet, agentId: Hex, nextSigner: Address): Promise<Hash> {

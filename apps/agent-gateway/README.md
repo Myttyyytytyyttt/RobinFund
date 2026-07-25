@@ -11,11 +11,14 @@ pnpm build
 pnpm start          # HTTP, OpenAPI, SSE y MCP
 pnpm worker         # intents: simulate -> broadcast -> receipt
 pnpm worker:vaults  # controller -> Fund -> register; espera bind/stake sponsor
+pnpm generate:vault-artifacts # después de cambiar los contratos de deployment
 ```
 
 El HTTP gateway puede desplegarse como Vercel Function mediante `api/[...route].ts`; su base
-pública será `https://<proyecto>.vercel.app` (los rewrites internos apuntan a `/api`). Los loops `worker` y `worker:vaults` son procesos
-durables y deben correr en un VPS/container, no dentro de una Function efímera.
+pública será `https://<proyecto>.vercel.app` (los rewrites internos apuntan a `/api`). Los loops
+`worker` y `worker:vaults` siguen siendo la opción para un VPS/container. En Vercel, el vault usa
+en su lugar una transición durable y finita por request; nunca se inicia un loop dentro de la
+Function.
 
 `TRADING_ENABLED=false` deja disponibles onboarding/World/vault jobs pero devuelve `503` en
 context, quotes, intents y MCP. Es el modo correcto para una red sin Graph + venue reales; nunca se
@@ -40,8 +43,9 @@ inyectadas por el entorno. Producción debe usar el secret manager del runtime.
 | `POST /v1/managed-signers` | sponsor SIWE; identidad Nuvem sin devolver clave |
 | `POST /v1/agent-vaults` | sponsor SIWE |
 | `GET /v1/agent-vaults/:id` | sponsor SIWE |
+| `POST /v1/agent-vaults/:id/process` | sponsor SIWE, idempotente; avanza como máximo una transición global |
 | `POST /v1/agents/:id/world-id/request` | sponsor SIWE; request RP de la app Nuvem |
-| `POST /v1/agents/:id/world-id/verify` | sponsor SIWE; verifica/consume Proof of Human 4.0 o fallback Orb legado |
+| `POST /v1/agents/:id/world-id/verify` | sponsor SIWE; verifica Identity Check 4.0; el PoH legado queda solo por compatibilidad y no habilita vaults AI |
 | `GET /v1/agents/:id/world-registration` | sponsor SIWE; nonce/estado AgentBook |
 | `POST /v1/agents/:id/world-registration` | sponsor SIWE; relay del proof oficial |
 | `POST /v1/agents/:id/world-backing` | sponsor SIWE |
@@ -68,12 +72,53 @@ La plantilla completa está en [`.env.example`](../../.env.example). Grupos:
 Nunca usar una misma hot key para verifier, relayer y deploy operator. Ninguna de ellas se expone con
 prefijo `VITE_` ni se devuelve por API.
 
+## Vault worker request-driven
+
+`createLazyVaultDeploymentService(store, chain)` no lee la configuración ni construye el signer al
+arrancar el gateway. La primera llamada a `processNextEligible()` valida las variables del worker,
+crea el transport y ejecuta un solo `VaultDeploymentWorker.runOnce()`. Requests concurrentes del
+mismo isolate comparten esa ejecución; los claims de Postgres serializan isolates distintos.
+
+`createServices` devuelve esta dependencia como `vaultDeployment` y `bootstrap.ts` la entrega al
+gateway mediante `...services`. La ruta `POST /v1/agent-vaults/:id/process` autentica el bearer
+SIWE, comprueba que el job pertenece al sponsor y valida que Identity Check, AgentBook y el backing
+on-chain sigan activos. La mutación usa el scope idempotente
+`vault-process:${sponsor}:${jobId}`; después del tick vuelve a cargar el job objetivo y responde
+`{ job, processed }`. `processed` solo es `true` si el tick avanzó ese job exacto.
+
+El tick reclama el siguiente job globalmente elegible, no necesariamente el id de la URL. Esta
+propiedad conserva el orden de cualquier rango de nonces ya reservado; no debe sustituirse por un
+claim «por id». Un advisory lock serializa claims entre isolates y el lease del job impide que otro
+request salte al siguiente antes de reservar el primer rango. Un claim ocupado es un resultado
+normal con `claimed: 0`; `attempts` cuenta fallos del worker, no polls de receipt/confirmaciones. Los
+fallos permanentes de configuración usan `503 VAULT_WORKER_NOT_CONFIGURED` sin revelar nombres o
+valores de secretos; `VAULT_WORKER_UNAVAILABLE` queda reservado para fallos transitorios.
+
+El frontend llama este POST después de cada estado pendiente y luego continúa el GET normal. Cada
+tick usa una `Idempotency-Key` nueva; un replay de la misma key no ejecuta una segunda transición.
+Mantener `maxDuration: 60` mientras el claim se considere stale a los dos minutos. Si se amplía la
+duración, primero hay que extender/renovar ese lease para impedir dos procesadores simultáneos.
+
+Los artefactos mínimos de `AgentVaultController` y `Fund` están versionados en
+`src/generated/vault-artifacts.ts`; un build limpio de Vercel no depende de `packages/contracts/out`.
+Tras modificar esos contratos:
+
+```powershell
+forge build --root packages/contracts
+pnpm generate:vault-artifacts
+pnpm check:vault-artifacts
+```
+
+El generador conserva ABI, creation bytecode y referencias de link solamente. El worker enlaza
+`NAVLib` tanto en el controller como en el Fund y rechaza cualquier placeholder o librería
+desconocida antes de estimar gas.
+
 ## Garantías operativas
 
 - Challenge/nonce AgentKit persistido y no reutilizable.
-- La action propia `sponsor-ai-vault` prefiere Proof of Human 4.0 y acepta solo el fallback Orb
-  legado para cuentas verificadas todavía no migradas; liga signal a sponsor + signer + agentId y
-  solo persiste HMACs/hashes. El RP signing key nunca llega al browser.
+- La action propia `sponsor-ai-vault` exige Identity Check 4.0 con pasaporte + edad mínima 18,
+  liga signal a sponsor + signer + agentId y solo persiste HMACs/hashes. El flujo PoH/Orb legado
+  no puede satisfacer el backing de un vault AI. El RP signing key nunca llega al browser.
 - Un sponsor World ya verificado puede vincular otros agentes desde la misma wallet sin otro scan;
   el límite de Nuvem-managed agents se serializa por hash humano.
 - El registro AgentBook fija contrato, World Chain, app/action oficial y nonce actual; nunca devuelve
@@ -93,6 +138,11 @@ prefijo `VITE_` ni se devuelve por API.
 pnpm typecheck
 pnpm test
 ```
+
+`pnpm check:vault-artifacts` se ejecuta después de `forge build`. Cada build de aplicación ejecuta
+además `check:vault-artifact-sources`, que compara el fingerprint de Solidity/configuración sin
+necesitar Foundry ni `packages/contracts/out`; un cambio de contratos con artefactos stale falla el
+build limpio.
 
 Los tests usan dependencias inyectadas y cubren replay RP, signal equivocado, rechazo World,
 reutilización segura, cuota, AgentBook, sesiones, binding Uniswap, idempotencia, dos workers,

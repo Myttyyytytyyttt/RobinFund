@@ -121,9 +121,21 @@ export class AgentSessionService {
     if (payload.requestId?.toLowerCase() !== agentId.toLowerCase()) {
       throw new AgentAuthError("AGENT_MISMATCH", "AgentKit challenge belongs to another agent");
     }
+    if (
+      payload.chainId !== `eip155:${this.chain.chainId}`
+      || (payload.type !== "eip191" && payload.type !== "eip1271")
+    ) {
+      throw new AgentAuthError(
+        "UNSUPPORTED_AGENTKIT_CHAIN",
+        `AgentKit proof must use eip155:${this.chain.chainId} with an EVM signature`,
+        400,
+      );
+    }
     const signer = normalizeAddress(payload.address);
     const validation = await validateAgentkitMessage(payload, this.sessionUri, {
-      maxAge: this.options.challengeLifetimeSeconds ?? 300,
+      // AgentKit's maxAge is expressed in milliseconds; our public option is
+      // deliberately seconds to match the RP/session lifetime settings.
+      maxAge: (this.options.challengeLifetimeSeconds ?? 300) * 1_000,
       checkNonce: (nonce) => this.store.isChallengeActive(agentId, signer, nonce),
     });
     if (!validation.valid) {
@@ -188,6 +200,30 @@ export class AgentSessionService {
     const session = await this.store.getSession(hmacSha256(this.options.sessionSecret, token));
     if (!session || session.revokedAt || session.expiresAt <= new Date()) {
       throw new AgentAuthError("SESSION_EXPIRED", "Agent session expired or revoked");
+    }
+
+    // AgentKit authenticates the signer, while AgentRegistry remains the
+    // authoritative revocation boundary. Re-check it on every request so an
+    // on-chain pause, backing expiry or signer rotation invalidates an already
+    // issued bearer immediately instead of waiting up to 15 minutes.
+    const [profile, chainAgent] = await Promise.all([
+      this.store.getAgentProfile(session.agentId),
+      this.chain.getAgent(session.agentId),
+    ]);
+    const identityMatches = Boolean(
+      profile
+      && profile.signer.toLowerCase() === session.signer.toLowerCase()
+      && profile.sponsor.toLowerCase() === session.sponsor.toLowerCase()
+      && chainAgent.signer.toLowerCase() === session.signer.toLowerCase()
+      && chainAgent.sponsor.toLowerCase() === session.sponsor.toLowerCase(),
+    );
+    if (!identityMatches) {
+      await this.store.revokeAgentSessions(session.agentId);
+      throw new AgentAuthError("STALE_AGENT_SIGNER", "Agent signer or sponsor changed after this session was issued", 403);
+    }
+    if (!chainAgent.active || chainAgent.backedUntil <= Math.floor(Date.now() / 1_000)) {
+      await this.store.revokeAgentSessions(session.agentId);
+      throw new AgentAuthError("WORLD_BACKING_INACTIVE", "AgentRegistry World backing expired or was revoked", 403);
     }
     await this.store.touchSession(session.id);
     return session;

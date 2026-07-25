@@ -70,6 +70,9 @@ async function execute(tool: unknown, input: unknown): Promise<unknown> {
 const options = {
   model: "openai/gpt-5-mini",
   execute: false,
+  expectedChainId: 4663,
+  expectedFund: fund,
+  expectedController: controller,
   expectedApprovalProxy: "0x0000000085e102724e78ecd2f45dc9ca239affad" as Address,
   expectedUniversalRouter: "0x8876789976decbfcbbbe364623c63652db8c0904" as Address,
   maxSlippageBps: 75,
@@ -89,6 +92,16 @@ describe("reference agent tools", () => {
     const result = await execute(tools.readVault, {});
     expect(fake.context).toHaveBeenCalledOnce();
     expect(result).toMatchObject({ vault: fund, navWad: "1000" });
+  });
+
+  it("rejects gateway context that differs from the runtime-pinned vault", async () => {
+    const fake = api();
+    vi.mocked(fake.context).mockResolvedValueOnce({
+      ...context,
+      vault: "0x9999999999999999999999999999999999999999" as Address,
+    });
+    const tools = createReferenceTools(fake, options);
+    await expect(execute(tools.readVault, {})).rejects.toThrow("runtime-pinned Fund/controller");
   });
 
   it("quotes without signing in dry-run mode", async () => {
@@ -138,7 +151,11 @@ describe("reference agent tools", () => {
     expect(fake.signAndSubmit).toHaveBeenCalledWith(
       refreshed,
       expect.objectContaining({ evidenceHash: expect.stringMatching(/^0x[0-9a-f]{64}$/) }),
-      expect.objectContaining({ expectedFund: fund, expectedController: controller }),
+      expect.objectContaining({
+        chainId: 4663,
+        expectedFund: fund,
+        expectedController: controller,
+      }),
     );
   });
 });

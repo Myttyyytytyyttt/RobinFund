@@ -16,6 +16,12 @@ import type {
   WorldIdRequestRecord,
   WorldIdVerificationInput,
   WorldIdVerificationResult,
+  WorldIdentityAgentBinding,
+  WorldIdentityEnvironment,
+  WorldIdentityRequestRecord,
+  WorldIdentitySponsorBinding,
+  WorldIdentityVerificationInput,
+  WorldIdentityVerificationResult,
   VaultDeploymentPlan,
   VaultJobRecord,
   VaultJobState,
@@ -36,9 +42,35 @@ export interface NewVaultJob {
   request: Record<string, unknown>;
 }
 
+export interface NewAgentVault {
+  profile: Omit<AgentProfile, "runtimeKind"> & {
+    displayName: string;
+    strategySummary: string;
+    metadataUri: string;
+  };
+  request: Record<string, unknown>;
+}
+
+export type CreateAgentVaultResult =
+  | {
+    kind: "created";
+    job: { id: string; state: string };
+    runtimeKind: AgentProfile["runtimeKind"];
+  }
+  | {
+    kind: "existing";
+    job: VaultJobRecord;
+    runtimeKind: AgentProfile["runtimeKind"];
+  }
+  | { kind: "profile_ownership_conflict" }
+  | { kind: "vault_job_ownership_conflict" }
+  | { kind: "managed_signer_conflict" }
+  | { kind: "managed_signer_required" };
+
 export interface ControlPlaneStore {
   getAgentProfile(agentId: Hex): Promise<AgentProfile | null>;
   upsertAgentProfile(profile: AgentProfile & { displayName?: string; strategySummary?: string; metadataUri?: string }): Promise<void>;
+  syncAgentProfile(profile: AgentProfile): Promise<void>;
   upsertManagedSigner(input: ManagedSignerRecord): Promise<ManagedSignerRecord>;
   getManagedSigner(agentId: Hex): Promise<ManagedSignerRecord | null>;
   markManagedSignerBound(agentId: Hex, sponsor: Address, signer: Address): Promise<void>;
@@ -52,6 +84,32 @@ export interface ControlPlaneStore {
     maxManagedAgents: number;
   }): Promise<WorldIdVerificationResult>;
   recordWorldIdVerification(input: WorldIdVerificationInput): Promise<WorldIdVerificationResult>;
+  createWorldIdentityRequest(input: WorldIdentityRequestRecord): Promise<void>;
+  getWorldIdentityRequest(id: string): Promise<WorldIdentityRequestRecord | null>;
+  getWorldIdentityAgentBinding(input: {
+    agentId: Hex;
+    appId: `app_${string}`;
+    rpId: string;
+    environment: WorldIdentityEnvironment;
+    policyId: string;
+    policyVersion: number;
+    policyHash: Hex;
+    action: string;
+  }): Promise<WorldIdentityAgentBinding | null>;
+  bindExistingWorldIdentitySponsor(input: {
+    agentId: Hex;
+    sponsor: Address;
+    signer: Address;
+    appId: `app_${string}`;
+    rpId: string;
+    environment: WorldIdentityEnvironment;
+    policyId: string;
+    policyVersion: number;
+    policyHash: Hex;
+    action: string;
+    maxManagedAgents: number;
+  }): Promise<WorldIdentityVerificationResult>;
+  recordWorldIdentityVerification(input: WorldIdentityVerificationInput): Promise<WorldIdentityVerificationResult>;
 
   createChallenge(input: {
     agentId: Hex;
@@ -87,6 +145,7 @@ export interface ControlPlaneStore {
   appendEvent(event: Omit<AgentEvent, "cursor">): Promise<AgentEvent>;
   recordDecision(input: AgentDecisionInput): Promise<string>;
   recordWorldAttestation(input: WorldAttestationRecord): Promise<void>;
+  createAgentVault(input: NewAgentVault): Promise<CreateAgentVaultResult>;
   createVaultJob(input: NewVaultJob): Promise<{ id: string; state: string }>;
   getVaultJob(id: string): Promise<VaultJobRecord | null>;
   getVaultJobForAgent(agentId: Hex): Promise<VaultJobRecord | null>;
@@ -98,7 +157,13 @@ export interface ControlPlaneStore {
     jobId: string,
     workerId: string,
     state: VaultJobState,
-    options?: { stakeEscrow?: Address; errorCode?: string; retryAt?: Date; terminal?: boolean },
+    options?: {
+      stakeEscrow?: Address;
+      errorCode?: string;
+      retryAt?: Date;
+      terminal?: boolean;
+      incrementAttempts?: boolean;
+    },
   ): Promise<void>;
   markVaultJobReady(agentId: Hex, controller: Address, fund: Address, stakeEscrow: Address): Promise<void>;
 
@@ -133,6 +198,28 @@ type IdempotencyEntry = {
   body?: unknown;
 };
 
+function worldIdentitySponsorKey(input: {
+  sponsor: Address;
+  appId: `app_${string}`;
+  rpId: string;
+  environment: WorldIdentityEnvironment;
+  policyId: string;
+  policyVersion: number;
+  policyHash: Hex;
+  action: string;
+}): string {
+  return [
+    input.sponsor.toLowerCase(),
+    input.environment,
+    input.appId,
+    input.rpId,
+    input.action,
+    input.policyId,
+    input.policyVersion,
+    input.policyHash.toLowerCase(),
+  ].join(":");
+}
+
 /** Deterministic in-memory implementation used by unit tests and the local demo. */
 export class MemoryControlPlaneStore implements ControlPlaneStore {
   readonly profiles = new Map<string, AgentProfile>();
@@ -148,18 +235,61 @@ export class MemoryControlPlaneStore implements ControlPlaneStore {
   readonly worldIdRequests = new Map<string, WorldIdRequestRecord>();
   readonly worldIdSponsorBindings = new Map<string, { humanHash: Hex; nullifierHash: Hex }>();
   readonly worldIdAgentBindings = new Map<string, WorldIdAgentBinding>();
+  readonly worldIdentityRequests = new Map<string, WorldIdentityRequestRecord>();
+  readonly worldIdentitySponsorBindings = new Map<string, WorldIdentitySponsorBinding>();
+  readonly worldIdentityAgentBindings = new Map<string, WorldIdentityAgentBinding>();
 
   private readonly challenges = new Map<string, Challenge>();
   private readonly idempotency = new Map<string, IdempotencyEntry>();
   private readonly events: AgentEvent[] = [];
   private readonly tokenToSession = new Map<string, string>();
+  private readonly vaultCreationLocks = new Map<string, Promise<void>>();
+
+  private async withVaultCreationLock<T>(agentId: Hex, execute: () => T | Promise<T>): Promise<T> {
+    const key = agentId.toLowerCase();
+    const previous = this.vaultCreationLocks.get(key) ?? Promise.resolve();
+    let release = () => {};
+    const current = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    this.vaultCreationLocks.set(key, current);
+    await previous;
+    try {
+      return await execute();
+    } finally {
+      release();
+      if (this.vaultCreationLocks.get(key) === current) {
+        this.vaultCreationLocks.delete(key);
+      }
+    }
+  }
 
   async getAgentProfile(agentId: Hex): Promise<AgentProfile | null> {
     return this.profiles.get(agentId.toLowerCase()) ?? null;
   }
 
   async upsertAgentProfile(profile: AgentProfile): Promise<void> {
-    this.profiles.set(profile.agentId.toLowerCase(), structuredClone(profile));
+    const key = profile.agentId.toLowerCase();
+    const existing = this.profiles.get(key);
+    if (
+      existing
+      && (
+        existing.sponsor.toLowerCase() !== profile.sponsor.toLowerCase()
+        || existing.signer.toLowerCase() !== profile.signer.toLowerCase()
+      )
+    ) {
+      throw new Error("agent profile ownership mismatch");
+    }
+    this.profiles.set(key, structuredClone(profile));
+  }
+
+  async syncAgentProfile(profile: AgentProfile): Promise<void> {
+    const key = profile.agentId.toLowerCase();
+    const existing = this.profiles.get(key);
+    if (!existing || existing.sponsor.toLowerCase() !== profile.sponsor.toLowerCase()) {
+      throw new Error("agent profile sponsor mismatch");
+    }
+    this.profiles.set(key, structuredClone(profile));
   }
 
   async upsertManagedSigner(input: ManagedSignerRecord): Promise<ManagedSignerRecord> {
@@ -300,6 +430,321 @@ export class MemoryControlPlaneStore implements ControlPlaneStore {
     });
     request.consumedAt = new Date();
     return this.bindExistingWorldIdSponsor(input);
+  }
+
+  async createWorldIdentityRequest(input: WorldIdentityRequestRecord): Promise<void> {
+    if (this.worldIdentityRequests.has(input.id)) throw new Error("World Identity request collision");
+    this.worldIdentityRequests.set(input.id, structuredClone(input));
+  }
+
+  async getWorldIdentityRequest(id: string): Promise<WorldIdentityRequestRecord | null> {
+    const value = this.worldIdentityRequests.get(id);
+    return value ? structuredClone(value) : null;
+  }
+
+  async getWorldIdentityAgentBinding(input: {
+    agentId: Hex;
+    appId: `app_${string}`;
+    rpId: string;
+    environment: WorldIdentityEnvironment;
+    policyId: string;
+    policyVersion: number;
+    policyHash: Hex;
+    action: string;
+  }): Promise<WorldIdentityAgentBinding | null> {
+    const value = this.worldIdentityAgentBindings.get(input.agentId.toLowerCase());
+    if (
+      !value
+      || value.revokedAt
+      || value.validUntil <= new Date()
+      || value.appId !== input.appId
+      || value.rpId !== input.rpId
+      || value.environment !== input.environment
+      || value.policyId !== input.policyId
+      || value.policyVersion !== input.policyVersion
+      || value.policyHash !== input.policyHash
+      || value.action !== input.action
+    ) return null;
+    return structuredClone(value);
+  }
+
+  async bindExistingWorldIdentitySponsor(input: {
+    agentId: Hex;
+    sponsor: Address;
+    signer: Address;
+    appId: `app_${string}`;
+    rpId: string;
+    environment: WorldIdentityEnvironment;
+    policyId: string;
+    policyVersion: number;
+    policyHash: Hex;
+    action: string;
+    maxManagedAgents: number;
+  }): Promise<WorldIdentityVerificationResult> {
+    const sponsorBinding = this.worldIdentitySponsorBindings.get(worldIdentitySponsorKey(input));
+    if (!sponsorBinding || sponsorBinding.revokedAt || sponsorBinding.validUntil <= new Date()) {
+      return {
+        accepted: false,
+        reason: "sponsor_unverified",
+        binding: null,
+        managedAgentCount: 0,
+        maxManagedAgents: input.maxManagedAgents,
+      };
+    }
+    const profile = this.profiles.get(input.agentId.toLowerCase());
+    if (
+      !profile
+      || profile.sponsor.toLowerCase() !== input.sponsor.toLowerCase()
+      || profile.signer.toLowerCase() !== input.signer.toLowerCase()
+    ) {
+      return {
+        accepted: false,
+        reason: "request_invalid",
+        binding: null,
+        managedAgentCount: 0,
+        maxManagedAgents: input.maxManagedAgents,
+      };
+    }
+
+    const agentKey = input.agentId.toLowerCase();
+    const existing = this.worldIdentityAgentBindings.get(agentKey);
+    if (existing) {
+      const matches = !existing.revokedAt
+        && existing.sponsorBindingId === sponsorBinding.id
+        && existing.sponsor.toLowerCase() === input.sponsor.toLowerCase()
+        && existing.signer.toLowerCase() === input.signer.toLowerCase()
+        && existing.appId === input.appId
+        && existing.rpId === input.rpId
+        && existing.environment === input.environment
+        && existing.action === input.action
+        && existing.policyId === input.policyId
+        && existing.policyVersion === input.policyVersion
+        && existing.policyHash === input.policyHash
+        && existing.validUntil > new Date();
+      return {
+        accepted: matches,
+        reason: matches ? "already_verified" : "binding_conflict",
+        binding: matches ? structuredClone(existing) : null,
+        managedAgentCount: 0,
+        maxManagedAgents: input.maxManagedAgents,
+      };
+    }
+
+    const managedPeers = [...this.worldIdentityAgentBindings.values()].filter((binding) => {
+      const candidate = this.profiles.get(binding.agentId.toLowerCase());
+      return binding.subjectHash === sponsorBinding.subjectHash
+        && binding.environment === input.environment
+        && binding.appId === input.appId
+        && binding.rpId === input.rpId
+        && binding.action === input.action
+        && binding.policyHash === input.policyHash
+        && !binding.revokedAt
+        && binding.validUntil > new Date()
+        && candidate?.runtimeKind === "nuvem_reference"
+        && candidate.status !== "retired";
+    }).length;
+    const managed = profile.runtimeKind === "nuvem_reference";
+    if (managed && managedPeers >= input.maxManagedAgents) {
+      return {
+        accepted: false,
+        reason: "managed_agent_limit",
+        binding: null,
+        managedAgentCount: managedPeers,
+        maxManagedAgents: input.maxManagedAgents,
+      };
+    }
+
+    const binding: WorldIdentityAgentBinding = {
+      agentId: input.agentId,
+      sponsorBindingId: sponsorBinding.id,
+      sponsor: input.sponsor,
+      signer: input.signer,
+      subjectHash: sponsorBinding.subjectHash,
+      nullifierHash: sponsorBinding.nullifierHash,
+      appId: sponsorBinding.appId,
+      rpId: sponsorBinding.rpId,
+      environment: sponsorBinding.environment,
+      policyId: sponsorBinding.policyId,
+      policyVersion: sponsorBinding.policyVersion,
+      policyHash: sponsorBinding.policyHash,
+      attributesHash: sponsorBinding.attributesHash,
+      action: sponsorBinding.action,
+      credentialIdentifier: sponsorBinding.credentialIdentifier,
+      issuerSchemaId: sponsorBinding.issuerSchemaId,
+      verifiedAt: sponsorBinding.lastVerifiedAt,
+      validUntil: sponsorBinding.validUntil,
+      revokedAt: null,
+    };
+    this.worldIdentityAgentBindings.set(agentKey, binding);
+    return {
+      accepted: true,
+      reason: "verified",
+      binding: structuredClone(binding),
+      managedAgentCount: managedPeers + (managed ? 1 : 0),
+      maxManagedAgents: input.maxManagedAgents,
+    };
+  }
+
+  async recordWorldIdentityVerification(
+    input: WorldIdentityVerificationInput,
+  ): Promise<WorldIdentityVerificationResult> {
+    const request = this.worldIdentityRequests.get(input.requestId);
+    const profile = this.profiles.get(input.agentId.toLowerCase());
+    if (
+      !request
+      || request.consumedAt
+      || request.expiresAt <= input.verifiedAt
+      || request.agentId.toLowerCase() !== input.agentId.toLowerCase()
+      || request.sponsor.toLowerCase() !== input.sponsor.toLowerCase()
+      || request.signer.toLowerCase() !== input.signer.toLowerCase()
+      || request.rpNonceHash !== input.rpNonceHash
+      || request.signalHash !== input.signalHash
+      || request.appId !== input.appId
+      || request.rpId !== input.rpId
+      || request.environment !== input.environment
+      || request.policyId !== input.policyId
+      || request.policyVersion !== input.policyVersion
+      || request.policyHash !== input.policyHash
+      || request.attributesHash !== input.attributesHash
+      || request.action !== input.action
+      || !profile
+      || profile.sponsor.toLowerCase() !== input.sponsor.toLowerCase()
+      || profile.signer.toLowerCase() !== input.signer.toLowerCase()
+    ) {
+      return {
+        accepted: false,
+        reason: "request_invalid",
+        binding: null,
+        managedAgentCount: 0,
+        maxManagedAgents: input.maxManagedAgents,
+      };
+    }
+
+    const sponsorKey = worldIdentitySponsorKey(input);
+    const existingSponsor = this.worldIdentitySponsorBindings.get(sponsorKey);
+    const humanOwner = [...this.worldIdentitySponsorBindings.entries()].find(([candidateKey, value]) => (
+      candidateKey !== sponsorKey
+      && !value.revokedAt
+      && value.environment === input.environment
+      && value.appId === input.appId
+      && value.rpId === input.rpId
+      && value.action === input.action
+      && value.policyId === input.policyId
+      && value.policyVersion === input.policyVersion
+      && value.policyHash === input.policyHash
+      && (value.subjectHash === input.subjectHash || value.nullifierHash === input.nullifierHash)
+    ));
+    if (
+      humanOwner
+      || (existingSponsor && (
+        existingSponsor.subjectHash !== input.subjectHash
+        || existingSponsor.nullifierHash !== input.nullifierHash
+      ))
+    ) {
+      return {
+        accepted: false,
+        reason: "human_bound_elsewhere",
+        binding: null,
+        managedAgentCount: 0,
+        maxManagedAgents: input.maxManagedAgents,
+      };
+    }
+
+    const agentKey = input.agentId.toLowerCase();
+    const existing = this.worldIdentityAgentBindings.get(agentKey);
+    if (
+      existing
+      && (
+        existing.sponsor.toLowerCase() !== input.sponsor.toLowerCase()
+        || existing.signer.toLowerCase() !== input.signer.toLowerCase()
+      )
+    ) {
+      return {
+        accepted: false,
+        reason: "binding_conflict",
+        binding: null,
+        managedAgentCount: 0,
+        maxManagedAgents: input.maxManagedAgents,
+      };
+    }
+
+    const managedPeers = [...this.worldIdentityAgentBindings.values()].filter((binding) => {
+      const candidate = this.profiles.get(binding.agentId.toLowerCase());
+      return binding.agentId.toLowerCase() !== input.agentId.toLowerCase()
+        && binding.subjectHash === input.subjectHash
+        && binding.environment === input.environment
+        && binding.appId === input.appId
+        && binding.rpId === input.rpId
+        && binding.action === input.action
+        && binding.policyHash === input.policyHash
+        && !binding.revokedAt
+        && binding.validUntil > input.verifiedAt
+        && candidate?.runtimeKind === "nuvem_reference"
+        && candidate.status !== "retired";
+    }).length;
+    const managed = profile.runtimeKind === "nuvem_reference";
+    if (managed && managedPeers >= input.maxManagedAgents) {
+      return {
+        accepted: false,
+        reason: "managed_agent_limit",
+        binding: null,
+        managedAgentCount: managedPeers,
+        maxManagedAgents: input.maxManagedAgents,
+      };
+    }
+
+    const sponsorBinding: WorldIdentitySponsorBinding = {
+      id: existingSponsor?.id ?? input.requestId,
+      sponsor: input.sponsor,
+      subjectHash: input.subjectHash,
+      nullifierHash: input.nullifierHash,
+      appId: input.appId,
+      rpId: input.rpId,
+      environment: input.environment,
+      policyId: input.policyId,
+      policyVersion: input.policyVersion,
+      policyHash: input.policyHash,
+      attributesHash: input.attributesHash,
+      action: input.action,
+      credentialIdentifier: input.credentialIdentifier,
+      issuerSchemaId: input.issuerSchemaId,
+      firstVerifiedAt: existingSponsor?.firstVerifiedAt ?? input.verifiedAt,
+      lastVerifiedAt: input.verifiedAt,
+      validUntil: input.validUntil,
+      revokedAt: null,
+    };
+
+    const binding: WorldIdentityAgentBinding = {
+      agentId: input.agentId,
+      sponsorBindingId: sponsorBinding.id,
+      sponsor: input.sponsor,
+      signer: input.signer,
+      subjectHash: input.subjectHash,
+      nullifierHash: input.nullifierHash,
+      appId: input.appId,
+      rpId: input.rpId,
+      environment: input.environment,
+      policyId: input.policyId,
+      policyVersion: input.policyVersion,
+      policyHash: input.policyHash,
+      attributesHash: input.attributesHash,
+      action: input.action,
+      credentialIdentifier: input.credentialIdentifier,
+      issuerSchemaId: input.issuerSchemaId,
+      verifiedAt: input.verifiedAt,
+      validUntil: input.validUntil,
+      revokedAt: null,
+    };
+    this.worldIdentitySponsorBindings.set(sponsorKey, sponsorBinding);
+    request.consumedAt = input.verifiedAt;
+    this.worldIdentityAgentBindings.set(agentKey, binding);
+    return {
+      accepted: true,
+      reason: "verified",
+      binding: structuredClone(binding),
+      managedAgentCount: managedPeers + (managed ? 1 : 0),
+      maxManagedAgents: input.maxManagedAgents,
+    };
   }
 
   async createChallenge(input: {
@@ -467,6 +912,81 @@ export class MemoryControlPlaneStore implements ControlPlaneStore {
     this.worldAttestations.push(structuredClone(input));
   }
 
+  async createAgentVault(input: NewAgentVault): Promise<CreateAgentVaultResult> {
+    return this.withVaultCreationLock(input.profile.agentId, () => {
+      const agentKey = input.profile.agentId.toLowerCase();
+      const sponsor = input.profile.sponsor.toLowerCase();
+      const signer = input.profile.signer.toLowerCase();
+      const managed = this.managedSigners.get(agentKey);
+      if (
+        managed
+        && (
+          managed.sponsor.toLowerCase() !== sponsor
+          || managed.signer.toLowerCase() !== signer
+          || managed.status === "retired"
+        )
+      ) {
+        return { kind: "managed_signer_conflict" };
+      }
+      if (!managed && input.request.runtimeKind === "nuvem_reference") {
+        return { kind: "managed_signer_required" };
+      }
+      const runtimeKind: AgentProfile["runtimeKind"] = managed ? "nuvem_reference" : "external";
+      const currentProfile = this.profiles.get(agentKey);
+      if (
+        currentProfile
+        && (
+          currentProfile.sponsor.toLowerCase() !== sponsor
+          || currentProfile.signer.toLowerCase() !== signer
+        )
+      ) {
+        return { kind: "profile_ownership_conflict" };
+      }
+      const existing = [...this.vaultJobs.values()]
+        .find((job) => job.agentId.toLowerCase() === agentKey && job.state !== "failed");
+      if (existing) {
+        if (existing.sponsor.toLowerCase() !== sponsor) {
+          return { kind: "vault_job_ownership_conflict" };
+        }
+        return {
+          kind: "existing",
+          job: structuredClone(existing),
+          runtimeKind,
+        };
+      }
+
+      const profile: AgentProfile = {
+        ...structuredClone(input.profile),
+        runtimeKind,
+      };
+      const job: VaultJobRecord = {
+        id: randomUUID(),
+        agentId: input.profile.agentId,
+        sponsor: input.profile.sponsor,
+        request: structuredClone({ ...input.request, runtimeKind }),
+        state: "requested",
+        controller: null,
+        fund: null,
+        stakeEscrow: null,
+        transactionHashes: [],
+        deploymentPlan: null,
+        nonceStart: null,
+        attempts: 0,
+        availableAt: new Date(),
+        lockedBy: null,
+        errorCode: null,
+      };
+      this.profiles.set(agentKey, profile);
+      this.vaultJobs.set(job.id, job);
+      if (managed) managed.status = "bound";
+      return {
+        kind: "created",
+        job: { id: job.id, state: job.state },
+        runtimeKind,
+      };
+    });
+  }
+
   async createVaultJob(input: NewVaultJob): Promise<{ id: string; state: string }> {
     const value: VaultJobRecord = {
       id: randomUUID(),
@@ -499,9 +1019,19 @@ export class MemoryControlPlaneStore implements ControlPlaneStore {
 
   async claimVaultJobs(workerId: string, limit: number): Promise<VaultJobRecord[]> {
     const now = new Date();
-    const jobs = [...this.vaultJobs.values()]
+    const active = [...this.vaultJobs.values()]
       .filter((job) => ["requested", "preparing", "deploying_controller", "deploying_fund", "registering"].includes(job.state))
+    const blocker = active
+      .filter((job) => job.nonceStart != null || job.lockedBy != null)
+      .sort((left, right) => {
+        if (left.nonceStart != null && right.nonceStart != null) {
+          return left.nonceStart < right.nonceStart ? -1 : left.nonceStart > right.nonceStart ? 1 : 0;
+        }
+        return left.nonceStart != null ? -1 : right.nonceStart != null ? 1 : 0;
+      })[0];
+    const jobs = active
       .filter((job) => job.availableAt <= now && job.attempts < 20 && !job.lockedBy)
+      .filter((job) => !blocker || job.id === blocker.id)
       .filter((job) => {
         const profile = this.profiles.get(job.agentId.toLowerCase());
         return profile?.status === "active" && profile.worldBacked && Boolean(profile.worldBackedUntil && profile.worldBackedUntil > now);
@@ -509,7 +1039,6 @@ export class MemoryControlPlaneStore implements ControlPlaneStore {
       .slice(0, limit);
     for (const job of jobs) {
       job.lockedBy = workerId;
-      job.attempts++;
     }
     return jobs;
   }
@@ -546,7 +1075,13 @@ export class MemoryControlPlaneStore implements ControlPlaneStore {
     jobId: string,
     workerId: string,
     state: VaultJobState,
-    options: { stakeEscrow?: Address; errorCode?: string; retryAt?: Date; terminal?: boolean } = {},
+    options: {
+      stakeEscrow?: Address;
+      errorCode?: string;
+      retryAt?: Date;
+      terminal?: boolean;
+      incrementAttempts?: boolean;
+    } = {},
   ): Promise<void> {
     const job = this.requireVaultJob(jobId);
     if (job.lockedBy !== workerId) throw new Error("vault job is not owned by worker");
@@ -555,6 +1090,7 @@ export class MemoryControlPlaneStore implements ControlPlaneStore {
     job.stakeEscrow = options.stakeEscrow ?? job.stakeEscrow;
     job.availableAt = options.retryAt ?? new Date();
     job.lockedBy = null;
+    if (options.incrementAttempts) job.attempts++;
   }
 
   async markVaultJobReady(agentId: Hex, controller: Address, fund: Address, stakeEscrow: Address): Promise<void> {

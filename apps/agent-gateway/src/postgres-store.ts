@@ -19,11 +19,24 @@ import type {
   WorldIdRequestRecord,
   WorldIdVerificationInput,
   WorldIdVerificationResult,
+  WorldIdentityAgentBinding,
+  WorldIdentityAttribute,
+  WorldIdentityEnvironment,
+  WorldIdentityRequestRecord,
+  WorldIdentitySponsorBinding,
+  WorldIdentityVerificationInput,
+  WorldIdentityVerificationResult,
   VaultDeploymentPlan,
   VaultJobRecord,
   VaultJobState,
 } from "./domain.js";
-import type { ControlPlaneStore, NewSession, NewVaultJob } from "./store.js";
+import type {
+  ControlPlaneStore,
+  CreateAgentVaultResult,
+  NewAgentVault,
+  NewSession,
+  NewVaultJob,
+} from "./store.js";
 
 type Row = Record<string, unknown>;
 
@@ -123,6 +136,76 @@ function mapWorldIdAgentBinding(row: Row): WorldIdAgentBinding {
     signer: address(row.signer_address),
     humanHash: hex(row.human_hash),
     verifiedAt: date(row.verified_at),
+    revokedAt: nullableDate(row.revoked_at),
+  };
+}
+
+function mapWorldIdentityRequest(row: Row): WorldIdentityRequestRecord {
+  return {
+    id: String(row.id),
+    agentId: hex(row.agent_id),
+    sponsor: address(row.sponsor_wallet),
+    signer: address(row.signer_address),
+    rpNonceHash: hex(row.rp_nonce_hash),
+    signalHash: hex(row.signal_hash),
+    appId: String(row.app_id) as `app_${string}`,
+    rpId: String(row.rp_id),
+    environment: String(row.environment) as WorldIdentityEnvironment,
+    policyId: String(row.policy_id),
+    policyVersion: Number(row.policy_version),
+    policyHash: hex(row.policy_hash),
+    attributes: (Array.isArray(row.attributes) ? row.attributes : []) as WorldIdentityAttribute[],
+    attributesHash: hex(row.attributes_hash),
+    action: String(row.action),
+    requireUserPresence: Boolean(row.require_user_presence),
+    expiresAt: date(row.expires_at),
+    consumedAt: nullableDate(row.consumed_at),
+  };
+}
+
+function mapWorldIdentityAgentBinding(row: Row): WorldIdentityAgentBinding {
+  return {
+    agentId: hex(row.agent_id),
+    sponsorBindingId: String(row.sponsor_binding_id),
+    sponsor: address(row.sponsor_wallet),
+    signer: address(row.signer_address),
+    subjectHash: hex(row.subject_hash),
+    nullifierHash: hex(row.nullifier_hash),
+    appId: String(row.app_id) as `app_${string}`,
+    rpId: String(row.rp_id),
+    environment: String(row.environment) as WorldIdentityEnvironment,
+    policyId: String(row.policy_id),
+    policyVersion: Number(row.policy_version),
+    policyHash: hex(row.policy_hash),
+    attributesHash: hex(row.attributes_hash),
+    action: String(row.action),
+    credentialIdentifier: String(row.credential_identifier),
+    issuerSchemaId: Number(row.issuer_schema_id),
+    verifiedAt: date(row.verified_at),
+    validUntil: date(row.valid_until),
+    revokedAt: nullableDate(row.revoked_at),
+  };
+}
+
+function mapWorldIdentitySponsorBinding(row: Row): WorldIdentitySponsorBinding {
+  return {
+    id: String(row.id),
+    sponsor: address(row.sponsor_wallet),
+    subjectHash: hex(row.subject_hash),
+    nullifierHash: hex(row.nullifier_hash),
+    appId: String(row.app_id) as `app_${string}`,
+    rpId: String(row.rp_id),
+    environment: String(row.environment) as WorldIdentityEnvironment,
+    policyId: String(row.policy_id),
+    policyVersion: Number(row.policy_version),
+    policyHash: hex(row.policy_hash),
+    attributesHash: hex(row.attributes_hash),
+    action: String(row.action),
+    credentialIdentifier: String(row.credential_identifier),
+    issuerSchemaId: Number(row.issuer_schema_id),
+    firstVerifiedAt: date(row.first_verified_at),
+    lastVerifiedAt: date(row.last_verified_at),
+    validUntil: date(row.valid_until),
     revokedAt: nullableDate(row.revoked_at),
   };
 }
@@ -266,7 +349,7 @@ export class PostgresControlPlaneStore implements ControlPlaneStore {
   ): Promise<void> {
     const displayName = profile.displayName ?? `Agent ${profile.agentId.slice(2, 8)}`;
     const strategySummary = profile.strategySummary ?? "";
-    await this.sql`
+    const rows = await this.sql`
       insert into public.agent_profiles (
         agent_id, sponsor_wallet, signer_address, vault_address, controller_address,
         display_name, strategy_summary, metadata_uri, policy, policy_hash, world_backed,
@@ -279,8 +362,6 @@ export class PostgresControlPlaneStore implements ControlPlaneStore {
         ${profile.runtimeKind}, ${profile.status}
       )
       on conflict (agent_id) do update set
-        sponsor_wallet = excluded.sponsor_wallet,
-        signer_address = excluded.signer_address,
         vault_address = excluded.vault_address,
         controller_address = excluded.controller_address,
         metadata_uri = excluded.metadata_uri,
@@ -290,7 +371,30 @@ export class PostgresControlPlaneStore implements ControlPlaneStore {
         world_backed_until = excluded.world_backed_until,
         runtime_kind = excluded.runtime_kind,
         status = excluded.status
+      where public.agent_profiles.sponsor_wallet = excluded.sponsor_wallet
+        and public.agent_profiles.signer_address = excluded.signer_address
+      returning agent_id
     `;
+    if (!rows[0]) throw new Error("agent profile ownership mismatch");
+  }
+
+  async syncAgentProfile(profile: AgentProfile): Promise<void> {
+    const rows = await this.sql`
+      update public.agent_profiles set
+        signer_address = ${profile.signer.toLowerCase()},
+        vault_address = ${profile.vault?.toLowerCase() ?? null},
+        controller_address = ${profile.controller?.toLowerCase() ?? null},
+        policy = ${this.sql.json(jsonValue(profile.policy) as never)},
+        policy_hash = ${profile.policyHash?.toLowerCase() ?? null},
+        world_backed = ${profile.worldBacked},
+        world_backed_until = ${profile.worldBackedUntil},
+        runtime_kind = ${profile.runtimeKind},
+        status = ${profile.status}
+      where agent_id = ${profile.agentId.toLowerCase()}
+        and sponsor_wallet = ${profile.sponsor.toLowerCase()}
+      returning agent_id
+    `;
+    if (!rows[0]) throw new Error("agent profile sponsor mismatch");
   }
 
   async upsertManagedSigner(input: ManagedSignerRecord): Promise<ManagedSignerRecord> {
@@ -555,6 +659,460 @@ export class PostgresControlPlaneStore implements ControlPlaneStore {
       return {
         accepted: true,
         reason: "verified",
+        managedAgentCount: peers + (managed ? 1 : 0),
+        maxManagedAgents: input.maxManagedAgents,
+      };
+    });
+  }
+
+  async createWorldIdentityRequest(input: WorldIdentityRequestRecord): Promise<void> {
+    await this.sql`
+      insert into agent_private.world_identity_requests (
+        id, agent_id, sponsor_wallet, signer_address, rp_nonce_hash, signal_hash,
+        app_id, rp_id, environment, policy_id, policy_version, policy_hash, attributes,
+        attributes_hash, action, require_user_presence, expires_at, consumed_at
+      ) values (
+        ${input.id}::uuid, ${input.agentId.toLowerCase()}, ${input.sponsor.toLowerCase()},
+        ${input.signer.toLowerCase()}, ${input.rpNonceHash.toLowerCase()},
+        ${input.signalHash.toLowerCase()}, ${input.appId}, ${input.rpId},
+        ${input.environment}, ${input.policyId},
+        ${input.policyVersion}, ${input.policyHash.toLowerCase()},
+        ${this.sql.json(jsonValue(input.attributes) as never)}, ${input.attributesHash.toLowerCase()},
+        ${input.action}, ${input.requireUserPresence}, ${input.expiresAt}, ${input.consumedAt}
+      )
+    `;
+  }
+
+  async getWorldIdentityRequest(id: string): Promise<WorldIdentityRequestRecord | null> {
+    const rows = await this.sql`
+      select * from agent_private.world_identity_requests
+      where id = ${id}::uuid limit 1
+    `;
+    return rows[0] ? mapWorldIdentityRequest(rows[0] as Row) : null;
+  }
+
+  async getWorldIdentityAgentBinding(input: {
+    agentId: Hex;
+    appId: `app_${string}`;
+    rpId: string;
+    environment: WorldIdentityEnvironment;
+    policyId: string;
+    policyVersion: number;
+    policyHash: Hex;
+    action: string;
+  }): Promise<WorldIdentityAgentBinding | null> {
+    const rows = await this.sql`
+      select * from agent_private.world_identity_agent_bindings
+      where agent_id = ${input.agentId.toLowerCase()}
+        and app_id = ${input.appId}
+        and rp_id = ${input.rpId}
+        and environment = ${input.environment}
+        and policy_id = ${input.policyId}
+        and policy_version = ${input.policyVersion}
+        and policy_hash = ${input.policyHash.toLowerCase()}
+        and action = ${input.action}
+        and revoked_at is null
+        and valid_until > now()
+      limit 1
+    `;
+    return rows[0] ? mapWorldIdentityAgentBinding(rows[0] as Row) : null;
+  }
+
+  async bindExistingWorldIdentitySponsor(input: {
+    agentId: Hex;
+    sponsor: Address;
+    signer: Address;
+    appId: `app_${string}`;
+    rpId: string;
+    environment: WorldIdentityEnvironment;
+    policyId: string;
+    policyVersion: number;
+    policyHash: Hex;
+    action: string;
+    maxManagedAgents: number;
+  }): Promise<WorldIdentityVerificationResult> {
+    return this.sql.begin(async (tx) => {
+      const ownerHintRows = await tx`
+        select subject_hash from agent_private.world_identity_sponsors
+        where sponsor_wallet = ${input.sponsor.toLowerCase()}
+          and app_id = ${input.appId}
+          and rp_id = ${input.rpId}
+          and environment = ${input.environment}
+          and action = ${input.action}
+          and policy_id = ${input.policyId}
+          and policy_version = ${input.policyVersion}
+          and policy_hash = ${input.policyHash.toLowerCase()}
+          and revoked_at is null
+          and valid_until > now()
+        limit 1
+      `;
+      const ownerHint = ownerHintRows[0] as Row | undefined;
+      if (!ownerHint) {
+        return {
+          accepted: false,
+          reason: "sponsor_unverified",
+          binding: null,
+          managedAgentCount: 0,
+          maxManagedAgents: input.maxManagedAgents,
+        };
+      }
+
+      await tx`select pg_advisory_xact_lock(hashtextextended(${String(ownerHint.subject_hash).toLowerCase()}, 3))`;
+      const sponsorRows = await tx`
+        select * from agent_private.world_identity_sponsors
+        where sponsor_wallet = ${input.sponsor.toLowerCase()}
+          and app_id = ${input.appId}
+          and rp_id = ${input.rpId}
+          and environment = ${input.environment}
+          and action = ${input.action}
+          and policy_id = ${input.policyId}
+          and policy_version = ${input.policyVersion}
+          and policy_hash = ${input.policyHash.toLowerCase()}
+          and revoked_at is null
+          and valid_until > now()
+        limit 1
+        for update
+      `;
+      const sponsorBinding = sponsorRows[0]
+        ? mapWorldIdentitySponsorBinding(sponsorRows[0] as Row)
+        : null;
+      if (!sponsorBinding) {
+        return {
+          accepted: false,
+          reason: "sponsor_unverified",
+          binding: null,
+          managedAgentCount: 0,
+          maxManagedAgents: input.maxManagedAgents,
+        };
+      }
+      await tx`select pg_advisory_xact_lock(hashtextextended(${input.agentId.toLowerCase()}, 2))`;
+      const profileRows = await tx`
+        select runtime_kind, status, sponsor_wallet, signer_address
+        from public.agent_profiles
+        where agent_id = ${input.agentId.toLowerCase()}
+        limit 1
+      `;
+      const profile = profileRows[0] as Row | undefined;
+      if (
+        !profile
+        || String(profile.sponsor_wallet).toLowerCase() !== input.sponsor.toLowerCase()
+        || String(profile.signer_address).toLowerCase() !== input.signer.toLowerCase()
+      ) {
+        return {
+          accepted: false,
+          reason: "request_invalid",
+          binding: null,
+          managedAgentCount: 0,
+          maxManagedAgents: input.maxManagedAgents,
+        };
+      }
+
+      const existingRows = await tx`
+        select * from agent_private.world_identity_agent_bindings
+        where agent_id = ${input.agentId.toLowerCase()}
+        for update
+      `;
+      const existing = existingRows[0] as Row | undefined;
+      if (existing) {
+        const matches = existing.revoked_at == null
+          && String(existing.sponsor_binding_id) === sponsorBinding.id
+          && String(existing.sponsor_wallet).toLowerCase() === input.sponsor.toLowerCase()
+          && String(existing.signer_address).toLowerCase() === input.signer.toLowerCase()
+          && String(existing.app_id) === input.appId
+          && String(existing.rp_id) === input.rpId
+          && String(existing.environment) === input.environment
+          && String(existing.action) === input.action
+          && String(existing.policy_id) === input.policyId
+          && Number(existing.policy_version) === input.policyVersion
+          && String(existing.policy_hash).toLowerCase() === input.policyHash.toLowerCase()
+          && date(existing.valid_until) > new Date();
+        return {
+          accepted: matches,
+          reason: matches ? "already_verified" : "binding_conflict",
+          binding: matches ? mapWorldIdentityAgentBinding(existing) : null,
+          managedAgentCount: 0,
+          maxManagedAgents: input.maxManagedAgents,
+        };
+      }
+
+      const peerRows = await tx`
+        select count(*)::integer as count
+        from agent_private.world_identity_agent_bindings as binding
+        join public.agent_profiles as candidate on candidate.agent_id = binding.agent_id
+        where binding.subject_hash = ${sponsorBinding.subjectHash.toLowerCase()}
+          and binding.app_id = ${input.appId}
+          and binding.rp_id = ${input.rpId}
+          and binding.environment = ${input.environment}
+          and binding.action = ${input.action}
+          and binding.policy_hash = ${input.policyHash.toLowerCase()}
+          and binding.revoked_at is null
+          and binding.valid_until > now()
+          and candidate.runtime_kind = 'nuvem_reference'
+          and candidate.status <> 'retired'
+      `;
+      const peers = Number(peerRows[0]?.count ?? 0);
+      const managed = String(profile.runtime_kind) === "nuvem_reference";
+      if (managed && peers >= input.maxManagedAgents) {
+        return {
+          accepted: false,
+          reason: "managed_agent_limit",
+          binding: null,
+          managedAgentCount: peers,
+          maxManagedAgents: input.maxManagedAgents,
+        };
+      }
+
+      const bindingRows = await tx`
+        insert into agent_private.world_identity_agent_bindings (
+          agent_id, sponsor_binding_id, sponsor_wallet, signer_address,
+          subject_hash, nullifier_hash, app_id, rp_id, environment, policy_id,
+          policy_version, policy_hash, attributes_hash, action,
+          credential_identifier, issuer_schema_id, source_request_id,
+          verified_at, valid_until, revoked_at
+        ) values (
+          ${input.agentId.toLowerCase()}, ${sponsorBinding.id}::uuid,
+          ${input.sponsor.toLowerCase()}, ${input.signer.toLowerCase()},
+          ${sponsorBinding.subjectHash.toLowerCase()}, ${sponsorBinding.nullifierHash.toLowerCase()},
+          ${input.appId}, ${input.rpId}, ${input.environment}, ${input.policyId},
+          ${input.policyVersion}, ${input.policyHash.toLowerCase()},
+          ${sponsorBinding.attributesHash.toLowerCase()}, ${input.action},
+          ${sponsorBinding.credentialIdentifier}, ${sponsorBinding.issuerSchemaId},
+          null, ${sponsorBinding.lastVerifiedAt}, ${sponsorBinding.validUntil}, null
+        )
+        returning *
+      `;
+      const binding = mapWorldIdentityAgentBinding(bindingRows[0] as Row);
+      return {
+        accepted: true,
+        reason: "verified",
+        binding,
+        managedAgentCount: peers + (managed ? 1 : 0),
+        maxManagedAgents: input.maxManagedAgents,
+      };
+    });
+  }
+
+  async recordWorldIdentityVerification(
+    input: WorldIdentityVerificationInput,
+  ): Promise<WorldIdentityVerificationResult> {
+    return this.sql.begin(async (tx) => {
+      const rejected = (
+        reason: WorldIdentityVerificationResult["reason"],
+        managedAgentCount = 0,
+      ): WorldIdentityVerificationResult => ({
+        accepted: false,
+        reason,
+        binding: null,
+        managedAgentCount,
+        maxManagedAgents: input.maxManagedAgents,
+      });
+      const requestRows = await tx`
+        select * from agent_private.world_identity_requests
+        where id = ${input.requestId}::uuid
+        for update
+      `;
+      const request = requestRows[0] as Row | undefined;
+      if (
+        !request
+        || request.consumed_at != null
+        || date(request.expires_at) <= input.verifiedAt
+        || String(request.agent_id).toLowerCase() !== input.agentId.toLowerCase()
+        || String(request.sponsor_wallet).toLowerCase() !== input.sponsor.toLowerCase()
+        || String(request.signer_address).toLowerCase() !== input.signer.toLowerCase()
+        || String(request.rp_nonce_hash).toLowerCase() !== input.rpNonceHash.toLowerCase()
+        || String(request.signal_hash).toLowerCase() !== input.signalHash.toLowerCase()
+        || String(request.app_id) !== input.appId
+        || String(request.rp_id) !== input.rpId
+        || String(request.environment) !== input.environment
+        || String(request.policy_id) !== input.policyId
+        || Number(request.policy_version) !== input.policyVersion
+        || String(request.policy_hash).toLowerCase() !== input.policyHash.toLowerCase()
+        || String(request.attributes_hash).toLowerCase() !== input.attributesHash.toLowerCase()
+        || String(request.action) !== input.action
+      ) return rejected("request_invalid");
+
+      await tx`select pg_advisory_xact_lock(hashtextextended(${input.subjectHash.toLowerCase()}, 3))`;
+      const sponsorRows = await tx`
+        select * from agent_private.world_identity_sponsors
+        where sponsor_wallet = ${input.sponsor.toLowerCase()}
+          and app_id = ${input.appId}
+          and rp_id = ${input.rpId}
+          and environment = ${input.environment}
+          and action = ${input.action}
+          and policy_id = ${input.policyId}
+          and policy_version = ${input.policyVersion}
+          and policy_hash = ${input.policyHash.toLowerCase()}
+        limit 1
+        for update
+      `;
+      const existingSponsor = sponsorRows[0] as Row | undefined;
+      const ownerRows = await tx`
+        select id, sponsor_wallet
+        from agent_private.world_identity_sponsors
+        where environment = ${input.environment}
+          and app_id = ${input.appId}
+          and rp_id = ${input.rpId}
+          and action = ${input.action}
+          and policy_id = ${input.policyId}
+          and policy_version = ${input.policyVersion}
+          and policy_hash = ${input.policyHash.toLowerCase()}
+          and revoked_at is null
+          and (
+            subject_hash = ${input.subjectHash.toLowerCase()}
+            or nullifier_hash = ${input.nullifierHash.toLowerCase()}
+          )
+        limit 1
+        for update
+      `;
+      const owner = ownerRows[0] as Row | undefined;
+      if (
+        (owner && String(owner.sponsor_wallet).toLowerCase() !== input.sponsor.toLowerCase())
+        || (
+          existingSponsor
+          && (
+            String(existingSponsor.subject_hash).toLowerCase() !== input.subjectHash.toLowerCase()
+            || String(existingSponsor.nullifier_hash).toLowerCase() !== input.nullifierHash.toLowerCase()
+          )
+        )
+      ) return rejected("human_bound_elsewhere");
+
+      await tx`select pg_advisory_xact_lock(hashtextextended(${input.agentId.toLowerCase()}, 2))`;
+      const profileRows = await tx`
+        select runtime_kind, status, sponsor_wallet, signer_address
+        from public.agent_profiles
+        where agent_id = ${input.agentId.toLowerCase()}
+        limit 1
+      `;
+      const profile = profileRows[0] as Row | undefined;
+      if (
+        !profile
+        || String(profile.sponsor_wallet).toLowerCase() !== input.sponsor.toLowerCase()
+        || String(profile.signer_address).toLowerCase() !== input.signer.toLowerCase()
+      ) return rejected("request_invalid");
+
+      const existingRows = await tx`
+        select * from agent_private.world_identity_agent_bindings
+        where agent_id = ${input.agentId.toLowerCase()}
+        for update
+      `;
+      const existing = existingRows[0] as Row | undefined;
+      if (
+        existing
+        && (
+          String(existing.sponsor_wallet).toLowerCase() !== input.sponsor.toLowerCase()
+          || String(existing.signer_address).toLowerCase() !== input.signer.toLowerCase()
+        )
+      ) return rejected("binding_conflict");
+
+      const peerRows = await tx`
+        select count(*)::integer as count
+        from agent_private.world_identity_agent_bindings as binding
+        join public.agent_profiles as candidate on candidate.agent_id = binding.agent_id
+        where binding.agent_id <> ${input.agentId.toLowerCase()}
+          and binding.subject_hash = ${input.subjectHash.toLowerCase()}
+          and binding.app_id = ${input.appId}
+          and binding.rp_id = ${input.rpId}
+          and binding.environment = ${input.environment}
+          and binding.action = ${input.action}
+          and binding.policy_id = ${input.policyId}
+          and binding.policy_version = ${input.policyVersion}
+          and binding.policy_hash = ${input.policyHash.toLowerCase()}
+          and binding.revoked_at is null
+          and binding.valid_until > ${input.verifiedAt}
+          and candidate.runtime_kind = 'nuvem_reference'
+          and candidate.status <> 'retired'
+      `;
+      const peers = Number(peerRows[0]?.count ?? 0);
+      const managed = String(profile.runtime_kind) === "nuvem_reference";
+      if (managed && peers >= input.maxManagedAgents) {
+        return rejected("managed_agent_limit", peers);
+      }
+
+      const sponsorBindingRows = await tx`
+        insert into agent_private.world_identity_sponsors (
+          id, sponsor_wallet, subject_hash, nullifier_hash,
+          app_id, rp_id, environment, policy_id, policy_version, policy_hash,
+          attributes_hash, action, credential_identifier, issuer_schema_id,
+          first_verified_at, last_verified_at, valid_until, revoked_at
+        ) values (
+          ${input.requestId}::uuid, ${input.sponsor.toLowerCase()},
+          ${input.subjectHash.toLowerCase()}, ${input.nullifierHash.toLowerCase()},
+          ${input.appId}, ${input.rpId}, ${input.environment}, ${input.policyId},
+          ${input.policyVersion}, ${input.policyHash.toLowerCase()},
+          ${input.attributesHash.toLowerCase()}, ${input.action},
+          ${input.credentialIdentifier}, ${input.issuerSchemaId},
+          ${input.verifiedAt}, ${input.verifiedAt}, ${input.validUntil}, null
+        )
+        on conflict on constraint world_identity_sponsors_scope_unique do update set
+          attributes_hash = excluded.attributes_hash,
+          credential_identifier = excluded.credential_identifier,
+          issuer_schema_id = excluded.issuer_schema_id,
+          last_verified_at = excluded.last_verified_at,
+          valid_until = excluded.valid_until,
+          revoked_at = null
+        where agent_private.world_identity_sponsors.subject_hash = excluded.subject_hash
+          and agent_private.world_identity_sponsors.nullifier_hash = excluded.nullifier_hash
+        returning *
+      `;
+      const sponsorBinding = sponsorBindingRows[0]
+        ? mapWorldIdentitySponsorBinding(sponsorBindingRows[0] as Row)
+        : null;
+      if (!sponsorBinding) return rejected("human_bound_elsewhere");
+
+      const consumed = await tx`
+        update agent_private.world_identity_requests
+        set consumed_at = ${input.verifiedAt}, proof_hash = ${input.proofHash.toLowerCase()}
+        where id = ${input.requestId}::uuid and consumed_at is null
+        returning id
+      `;
+      if (!consumed[0]) return rejected("request_invalid");
+
+      const bindingRows = await tx`
+        insert into agent_private.world_identity_agent_bindings (
+          agent_id, sponsor_binding_id, sponsor_wallet, signer_address, subject_hash, nullifier_hash,
+          app_id, rp_id, environment, policy_id, policy_version, policy_hash, attributes_hash,
+          action, credential_identifier, issuer_schema_id, source_request_id,
+          verified_at, valid_until, revoked_at
+        ) values (
+          ${input.agentId.toLowerCase()}, ${sponsorBinding.id}::uuid, ${input.sponsor.toLowerCase()},
+          ${input.signer.toLowerCase()}, ${input.subjectHash.toLowerCase()},
+          ${input.nullifierHash.toLowerCase()}, ${input.appId}, ${input.rpId},
+          ${input.environment}, ${input.policyId},
+          ${input.policyVersion}, ${input.policyHash.toLowerCase()},
+          ${input.attributesHash.toLowerCase()}, ${input.action},
+          ${input.credentialIdentifier}, ${input.issuerSchemaId},
+          ${input.requestId}::uuid, ${input.verifiedAt}, ${input.validUntil}, null
+        )
+        on conflict (agent_id) do update set
+          sponsor_binding_id = excluded.sponsor_binding_id,
+          subject_hash = excluded.subject_hash,
+          nullifier_hash = excluded.nullifier_hash,
+          app_id = excluded.app_id,
+          rp_id = excluded.rp_id,
+          environment = excluded.environment,
+          policy_id = excluded.policy_id,
+          policy_version = excluded.policy_version,
+          policy_hash = excluded.policy_hash,
+          attributes_hash = excluded.attributes_hash,
+          action = excluded.action,
+          credential_identifier = excluded.credential_identifier,
+          issuer_schema_id = excluded.issuer_schema_id,
+          source_request_id = excluded.source_request_id,
+          verified_at = excluded.verified_at,
+          valid_until = excluded.valid_until,
+          revoked_at = null
+        where agent_private.world_identity_agent_bindings.sponsor_wallet = excluded.sponsor_wallet
+          and agent_private.world_identity_agent_bindings.signer_address = excluded.signer_address
+        returning *
+      `;
+      const binding = bindingRows[0]
+        ? mapWorldIdentityAgentBinding(bindingRows[0] as Row)
+        : null;
+      if (!binding) throw new Error("World Identity binding changed during verification");
+      return {
+        accepted: true,
+        reason: "verified",
+        binding,
         managedAgentCount: peers + (managed ? 1 : 0),
         maxManagedAgents: input.maxManagedAgents,
       };
@@ -946,6 +1504,140 @@ export class PostgresControlPlaneStore implements ControlPlaneStore {
     `;
   }
 
+  async createAgentVault(input: NewAgentVault): Promise<CreateAgentVaultResult> {
+    return this.sql.begin(async (tx) => {
+      const agentId = input.profile.agentId.toLowerCase();
+      const sponsor = input.profile.sponsor.toLowerCase();
+      const signer = input.profile.signer.toLowerCase();
+      await tx`select pg_advisory_xact_lock(hashtextextended(${agentId}, 2))`;
+
+      const managedRows = await tx`
+        select * from agent_private.managed_signers
+        where agent_id = ${agentId}
+        limit 1
+        for update
+      `;
+      const managed = managedRows[0] as Row | undefined;
+      if (
+        managed
+        && (
+          String(managed.sponsor_wallet).toLowerCase() !== sponsor
+          || String(managed.signer_address).toLowerCase() !== signer
+          || String(managed.status) === "retired"
+        )
+      ) {
+        return { kind: "managed_signer_conflict" };
+      }
+      if (!managed && input.request.runtimeKind === "nuvem_reference") {
+        return { kind: "managed_signer_required" };
+      }
+      const runtimeKind: AgentProfile["runtimeKind"] = managed ? "nuvem_reference" : "external";
+
+      const profileRows = await tx`
+        select sponsor_wallet, signer_address
+        from public.agent_profiles
+        where agent_id = ${agentId}
+        limit 1
+        for update
+      `;
+      const existingProfile = profileRows[0] as Row | undefined;
+      if (
+        existingProfile
+        && (
+          String(existingProfile.sponsor_wallet).toLowerCase() !== sponsor
+          || String(existingProfile.signer_address).toLowerCase() !== signer
+        )
+      ) {
+        return { kind: "profile_ownership_conflict" };
+      }
+
+      const liveJobRows = await tx`
+        select * from agent_private.vault_jobs
+        where agent_id = ${agentId}
+          and state <> 'failed'
+        order by created_at desc
+        limit 1
+        for update
+      `;
+      const liveJob = liveJobRows[0] as Row | undefined;
+      if (liveJob) {
+        if (String(liveJob.sponsor_wallet).toLowerCase() !== sponsor) {
+          return { kind: "vault_job_ownership_conflict" };
+        }
+        return {
+          kind: "existing",
+          job: mapVaultJob(liveJob),
+          runtimeKind,
+        };
+      }
+
+      const storedProfileRows = await tx`
+        insert into public.agent_profiles (
+          agent_id, sponsor_wallet, signer_address, vault_address, controller_address,
+          display_name, strategy_summary, metadata_uri, policy, policy_hash, world_backed,
+          world_backed_until, runtime_kind, status
+        ) values (
+          ${agentId}, ${sponsor}, ${signer}, null, null,
+          ${input.profile.displayName}, ${input.profile.strategySummary}, ${input.profile.metadataUri},
+          ${tx.json(jsonValue(input.profile.policy) as never)}, null, false, null,
+          ${runtimeKind}, 'pending_backing'
+        )
+        on conflict (agent_id) do update set
+          display_name = excluded.display_name,
+          strategy_summary = excluded.strategy_summary,
+          metadata_uri = excluded.metadata_uri,
+          policy = excluded.policy,
+          vault_address = null,
+          controller_address = null,
+          policy_hash = null,
+          world_backed = false,
+          world_backed_until = null,
+          runtime_kind = excluded.runtime_kind,
+          status = excluded.status
+        where public.agent_profiles.sponsor_wallet = excluded.sponsor_wallet
+          and public.agent_profiles.signer_address = excluded.signer_address
+        returning agent_id
+      `;
+      if (!storedProfileRows[0]) {
+        throw new Error("agent profile ownership changed during vault creation");
+      }
+
+      if (managed) {
+        const boundRows = await tx`
+          update agent_private.managed_signers
+          set status = 'bound', updated_at = now()
+          where agent_id = ${agentId}
+            and sponsor_wallet = ${sponsor}
+            and signer_address = ${signer}
+            and status <> 'retired'
+          returning agent_id
+        `;
+        if (!boundRows[0]) {
+          throw new Error("managed signer ownership changed during vault creation");
+        }
+      }
+
+      const normalizedRequest = { ...input.request, runtimeKind };
+      const jobRows = await tx`
+        insert into agent_private.vault_jobs (agent_id, sponsor_wallet, request)
+        values (
+          ${agentId},
+          ${sponsor},
+          ${tx.json(jsonValue(normalizedRequest) as never)}
+        )
+        returning id, state
+      `;
+      return {
+        kind: "created",
+        job: {
+          id: String(jobRows[0]?.id),
+          state: String(jobRows[0]?.state),
+        },
+        runtimeKind,
+      };
+    });
+  }
+
   async createVaultJob(input: NewVaultJob): Promise<{ id: string; state: string }> {
     const rows = await this.sql`
       insert into agent_private.vault_jobs (agent_id, sponsor_wallet, request)
@@ -1014,7 +1706,13 @@ export class PostgresControlPlaneStore implements ControlPlaneStore {
     jobId: string,
     workerId: string,
     state: VaultJobState,
-    options: { stakeEscrow?: Address; errorCode?: string; retryAt?: Date; terminal?: boolean } = {},
+    options: {
+      stakeEscrow?: Address;
+      errorCode?: string;
+      retryAt?: Date;
+      terminal?: boolean;
+      incrementAttempts?: boolean;
+    } = {},
   ): Promise<void> {
     const nextState = options.terminal ? "failed" : state;
     const rows = await this.sql`
@@ -1023,6 +1721,7 @@ export class PostgresControlPlaneStore implements ControlPlaneStore {
           stake_escrow_address = coalesce(${options.stakeEscrow?.toLowerCase() ?? null}, stake_escrow_address),
           error_code = ${options.errorCode ?? null},
           available_at = ${options.retryAt ?? new Date()},
+          attempts = attempts + ${options.incrementAttempts ? 1 : 0},
           locked_by = null, locked_at = null, updated_at = now()
       where id = ${jobId}::uuid and locked_by = ${workerId}
       returning id

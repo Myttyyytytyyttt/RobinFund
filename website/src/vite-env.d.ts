@@ -18,6 +18,7 @@ interface ImportMetaEnv {
   readonly VITE_UNISWAP_APPROVAL_PROXY?: string
   readonly VITE_UNISWAP_UNIVERSAL_ROUTER?: string
   readonly VITE_DISABLE_LOCAL_CREATOR?: string
+  readonly VITE_WORLD_IDENTITY_ENVIRONMENT?: 'production' | 'staging'
 }
 
 interface ImportMeta {

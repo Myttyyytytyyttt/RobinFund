@@ -19,7 +19,10 @@ const account = configuredPrivateKey
       agentId,
       getAddress(required("NUVEM_SPONSOR_ADDRESS")),
     );
-const chainId = Number(process.env.NUVEM_CHAIN_ID ?? 4663);
+const chainId = Number(process.env.NUVEM_CHAIN_ID);
+if (!Number.isSafeInteger(chainId) || chainId <= 0) {
+  throw new Error("NUVEM_CHAIN_ID is required and must match the AgentKit challenge network");
+}
 const signer: AgentSigner = {
   address: account.address.toLowerCase() as Address,
   chainId,
@@ -36,6 +39,9 @@ await client.connect();
 const reference = new NuvemReferenceAgent(client, {
   model: process.env.NUVEM_MODEL ?? "openai/gpt-5-mini",
   execute: process.env.NUVEM_REFERENCE_EXECUTE === "1",
+  expectedChainId: chainId,
+  expectedFund: getAddress(required("NUVEM_FUND_ADDRESS")).toLowerCase() as Address,
+  expectedController: getAddress(required("NUVEM_CONTROLLER_ADDRESS")).toLowerCase() as Address,
   expectedApprovalProxy: getAddress(required("NUVEM_APPROVAL_PROXY")).toLowerCase() as Address,
   expectedUniversalRouter: getAddress(required("NUVEM_UNIVERSAL_ROUTER")).toLowerCase() as Address,
   expectedAdapter: process.env.NUVEM_EXPECTED_ADAPTER
