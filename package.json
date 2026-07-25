@@ -4,7 +4,7 @@
   "version": "0.0.1",
   "description": "Fondos sociales sobre Stock Tokens en Robinhood Chain",
   "scripts": {
-    "build": "pnpm --dir apps/agent-gateway build && pnpm --dir packages/agent-sdk build && pnpm --dir packages/managed-signer build && pnpm --dir packages/agent-runtime build && pnpm --dir website build",
+    "build": "pnpm --dir packages/agent-sdk build && pnpm --dir packages/managed-signer build && pnpm --dir packages/vault-intelligence-mcp build && pnpm --dir packages/agent-runtime build && pnpm --dir apps/agent-gateway build && pnpm --dir website build",
     "test": "pnpm test:uniswap:unit && pnpm --dir packages/agent-sdk test && pnpm --dir website test && pnpm test:contracts:unit",
     "test:contracts": "pnpm --dir packages/contracts test",
     "test:contracts:unit": "forge test --root packages/contracts --no-match-path 'test/fork/*'",
