@@ -5,6 +5,7 @@ import {
   clearAgentVaultRecovery,
   loadAgentVaultRecovery,
   saveAgentVaultRecovery,
+  stageAfterWorldIdentity,
 } from './agentVaultRecovery'
 import type { AgentVaultCreationInput } from './agentTransactions'
 
@@ -51,6 +52,11 @@ const input: AgentVaultCreationInput = {
 }
 
 describe('AI vault session recovery', () => {
+  it('skips canonical AgentBook only for the staging testnet flow', () => {
+    expect(stageAfterWorldIdentity('staging')).toBe('backing')
+    expect(stageAfterWorldIdentity('production')).toBe('agentbook')
+  })
+
   it('persists the agent input before an onchain registration has a gateway job', () => {
     const storage = new MemoryStorage()
     const saved = saveAgentVaultRecovery({

@@ -88,26 +88,18 @@ const schema = z.object({
   WORKER_POLL_MS: z.coerce.number().int().min(250).max(60_000).default(2_000),
   CORS_ORIGINS: z.string().default("http://localhost:5173"),
 }).superRefine((value, context) => {
-  const stagingApp = value.WORLD_APP_ID.startsWith("app_staging_");
-  if (value.WORLD_ID_ENVIRONMENT === "staging" && !stagingApp) {
-    context.addIssue({
-      code: "custom",
-      path: ["WORLD_APP_ID"],
-      message: "WORLD_APP_ID must use app_staging_ prefix when WORLD_ID_ENVIRONMENT=staging",
-    });
-  }
-  if (value.WORLD_ID_ENVIRONMENT === "production" && stagingApp) {
-    context.addIssue({
-      code: "custom",
-      path: ["WORLD_APP_ID"],
-      message: "WORLD_APP_ID must not use app_staging_ prefix when WORLD_ID_ENVIRONMENT=production",
-    });
-  }
   if (value.WORLD_ID_ENVIRONMENT === "staging" && value.RH_CHAIN_ID !== 46_630) {
     context.addIssue({
       code: "custom",
       path: ["RH_CHAIN_ID"],
       message: "World Identity staging is pinned to Robinhood Chain testnet (46630)",
+    });
+  }
+  if (value.RH_CHAIN_ID === 46_630 && value.WORLD_ID_ENVIRONMENT !== "staging") {
+    context.addIssue({
+      code: "custom",
+      path: ["WORLD_ID_ENVIRONMENT"],
+      message: "Robinhood Chain testnet (46630) must use World Identity staging",
     });
   }
   if (!value.TRADING_ENABLED) return;
@@ -159,7 +151,7 @@ function normalizedEnvironment(environment: NodeJS.ProcessEnv): NodeJS.ProcessEn
   const rpcUrl = environment.RH_RPC_URL
     ?? (chainId === "46630" ? environment.RH_RPC_TESTNET : environment.RH_RPC_MAINNET);
   const worldIdEnvironment = environment.WORLD_ID_ENVIRONMENT
-    ?? (environment.WORLD_APP_ID?.startsWith("app_staging_") ? "staging" : "production");
+    ?? (chainId === "46630" ? "staging" : "production");
   return {
     ...environment,
     RH_CHAIN_ID: chainId,

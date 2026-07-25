@@ -3,7 +3,7 @@ import { privateKeyToAccount } from "viem/accounts";
 import { AgentAuthError, AgentSessionService } from "./agentkit.js";
 import type { AgentChainReader } from "./chain.js";
 import { requestHash } from "./crypto.js";
-import type { WorldIdentityEnvironment } from "./domain.js";
+import type { WorldIdentityGateConfig } from "./domain.js";
 import type { ControlPlaneStore } from "./store.js";
 
 const worldChain = defineChain({
@@ -27,16 +27,6 @@ export interface WorldBlockReader {
   getBlockNumber(): Promise<bigint>;
 }
 
-export interface WorldBackingIdentityGate {
-  appId: `app_${string}`;
-  rpId: string;
-  environment: WorldIdentityEnvironment;
-  policyId: string;
-  policyVersion: number;
-  policyHash: Hex;
-  action: string;
-}
-
 export class WorldBackingService {
   private readonly verifier;
   private readonly worldClient: WorldBlockReader;
@@ -48,14 +38,22 @@ export class WorldBackingService {
     verifierPrivateKey: Hex,
     worldRpcUrl: string,
     worldClient?: WorldBlockReader,
-    private readonly identityGate: WorldBackingIdentityGate | null = null,
+    private readonly identityGate: WorldIdentityGateConfig | null = null,
   ) {
     this.verifier = privateKeyToAccount(verifierPrivateKey);
     this.worldClient = worldClient
       ?? createPublicClient({ chain: worldChain, transport: http(worldRpcUrl, { retryCount: 2 }) });
   }
 
-  async issue(agentId: Hex, sponsor: Address): Promise<{ backing: WorldBackingPayload; signature: Hex; registry: Address }> {
+  async issue(agentId: Hex, sponsor: Address): Promise<{
+    backing: WorldBackingPayload;
+    signature: Hex;
+    registry: Address;
+    assurance: {
+      mode: "world-agentbook" | "world-staging-identity";
+      canonical: boolean;
+    };
+  }> {
     if (!this.identityGate) {
       throw new AgentAuthError(
         "WORLD_IDENTITY_NOT_CONFIGURED",
@@ -105,14 +103,15 @@ export class WorldBackingService {
     }
     const identity = await this.sessions.worldIdentityForSigner(agentId, agent.signer);
     const backingHash = requestHash({
-      domain: "nuvem-world-backing-v3",
+      domain: "nuvem-world-backing-v4",
       worldIdentitySubjectHash: identityBinding.subjectHash,
       worldIdentityPolicyHash: identityBinding.policyHash,
       worldIdentityAction: identityBinding.action,
       worldIdentityEnvironment: identityBinding.environment,
       worldIdentityAppId: identityBinding.appId,
       worldIdentityRpId: identityBinding.rpId,
-      agentBookBackingHash: identity.backingHash,
+      humanBackingMode: identity.mode,
+      humanBackingHash: identity.backingHash,
       agentId: agentId.toLowerCase(),
       signer: agent.signer.toLowerCase(),
     });
@@ -165,6 +164,14 @@ export class WorldBackingService {
       validUntil: new Date(validUntil * 1_000),
       signature,
     });
-    return { backing, signature, registry: this.chain.registryAddress };
+    return {
+      backing,
+      signature,
+      registry: this.chain.registryAddress,
+      assurance: {
+        mode: identity.canonical ? "world-agentbook" : "world-staging-identity",
+        canonical: identity.canonical,
+      },
+    };
   }
 }

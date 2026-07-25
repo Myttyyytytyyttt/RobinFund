@@ -613,7 +613,7 @@ export function createGatewayApp(dependencies: GatewayAppDependencies): Hono {
       ) {
         throw new AgentAuthError(
           "VAULT_AGENT_NOT_ACTIVE",
-          "Complete Identity Check, AgentBook and onchain World backing before deployment",
+          "Complete the environment-required World identity backing before deployment",
           409,
         );
       }
@@ -870,7 +870,7 @@ function openApiDocument(): Record<string, unknown> {
       "/v1/agent-vaults/{id}": { get: { summary: "Read a sponsor-owned durable deployment job" } },
       "/v1/agent-vaults/{id}/process": { post: { summary: "Advance one durable vault deployment transition (sponsor SIWE)" } },
       "/v1/agents/{id}/vault-job": { get: { summary: "Resume the sponsor-owned deployment for an agent" } },
-      "/v1/agents/{id}/world-backing": { post: { summary: "Issue an Identity Check and AgentBook-backed activation attestation" } },
+      "/v1/agents/{id}/world-backing": { post: { summary: "Issue an environment-bound World activation attestation" } },
       "/v1/agents/{id}/world-id/request": { post: { summary: "Create a World ID proof or Identity Check request" } },
       "/v1/agents/{id}/world-id/verify": { post: { summary: "Verify and consume a one-time World ID request" } },
       "/v1/agents/{id}/world-registration": {

@@ -10,6 +10,7 @@ import { explainWorldProofError } from './worldIdNuvem'
 export type WorldIdentityEnvironment = 'production' | 'staging'
 export const AI_VAULT_IDENTITY_POLICY = 'ai-vault-eligibility-v1' as const
 export const AI_VAULT_IDENTITY_POLICY_HASH = '0x6b980c5c9cad4224ab14ef18a67031da727051c99196bf367e099169970f1205' as const
+export const ROBINHOOD_TESTNET_CHAIN_ID = 46_630
 
 export type NuvemIdentityCheckRequest = {
   credential: 'identity_check'
@@ -49,10 +50,19 @@ function isCanonicalAiVaultPolicy(attributes: IdentityAttribute[]): boolean {
   )
 }
 
+export function identityEnvironmentForChainId(chainId: number): WorldIdentityEnvironment {
+  return chainId === ROBINHOOD_TESTNET_CHAIN_ID ? 'staging' : 'production'
+}
+
 export function configuredIdentityEnvironment(): WorldIdentityEnvironment {
-  const configured = import.meta.env.VITE_WORLD_IDENTITY_ENVIRONMENT?.trim() || 'production'
+  const chainId = Number(import.meta.env.VITE_RH_CHAIN_ID || 4_663)
+  const expected = identityEnvironmentForChainId(chainId)
+  const configured = import.meta.env.VITE_WORLD_IDENTITY_ENVIRONMENT?.trim() || expected
   if (configured !== 'production' && configured !== 'staging') {
     throw new Error('VITE_WORLD_IDENTITY_ENVIRONMENT must be either production or staging.')
+  }
+  if (configured !== expected) {
+    throw new Error(`Robinhood chain ${chainId} requires World Identity ${expected}.`)
   }
   return configured
 }
@@ -62,14 +72,13 @@ export function assertIdentityCheckRequest(
   expectedEnvironment = configuredIdentityEnvironment(),
 ): NuvemIdentityCheckRequest {
   const expiresAt = Date.parse(input.expiresAt)
-  const stagingApp = input.appId.startsWith('app_staging_')
   if (
     input.credential !== 'identity_check'
     || input.verified !== false
     || input.reused !== false
     || !input.requestId
     || input.environment !== expectedEnvironment
-    || (input.environment === 'staging') !== stagingApp
+    || !/^app_(?:staging_)?[0-9a-z]+$/.test(input.appId)
     || !/^0x[0-9a-fA-F]{64}$/.test(input.signal)
     || input.policy.id !== AI_VAULT_IDENTITY_POLICY
     || !Number.isInteger(input.policy.version)

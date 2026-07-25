@@ -23,6 +23,12 @@ export type AgentVaultRecovery = {
   updatedAt: string
 }
 
+export function stageAfterWorldIdentity(
+  environment: WorldIdentityEnvironment,
+): Extract<AgentVaultRecoveryStage, 'agentbook' | 'backing'> {
+  return environment === 'staging' ? 'backing' : 'agentbook'
+}
+
 type RecoveryStorage = Pick<Storage, 'getItem' | 'setItem' | 'removeItem'>
 
 function storageKey(sponsor: Address): string {

@@ -26,6 +26,7 @@ const identityGate = {
 function setup(options: {
   backed?: boolean;
   verifierKey?: Hex;
+  stagingMode?: boolean;
   identity?: false | {
     environment?: "staging" | "production";
     policyHash?: Hex;
@@ -33,6 +34,9 @@ function setup(options: {
     validUntil?: Date;
   };
 } = {}) {
+  const configuredIdentityGate = options.stagingMode
+    ? { ...identityGate, environment: "staging" as const }
+    : identityGate;
   const store = new MemoryControlPlaneStore();
   store.profiles.set(agentId, profile({ status: "pending_backing", worldBacked: false, worldBackedUntil: null }));
   if (options.identity !== false) {
@@ -45,7 +49,7 @@ function setup(options: {
       nullifierHash: `0x${"98".repeat(32)}` as Hex,
       appId: identityAppId,
       rpId: identityRpId,
-      environment: options.identity?.environment ?? "production",
+      environment: options.identity?.environment ?? configuredIdentityGate.environment,
       policyId: AI_VAULT_IDENTITY_POLICY.id,
       policyVersion: AI_VAULT_IDENTITY_POLICY.version,
       policyHash: options.identity?.policyHash ?? AI_VAULT_IDENTITY_POLICY.hash,
@@ -59,6 +63,7 @@ function setup(options: {
     });
   }
   const chain = new FakeChain();
+  if (options.stagingMode) chain.chainId = 46_630;
   chain.agent.active = false;
   chain.agent.status = 0;
   chain.agent.backedUntil = 0;
@@ -69,6 +74,8 @@ function setup(options: {
     rpcUrl: "https://rpc.invalid",
     sessionSecret: "s".repeat(32),
     worldIdPepper: "p".repeat(32),
+    humanBackingMode: options.stagingMode ? "staging-identity" : "canonical-agentbook",
+    identityGate: configuredIdentityGate,
   }, {
     lookupHuman: async () => options.backed === false ? null : humanId,
     verifySignature: async () => ({ valid: true, address: signer }),
@@ -80,7 +87,7 @@ function setup(options: {
     options.verifierKey ?? verifierKey,
     "https://world.invalid",
     { getBlockNumber: async () => 12_345n },
-    identityGate,
+    configuredIdentityGate,
   );
   return { store, chain, service };
 }
@@ -95,6 +102,7 @@ describe("WorldBackingService", () => {
     expect(result.backing.signer).toBe(signer);
     expect(result.backing.backingHash).toMatch(/^0x[0-9a-f]{64}$/);
     expect(result.backing.backingHash).not.toContain(humanId);
+    expect(result.assurance).toEqual({ mode: "world-agentbook", canonical: true });
     expect(await verifyTypedData({
       address: chain.worldVerifier,
       domain: {
@@ -121,6 +129,14 @@ describe("WorldBackingService", () => {
     expect(JSON.stringify(store.worldAttestations, (_key, value) => typeof value === "bigint" ? value.toString() : value))
       .not.toContain(humanId);
     expect(JSON.stringify([...store.worldIdentityAgentBindings.values()])).not.toContain(humanId);
+  });
+
+  it("issues an explicitly non-canonical staging activation on Robinhood testnet", async () => {
+    const { service } = setup({ stagingMode: true, backed: false });
+    const result = await service.issue(agentId, sponsor);
+
+    expect(result.assurance).toEqual({ mode: "world-staging-identity", canonical: false });
+    expect(result.backing.backingHash).toMatch(/^0x[0-9a-f]{64}$/);
   });
 
   it("rejects a wallet that is not the on-chain sponsor", async () => {

@@ -4,9 +4,9 @@
 
 Nuvem targets **AgentKit New Use Cases** and **Identity Check Beta Test**. A
 human sponsors an autonomous DeFi agent, proves the eligibility policy once,
-registers that agent in AgentBook, and then grants it limited onchain execution
-rights. World backing is therefore an authorization boundary, not a generic
-login or cosmetic badge.
+registers that agent in AgentBook for the canonical production path, and then
+grants it limited onchain execution rights. World backing is therefore an
+authorization boundary, not a generic login or cosmetic badge.
 
 ## Why these attributes are necessary
 
@@ -38,8 +38,9 @@ disabled because this track demonstrates Identity Check, not Selfie Check.
 - One World subject cannot silently back another sponsor wallet. A sponsor may
   operate several agents, but managed Nuvem agents are capped by the
   server-configured quota.
-- The Identity binding and AgentBook binding are both included in the onchain
-  World-backing hash.
+- The production Identity binding and AgentBook binding are both included in
+  the onchain World-backing hash. Staging uses a distinct, non-canonical mode in
+  that hash instead of claiming an AgentBook registration.
 
 ## End-to-end flow
 
@@ -49,8 +50,10 @@ disabled because this track demonstrates Identity Check, not Selfie Check.
 4. The gateway validates the response and verifies it with World Portal.
 5. An atomic database transaction binds the World subject to the sponsor and
    agent, enforcing ownership and quota before consuming the request.
-6. AgentBook proves that the human backs that exact agent signer.
-7. The sponsor submits the resulting backing hash to `AgentRegistry`.
+6. Production requires AgentBook to prove that the human backs that exact agent
+   signer. Robinhood testnet instead derives an explicitly non-canonical
+   staging backing from the verified Identity Check binding.
+7. The sponsor submits the environment-labelled backing hash to `AgentRegistry`.
 8. A durable worker deploys the vault contracts; the browser resumes the exact
    job after refresh and completes binding/staking without creating duplicates.
 9. The agent opens short-lived AgentKit sessions. Every bearer request rechecks
@@ -59,11 +62,21 @@ disabled because this track demonstrates Identity Check, not Selfie Check.
 
 ## Environments
 
-Production uses `app_*` credentials and the production World App. Simulator
-testing must use `https://simulator.orb.engineer/` together with a coherent
-`app_staging_*` app, matching RP signer key, and `staging` on both frontend and
-gateway. Staging identity proofs are rejected when the deployment is configured
-for Robinhood Chain mainnet (`4663`).
+Robinhood Chain mainnet (`4663`) derives World production and requires the real
+World App plus canonical AgentBook. Robinhood Chain testnet (`46630`) derives
+World staging on both frontend and gateway and uses
+`https://simulator.orb.engineer/`.
+
+World ID 4.0 uses the same registered `app_*`, RP and signing key for both
+registries when the RP reports both `production_status` and `staging_status` as
+registered. The action must exist separately in each environment. Nuvem's
+`sponsor-ai-vault` action is configured in both.
+
+AgentBook lookup is canonical World Chain mainnet only. To keep the testnet flow
+executable without misrepresenting the Simulator, staging skips the AgentBook QR
+and derives `world-staging-identity` from the verified Identity Check subject.
+That backing is labelled `canonical: false` and is rejected by configuration on
+Robinhood mainnet.
 
 ## Developer feedback
 

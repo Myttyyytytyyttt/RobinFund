@@ -21,6 +21,7 @@ import { assertNuvemWorldIdRequest, type NuvemWorldIdRequest } from './worldIdNu
 import {
   AI_VAULT_IDENTITY_POLICY_HASH,
   assertIdentityCheckRequest,
+  configuredIdentityEnvironment,
   identityCheckGatewayBody,
   type NuvemIdentityCheckRequest,
   type WorldIdentityEnvironment,
@@ -69,7 +70,11 @@ export type AgentVaultDeployment = VaultDeployment & {
   agentRegistry: Address
   uniswapApiAdapter: Address
   uniswapApiAdapterId: string
-  worldBacking: { mode: 'devnet-mock' | 'world-agentbook'; canonical: boolean; active: boolean }
+  worldBacking: {
+    mode: 'devnet-mock' | 'world-agentbook' | 'world-staging-identity'
+    canonical: boolean
+    active: boolean
+  }
 }
 
 export type ManagedSignerIdentity = {
@@ -471,6 +476,10 @@ type WorldBackingResponse = {
   }
   signature: Hex
   registry: Address
+  assurance: {
+    mode: 'world-agentbook' | 'world-staging-identity'
+    canonical: boolean
+  }
 }
 
 export async function getWorldRegistrationStatus(
@@ -542,7 +551,7 @@ export async function waitForWorldRegistration(
   throw new Error('AgentBook registration is still pending on World Chain. Retry Finish launch shortly.')
 }
 
-/** Submits a canonical AgentBook attestation without exposing any human identifier. */
+/** Activates canonical AgentBook backing or an explicitly non-canonical testnet staging binding. */
 export async function activateWorldBacking(
   wallet: BrowserWallet,
   input: Pick<AgentVaultCreationInput, 'agentId' | 'signer'>,
@@ -560,15 +569,21 @@ export async function activateWorldBacking(
     body: '{}',
   })
   const payload = await response.json() as WorldBackingResponse & { error?: { message?: string } }
-  if (!response.ok || !payload.backing || !payload.signature) {
+  if (!response.ok || !payload.backing || !payload.signature || !payload.assurance) {
     throw new Error(payload.error?.message || `World backing returned HTTP ${response.status}`)
   }
+  const expectedEnvironment = configuredIdentityEnvironment()
+  const expectedAssurance = expectedEnvironment === 'staging'
+    ? { mode: 'world-staging-identity', canonical: false }
+    : { mode: 'world-agentbook', canonical: true }
   if (
     getAddress(payload.registry).toLowerCase() !== runtime.agentRegistry.toLowerCase()
     || payload.backing.agentId.toLowerCase() !== input.agentId.toLowerCase()
     || getAddress(payload.backing.sponsor).toLowerCase() !== account.toLowerCase()
     || getAddress(payload.backing.signer).toLowerCase() !== input.signer.toLowerCase()
     || payload.backing.validUntil <= Math.floor(Date.now() / 1_000)
+    || payload.assurance.mode !== expectedAssurance.mode
+    || payload.assurance.canonical !== expectedAssurance.canonical
   ) throw new Error('World backing is not bound to this agent, sponsor, signer and registry.')
 
   const hash = await walletClient.writeContract({
@@ -790,6 +805,7 @@ export async function deploymentFromAgentJob(agentId: Hex, job: AgentVaultJobSta
   ) {
     throw new Error('The deployment is not ready for sponsor binding or has an incomplete manifest.')
   }
+  const identityEnvironment = configuredIdentityEnvironment()
   return {
     agentId,
     controller: job.controller,
@@ -802,7 +818,9 @@ export async function deploymentFromAgentJob(agentId: Hex, job: AgentVaultJobSta
     agentRegistry: runtime.agentRegistry,
     uniswapApiAdapter: runtime.uniswapApiAdapter,
     uniswapApiAdapterId: runtime.uniswapApiAdapterId,
-    worldBacking: { mode: 'world-agentbook', canonical: true, active: true },
+    worldBacking: identityEnvironment === 'staging'
+      ? { mode: 'world-staging-identity', canonical: false, active: true }
+      : { mode: 'world-agentbook', canonical: true, active: true },
   }
 }
 

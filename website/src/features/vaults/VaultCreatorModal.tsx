@@ -33,6 +33,7 @@ import {
   clearAgentVaultRecovery,
   loadAgentVaultRecovery,
   saveAgentVaultRecovery,
+  stageAfterWorldIdentity,
   type AgentVaultRecovery,
   type AgentVaultRecoveryStage,
 } from '@/lib/agentVaultRecovery'
@@ -499,7 +500,11 @@ export function VaultCreatorModal({ open, onClose, onCreated }: Props) {
         await verifyNuvemIdentity(current.input, token, current.identityEnvironment)
         setWorldConnectorUri(null)
         setWorldQr(null)
-        current = advanceRecovery(current, 'agentbook')
+        current = advanceRecovery(current, stageAfterWorldIdentity(current.identityEnvironment))
+      }
+
+      if (current.stage === 'agentbook' && current.identityEnvironment === 'staging') {
+        current = advanceRecovery(current, 'backing')
       }
 
       if (current.stage === 'agentbook') {
@@ -660,9 +665,12 @@ export function VaultCreatorModal({ open, onClose, onCreated }: Props) {
     setProvisioningKey(nextKey)
   }
 
+  const activeIdentityEnvironment = recovery?.identityEnvironment ?? configuredIdentityEnvironment()
   const steps = managerType === 'human'
     ? [['Deploy', ['deploying'].includes(status)], ['Stake', status === 'approving'], ['Live', status === 'success']]
-    : [['Agent identity', status === 'provisioning'], ['Register', status === 'registering'], ['Identity Check', status === 'world_identity'], ['AgentBook', status === 'world_agentbook'], ['World backing', status === 'backing'], ['Deploy', status === 'deploying' || status === 'queued'], ['Bind + stake', status === 'binding'], ['Active', status === 'success']]
+    : activeIdentityEnvironment === 'staging'
+      ? [['Agent identity', status === 'provisioning'], ['Register', status === 'registering'], ['Identity Check', status === 'world_identity'], ['Staging backing', status === 'backing'], ['Deploy', status === 'deploying' || status === 'queued'], ['Bind + stake', status === 'binding'], ['Active', status === 'success']]
+      : [['Agent identity', status === 'provisioning'], ['Register', status === 'registering'], ['Identity Check', status === 'world_identity'], ['AgentBook', status === 'world_agentbook'], ['World backing', status === 'backing'], ['Deploy', status === 'deploying' || status === 'queued'], ['Bind + stake', status === 'binding'], ['Active', status === 'success']]
 
   return (
     <div className="fixed inset-0 z-[80] overflow-y-auto bg-[#020709]/80 px-3 py-4 backdrop-blur-xl sm:px-6 sm:py-8" role="dialog" aria-modal="true" aria-labelledby="vault-creator-title" onMouseDown={(event) => event.currentTarget === event.target && !busy && closeCreator()}>
@@ -699,7 +707,12 @@ export function VaultCreatorModal({ open, onClose, onCreated }: Props) {
                   <div className="border-t border-white/10 pt-4"><div className="mb-3 text-[10px] uppercase tracking-[0.16em] text-white/40">Onchain policy</div>
                     <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3"><Field label="Max trade" value={form.maxTrade} onChange={update('maxTrade')} suffix="% NAV" min={1} max={20} step={1} /><Field label="Max concentration" value={form.maxConcentration} onChange={update('maxConcentration')} suffix="% NAV" min={10} max={50} step={1} /><Field label="Daily turnover" value={form.dailyTurnover} onChange={update('dailyTurnover')} suffix="% NAV" min={5} max={100} step={1} /><Field label="Max slippage" value={form.maxSlippage} onChange={update('maxSlippage')} suffix="%" min={0.1} max={1} step={0.05} /><Field label="Trades per day" value={form.maxTradesPerDay} onChange={update('maxTradesPerDay')} min={1} max={200} step={1} /><Field label="Min interval" value={form.minTradeInterval} onChange={update('minTradeInterval')} suffix="min" min={1} max={60} step={1} /><Field label="Intent lifetime" value={form.maxIntentLifetime} onChange={update('maxIntentLifetime')} suffix="min" min={1} max={5} step={1} /></div>
                   </div>
-                  <div className="rounded-xl border border-sky-200/15 bg-sky-200/[0.05] px-4 py-3 text-[11px] leading-5 text-sky-50/65">Every public AI vault requires one policy-bound World Identity Check plus canonical AgentBook backing. Only the attestation result is retained; document attributes and raw proofs are not stored by this page. LP deposits remain permissionless.</div>
+                  <div className="rounded-xl border border-sky-200/15 bg-sky-200/[0.05] px-4 py-3 text-[11px] leading-5 text-sky-50/65">
+                    {activeIdentityEnvironment === 'staging'
+                      ? 'Robinhood testnet uses World staging Identity Check and an explicitly non-canonical staging backing. Canonical AgentBook remains required on mainnet. Only the attestation result is retained.'
+                      : 'Every public AI vault requires one policy-bound World Identity Check plus canonical AgentBook backing. Only the attestation result is retained; document attributes and raw proofs are not stored by this page.'}
+                    {' '}LP deposits remain permissionless.
+                  </div>
                   {(status === 'world_identity' || status === 'world_agentbook') && worldConnectorUri && (
                     <div aria-live="polite" className="rounded-2xl border border-white/15 bg-white p-4 text-center text-gray-950">
                       <div className="text-sm font-semibold">{status === 'world_identity' ? 'Complete World Identity Check' : 'Register the agent in AgentBook'}</div>

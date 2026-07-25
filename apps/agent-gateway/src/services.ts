@@ -21,12 +21,26 @@ import { zeroAddress } from "viem";
 export function createServices(config: GatewayConfig) {
   const store = PostgresControlPlaneStore.connect(config.DATABASE_URL);
   const chain = new ViemAgentChainReader(config.AGENT_REGISTRY_ADDRESS, config.RH_RPC_URL, config.RH_CHAIN_ID);
+  const identityAction = config.WORLD_IDENTITY_ACTION ?? config.WORLD_ID_ACTION;
+  const identityGate = {
+    appId: config.WORLD_APP_ID as `app_${string}`,
+    rpId: config.WORLD_RP_ID,
+    environment: config.WORLD_ID_ENVIRONMENT,
+    policyId: AI_VAULT_IDENTITY_POLICY.id,
+    policyVersion: AI_VAULT_IDENTITY_POLICY.version,
+    policyHash: AI_VAULT_IDENTITY_POLICY.hash,
+    action: identityAction,
+  };
   const sessions = new AgentSessionService(store, chain, {
     publicBaseUrl: config.PUBLIC_BASE_URL,
     rpcUrl: config.RH_RPC_URL,
     worldRpcUrl: config.WORLD_CHAIN_RPC,
     sessionSecret: config.AGENT_SESSION_SECRET,
     worldIdPepper: config.WORLD_ID_PEPPER,
+    humanBackingMode: config.WORLD_ID_ENVIRONMENT === "staging"
+      ? "staging-identity"
+      : "canonical-agentbook",
+    identityGate,
   });
   const sponsors = new SupabaseSponsorAuth({
     supabaseUrl: config.SUPABASE_URL,
@@ -58,7 +72,6 @@ export function createServices(config: GatewayConfig) {
     verifyBaseUrl: config.WORLD_VERIFY_BASE_URL,
     maxManagedAgentsPerHuman: config.MAX_MANAGED_AGENTS_PER_HUMAN,
   });
-  const identityAction = config.WORLD_IDENTITY_ACTION ?? config.WORLD_ID_ACTION;
   const worldIdentity = new WorldIdentityCheckService(store, chain, {
     environment: config.WORLD_ID_ENVIRONMENT,
     appId: config.WORLD_APP_ID as `app_${string}`,
@@ -79,15 +92,7 @@ export function createServices(config: GatewayConfig) {
     config.WORLD_VERIFIER_PRIVATE_KEY,
     config.WORLD_CHAIN_RPC,
     undefined,
-    {
-      appId: config.WORLD_APP_ID as `app_${string}`,
-      rpId: config.WORLD_RP_ID,
-      environment: config.WORLD_ID_ENVIRONMENT,
-      policyId: AI_VAULT_IDENTITY_POLICY.id,
-      policyVersion: AI_VAULT_IDENTITY_POLICY.version,
-      policyHash: AI_VAULT_IDENTITY_POLICY.hash,
-      action: identityAction,
-    },
+    identityGate,
   );
   const managedSigners = new ManagedSignerService(store, config.MANAGED_SIGNER_SECRET);
   const vaultDeployment = createLazyVaultDeploymentService(store, chain);

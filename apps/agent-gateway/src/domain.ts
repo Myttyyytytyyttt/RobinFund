@@ -235,6 +235,17 @@ export interface WorldIdVerificationResult {
 }
 
 export type WorldIdentityEnvironment = "staging" | "production";
+export type HumanBackingMode = "canonical-agentbook" | "staging-identity";
+
+export interface WorldIdentityGateConfig {
+  appId: `app_${string}`;
+  rpId: string;
+  environment: WorldIdentityEnvironment;
+  policyId: string;
+  policyVersion: number;
+  policyHash: Hex;
+  action: string;
+}
 
 export type WorldIdentityAttribute =
   | { type: "document_type"; value: "passport" | "eid" | "mnc" }

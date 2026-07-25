@@ -4,6 +4,7 @@ import {
   assertIdentityCheckRequest,
   identityCheckGatewayBody,
   identityCheckPresetForRequest,
+  identityEnvironmentForChainId,
   type NuvemIdentityCheckRequest,
 } from './worldIdentityCheck'
 
@@ -26,7 +27,7 @@ function request(
       ],
       hash: AI_VAULT_IDENTITY_POLICY_HASH,
     },
-    appId: environment === 'staging' ? 'app_staging_nuvem' : 'app_nuvem',
+    appId: 'app_nuvem',
     action: 'sponsor-ai-vault-identity',
     rpContext: {
       rp_id: 'rp_nuvem',
@@ -47,12 +48,17 @@ describe('World Identity Check request pinning', () => {
     expect(assertIdentityCheckRequest(input, 'production')).toBe(input)
   })
 
-  it('accepts staging only when both the build and app are staging', () => {
+  it('accepts the registered v4 app when the request environment is staging', () => {
     const input = request('staging')
     expect(assertIdentityCheckRequest(input, 'staging')).toBe(input)
     expect(() => assertIdentityCheckRequest(input, 'production')).toThrow('policy and environment')
-    expect(() => assertIdentityCheckRequest({ ...input, appId: 'app_production' }, 'staging'))
+    expect(() => assertIdentityCheckRequest({ ...input, appId: 'invalid_app' as `app_${string}` }, 'staging'))
       .toThrow('policy and environment')
+  })
+
+  it('maps Robinhood testnet to staging and mainnet to production', () => {
+    expect(identityEnvironmentForChainId(46_630)).toBe('staging')
+    expect(identityEnvironmentForChainId(4_663)).toBe('production')
   })
 
   it('builds the exact gateway selector without a production fallback', () => {

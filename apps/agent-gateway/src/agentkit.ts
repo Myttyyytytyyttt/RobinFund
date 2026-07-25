@@ -10,7 +10,11 @@ import {
 import { getAddress, type Address, type Hex } from "viem";
 import type { AgentChainReader } from "./chain.js";
 import { hmacSha256, randomNonce, randomOpaqueToken, requestHash, sha256 } from "./crypto.js";
-import type { AgentSession } from "./domain.js";
+import type {
+  AgentSession,
+  HumanBackingMode,
+  WorldIdentityGateConfig,
+} from "./domain.js";
 import type { ControlPlaneStore } from "./store.js";
 
 export class AgentAuthError extends Error {
@@ -39,6 +43,8 @@ export interface AgentSessionServiceOptions {
   worldIdPepper: string;
   challengeLifetimeSeconds?: number;
   sessionLifetimeSeconds?: number;
+  humanBackingMode?: HumanBackingMode;
+  identityGate?: WorldIdentityGateConfig;
 }
 
 function normalizeAddress(value: string): Address {
@@ -163,9 +169,9 @@ export class AgentSessionService {
       throw new AgentAuthError("WORLD_BACKING_INACTIVE", "AgentRegistry World backing is not active", 403);
     }
 
-    // AgentBook returns an anonymous identifier. It is used only in memory and immediately HMACed.
-    const humanId = await this.dependencies.lookupHuman(signer);
-    if (!humanId) throw new AgentAuthError("AGENTBOOK_NOT_BACKED", "Signer has no active AgentBook backing", 403);
+    // The canonical AgentBook identifier or staging Identity Check subject is
+    // used only in memory and immediately domain-separated through HMAC.
+    const { humanId } = await this.resolveHumanBacking(agentId, signer);
 
     // Atomic consumption is the final replay barrier after all remote verification work.
     if (!await this.store.consumeChallenge(agentId, signer, payload.nonce)) {
@@ -233,12 +239,65 @@ export class AgentSessionService {
     return (await this.worldIdentityForSigner(agentId, signer)).backingHash;
   }
 
-  async worldIdentityForSigner(agentId: Hex, signer: Address): Promise<{ humanHash: Hex; backingHash: Hex }> {
-    const humanId = await this.dependencies.lookupHuman(signer);
-    if (!humanId) throw new AgentAuthError("AGENTBOOK_NOT_BACKED", "Signer has no active AgentBook backing", 403);
+  async worldIdentityForSigner(agentId: Hex, signer: Address): Promise<{
+    humanHash: Hex;
+    backingHash: Hex;
+    mode: HumanBackingMode;
+    canonical: boolean;
+  }> {
+    const { humanId, mode } = await this.resolveHumanBacking(agentId, signer);
     return {
       humanHash: hmacSha256(this.options.worldIdPepper, humanId),
       backingHash: hmacSha256(this.options.worldIdPepper, `${humanId}:${agentId.toLowerCase()}:${signer.toLowerCase()}`),
+      mode,
+      canonical: mode === "canonical-agentbook",
+    };
+  }
+
+  private async resolveHumanBacking(agentId: Hex, signer: Address): Promise<{
+    humanId: string;
+    mode: HumanBackingMode;
+  }> {
+    const mode = this.options.humanBackingMode ?? "canonical-agentbook";
+    if (mode === "canonical-agentbook") {
+      const humanId = await this.dependencies.lookupHuman(signer);
+      if (!humanId) throw new AgentAuthError("AGENTBOOK_NOT_BACKED", "Signer has no active AgentBook backing", 403);
+      return { humanId, mode };
+    }
+
+    const gate = this.options.identityGate;
+    if (!gate || gate.environment !== "staging" || this.chain.chainId !== 46_630) {
+      throw new AgentAuthError(
+        "STAGING_BACKING_MISCONFIGURED",
+        "Staging identity backing is available only on Robinhood Chain testnet",
+        503,
+      );
+    }
+    const binding = await this.store.getWorldIdentityAgentBinding({
+      agentId,
+      appId: gate.appId,
+      rpId: gate.rpId,
+      environment: gate.environment,
+      policyId: gate.policyId,
+      policyVersion: gate.policyVersion,
+      policyHash: gate.policyHash,
+      action: gate.action,
+    });
+    if (
+      !binding
+      || binding.revokedAt
+      || binding.validUntil <= new Date()
+      || binding.signer.toLowerCase() !== signer.toLowerCase()
+    ) {
+      throw new AgentAuthError(
+        "WORLD_IDENTITY_STAGING_REQUIRED",
+        "Complete the staging World Identity Check before using this testnet agent",
+        403,
+      );
+    }
+    return {
+      humanId: `world-staging:${gate.rpId}:${binding.subjectHash.toLowerCase()}`,
+      mode,
     };
   }
 
