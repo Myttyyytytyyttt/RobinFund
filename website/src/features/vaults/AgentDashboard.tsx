@@ -51,7 +51,7 @@ function UniswapDecision({ decision }: { decision: PublicAgentDecision }) {
     : decision.decision === 'approved'
       ? 'Uniswap execution approved'
       : null
-  if (!title || !decision.token_in || !decision.token_out) return null
+  if (decision.chain_id !== 4663 || !title || !decision.token_in || !decision.token_out) return null
   return (
     <div className="rounded-xl border border-[#ff4d8d]/20 bg-[#ff4d8d]/[0.06] p-3 text-[10px]">
       <div className="flex items-center justify-between gap-3">
