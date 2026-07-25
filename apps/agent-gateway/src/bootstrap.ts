@@ -8,6 +8,7 @@ export function createConfiguredGateway(config: GatewayConfig) {
     ...services,
     registryAddress: config.AGENT_REGISTRY_ADDRESS,
     allowedOrigins: config.CORS_ORIGINS.split(",").map((value) => value.trim()).filter(Boolean),
+    graphEnabled: config.GRAPH_ENABLED,
     tradingEnabled: config.TRADING_ENABLED,
   });
   return { app, services };

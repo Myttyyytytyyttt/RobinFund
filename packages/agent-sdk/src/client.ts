@@ -43,10 +43,15 @@ function hex(value: unknown): Hex {
 function provenance(value: Record<string, unknown>): GraphProvenance {
   return {
     deploymentId: String(value.deploymentId),
+    chainId: Number(value.chainId),
     blockNumber: BigInt(String(value.blockNumber)),
+    blockHash: value.blockHash == null ? null : hex(value.blockHash),
     blockTimestamp: new Date(String(value.blockTimestamp)),
     chainHeadBlock: BigInt(String(value.chainHeadBlock)),
+    blockLag: BigInt(String(value.blockLag)),
+    indexingErrors: false,
     observedAt: new Date(String(value.observedAt)),
+    ageSeconds: Number(value.ageSeconds),
   };
 }
 
@@ -234,9 +239,21 @@ export class NuvemAgentClient {
       vault: address(raw.vault),
       controller: address(raw.controller),
       policyHash: hex(raw.policyHash),
+      state: Number(raw.state),
       navWad: BigInt(String(raw.navWad)),
+      navValid: raw.navValid === true,
+      navUpdatedAt: raw.navUpdatedAt == null ? null : new Date(String(raw.navUpdatedAt)),
+      navObservedAt: new Date(String(raw.navObservedAt)),
+      controllerEnabled: raw.controllerEnabled === true,
+      controllerPaused: raw.controllerPaused === true,
+      agentStatus: raw.agentStatus == null ? null : Number(raw.agentStatus),
+      backedUntil: raw.backedUntil == null ? null : new Date(String(raw.backedUntil)),
       holdings: (raw.holdings as Array<Record<string, unknown>>).map((item) => ({
-        token: address(item.token), balance: BigInt(String(item.balance)), valueWad: BigInt(String(item.valueWad)),
+        token: address(item.token),
+        balance: BigInt(String(item.balance)),
+        valueWad: BigInt(String(item.valueWad)),
+        valid: item.valid === true,
+        observedAt: new Date(String(item.observedAt)),
       })),
       recentTrades: raw.recentTrades as Array<Record<string, unknown>>,
       provenance: provenance(rawProvenance),

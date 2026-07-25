@@ -86,6 +86,7 @@ export function handleControllerSet(event: ControllerSet): void {
       controller.policyHash = hash.value;
     }
   }
+  controller.agent = event.params.agentId.toHexString();
   controller.enabled = event.params.enabled;
   controller.updatedAt = event.block.timestamp;
   controller.save();

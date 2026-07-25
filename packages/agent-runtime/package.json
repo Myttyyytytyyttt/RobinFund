@@ -12,6 +12,7 @@
     "test": "vitest run"
   },
   "dependencies": {
+    "@modelcontextprotocol/sdk": "1.29.0",
     "@nuvem/agent-sdk": "workspace:*",
     "@nuvem/managed-signer": "workspace:*",
     "ai": "7.0.34",

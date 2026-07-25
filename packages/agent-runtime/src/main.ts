@@ -2,6 +2,7 @@ import { NuvemAgentClient, type AgentSigner } from "@nuvem/agent-sdk";
 import { deriveManagedAgentAccount } from "@nuvem/managed-signer";
 import { getAddress, type Address, type Hex } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
+import { VaultGraphMcpClient } from "./graph-mcp.js";
 import { NuvemReferenceAgent } from "./reference-agent.js";
 
 function required(name: string): string {
@@ -29,14 +30,26 @@ const signer: AgentSigner = {
   signMessage: (message) => account.signMessage({ message }),
   signTypedData: (typedData) => account.signTypedData(typedData as never),
 };
+const gatewayUrl = required("NUVEM_GATEWAY_URL");
 const client = new NuvemAgentClient(
-  required("NUVEM_GATEWAY_URL"),
+  gatewayUrl,
   agentId,
   signer,
 );
 await client.connect();
+const graphMcp = new VaultGraphMcpClient(
+  process.env.NUVEM_MCP_URL?.trim() || new URL("/mcp", gatewayUrl).toString(),
+);
+await graphMcp.connect();
 
-const reference = new NuvemReferenceAgent(client, {
+const reference = new NuvemReferenceAgent({
+  context: () => client.context(),
+  graphVault: (vault) => graphMcp.vault(vault),
+  quote: (input, context) => client.quote(input, context),
+  signAndSubmit: (quote, input, safety) => client.signAndSubmit(quote, input, safety),
+  heartbeat: (runtimeVersion, capabilities) => client.heartbeat(runtimeVersion, capabilities),
+  recordDecision: (decision, summary, context) => client.recordDecision(decision, summary, context),
+}, {
   model: process.env.NUVEM_MODEL ?? "openai/gpt-5-mini",
   execute: process.env.NUVEM_REFERENCE_EXECUTE === "1",
   expectedChainId: chainId,
@@ -64,3 +77,4 @@ while (!stopped) {
   }
   if (!stopped) await new Promise((resolve) => setTimeout(resolve, intervalMs));
 }
+await graphMcp.close();

@@ -1,6 +1,6 @@
 # Nuvem Agents — judge summary
 
-Last updated: 2026-07-23 (Europe/Lisbon).
+Last updated: 2026-07-26 (Europe/Lisbon).
 
 ## One-line product
 
@@ -64,17 +64,28 @@ registration, then we must record the World dashboard event, AgentBook transacti
 **Before:** Ponder served the frontend, but agents had no portable, freshness-checked intelligence
 interface.
 
-**Implemented:** vault/agent Graph schema, Graph-backed source abstraction and a read-only MCP with
-vault state, holdings, performance, recent trades and risk simulation. New trades fail closed when
-the configured Graph source is stale or unavailable.
+**Implemented:** a Robinhood-aware subgraph, pinned self-hosted Graph Node, Graph-backed source and
+read-only MCP with indexer status, vault state, holdings, performance, recent trades and risk
+simulation. The gateway and reference agent use the same deployment-pinned source. Reads/trades fail
+closed on deployment drift, wrong RPC chain, indexing errors, stale cursor, stale per-vault
+snapshots, invalid NAV/holdings, inactive controller or expired World backing.
 
-**Network discovery:** Robinhood Chain currently exposes Firehose/Substreams rather than normal
-Subgraph Studio deployment. Authentication and the Robinhood endpoint were proven by processing
-mainnet block `16,863,868`.
+**Current proof:** Graph Node `v0.44.0` is synced to Robinhood testnet `46630` with no indexing
+errors. The immutable deployment, exact cursor, three indexed Funds and eight registry agents are
+recorded in
+[`../packages/deploy/outputs/2026-07-25-the-graph-robinhood-live.md`](../packages/deploy/outputs/2026-07-25-the-graph-robinhood-live.md).
+The standalone MCP is publicly reachable at
+[`nuvem-vault-intelligence-mcp.vercel.app`](https://nuvem-vault-intelligence-mcp.vercel.app/);
+its readiness route and all eight tools were verified against the immutable deployment. The live
+canary currently reports an invalid oracle NAV, and the MCP rejects risk approval instead of
+laundering it into a successful demo. Public evidence is recorded in
+[`../packages/deploy/outputs/2026-07-26-the-graph-public-mcp.md`](../packages/deploy/outputs/2026-07-26-the-graph-public-mcp.md).
 
-**Still required:** build the Nuvem-specific Substreams package, persist it with a cursor/reorg-safe
-SQL sink, expose the query endpoint and connect that live endpoint to the gateway/MCP. Until then,
-the public product must not display a `Graph live` badge.
+**Still required:** deploy the first public AI controller/Fund after a real World + AgentBook flow,
+then replace the MCP's temporary quick-tunnel GraphQL upstream with the prepared named-tunnel
+overlay or another persistent container host. The MCP URL is stable, but the current Graph Node
+still depends on this PC; the public website must not display a durable-production `Graph live`
+badge until that upstream is replaced.
 
 ### Uniswap — quote-to-execution
 
@@ -112,15 +123,17 @@ demo.
 - Public frontend, gateway, Supabase control plane and World app/action.
 - Agent contracts, SDK/CLI/Python client and Nuvem reference runtime.
 - Local/fork agent flow: `21/21` checks.
-- Contract matrix: `148` tests; gateway `55`; SDK `9`; runtime `4`; MCP `5`.
+- Deterministic root suite: `349` passing checks (`136` contracts/invariants, `140` gateway,
+  `39` web, `17` MCP, `10` SDK, `7` runtime); two credentialed integration tests are conditional.
 - Real Uniswap quote and atomic fork execution on Robinhood `4663`.
-- Real authenticated Robinhood Substreams block delivery.
+- Live self-hosted Graph Node indexing Robinhood testnet with immutable deployment provenance.
 - Permissionless LP flow without KYC or World.
 
 ## Remaining demo-critical work
 
 1. Complete one real World Proof of Human + AgentBook flow with an Orb-verified tester.
-2. Ship the Robinhood Substreams package, SQL sink and live MCP query path.
+2. Move the synced Graph Node from the temporary quick tunnel to the prepared named tunnel or a
+   persistent container host; the public MCP is already deployed.
 3. Deploy the first AI controller/Fund on `46630`, add stake and run the public lifecycle.
 4. Run a minimal Uniswap public canary only after the proxy/route preflight is green.
 5. Execute the clean-machine ten-act E2E and capture CAs, transactions, dashboards and video.
@@ -139,3 +152,5 @@ operations requirements for permissionless mainnet capital.
   [`../packages/deploy/outputs/2026-07-22-uniswap-api-probe.md`](../packages/deploy/outputs/2026-07-22-uniswap-api-probe.md)
 - World/Substreams evidence:
   [`../packages/deploy/outputs/2026-07-23-substreams-world-diagnostics.md`](../packages/deploy/outputs/2026-07-23-substreams-world-diagnostics.md)
+- Public The Graph MCP evidence:
+  [`../packages/deploy/outputs/2026-07-26-the-graph-public-mcp.md`](../packages/deploy/outputs/2026-07-26-the-graph-public-mcp.md)

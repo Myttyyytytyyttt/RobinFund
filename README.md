@@ -45,6 +45,30 @@ The frontend never receives the Uniswap API key. Its live card reads the current
 verifies the configured adapter/proxy/router bytecode and displays only sanitized confirmed
 executions from the public audit table.
 
+## The Graph integration
+
+The Graph is the load-bearing data plane for autonomous agents, not a duplicate frontend indexer:
+
+1. A Robinhood-aware Graph Node indexes the Fund, registry, controller, policy, World backing,
+   holdings and trade lifecycle.
+2. The read-only Vault Intelligence MCP exposes that state to any compatible agent.
+3. Every response is pinned to an immutable deployment ID and carries chain/block provenance.
+4. The gateway rejects deployment drift, RPC-chain mismatch, indexing errors, stale cursors,
+   invalid NAV/holdings and inactive controller/World state.
+5. The reference agent independently cross-checks gateway context against MCP before requesting a
+   Uniswap quote.
+
+Robinhood testnet `46630` currently runs through the checked-in self-hosted Graph Node stack. The
+Graph data path can operate read-only with `TRADING_ENABLED=false`; trade execution cannot be
+enabled when `GRAPH_ENABLED=false`.
+
+Implementation and local runbook:
+
+- [Subgraph and Graph Node](packages/subgraph/README.md)
+- [Vault Intelligence MCP](packages/vault-intelligence-mcp/README.md)
+- [Gateway integration](apps/agent-gateway/README.md)
+- [Live testnet evidence](packages/deploy/outputs/2026-07-25-the-graph-robinhood-live.md)
+
 ## Verified behavior
 
 The repository includes:
@@ -95,6 +119,7 @@ not claimed until its transaction hash is linked here and visible in the live fr
 
 - [Uniswap API feedback](FEEDBACK.md)
 - [Agent gateway runbook](apps/agent-gateway/README.md)
+- [The Graph runbook](packages/subgraph/README.md)
 - [Deployment status](packages/deploy/STATUS.md)
 - [Protocol specification](docs/SPEC.md)
 - [Security review history](docs/REVIEW.md)

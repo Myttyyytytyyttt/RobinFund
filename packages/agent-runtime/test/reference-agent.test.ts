@@ -12,15 +12,28 @@ const context: VaultContext = {
   vault: fund,
   controller,
   policyHash: `0x${"22".repeat(32)}` as Hex,
+  state: 0,
   navWad: 1_000n,
+  navValid: true,
+  navUpdatedAt: new Date("2026-07-22T00:00:00Z"),
+  navObservedAt: new Date("2026-07-22T00:00:00Z"),
+  controllerEnabled: true,
+  controllerPaused: false,
+  agentStatus: 1,
+  backedUntil: new Date("2100-01-01T00:00:00Z"),
   holdings: [],
   recentTrades: [],
   provenance: {
     deploymentId: "deployment",
+    chainId: 4663,
     blockNumber: 100n,
+    blockHash: `0x${"ab".repeat(32)}` as Hex,
     blockTimestamp: new Date("2026-07-22T00:00:00Z"),
     chainHeadBlock: 100n,
+    blockLag: 0n,
+    indexingErrors: false,
     observedAt: new Date("2026-07-22T00:00:01Z"),
+    ageSeconds: 1,
   },
 };
 
@@ -57,6 +70,26 @@ function fakeQuote(
 function api(): ReferenceAgentApi & { signAndSubmit: ReturnType<typeof vi.fn> } {
   return {
     context: vi.fn(async () => context),
+    graphVault: vi.fn(async () => ({
+      data: {
+        address: fund,
+        controller,
+        agentId: context.agentId,
+        navWad: context.navWad,
+        navValid: true,
+        state: 0,
+        controllerEnabled: true,
+        controllerPaused: false,
+        agentStatus: 1,
+        backedUntil: new Date("2100-01-01T00:00:00Z"),
+      },
+      provenance: {
+        deploymentId: context.provenance.deploymentId,
+        chainId: context.provenance.chainId,
+        blockNumber: context.provenance.blockNumber,
+        indexingErrors: false,
+      },
+    })),
     quote: vi.fn(async () => fakeQuote()),
     signAndSubmit: vi.fn(async () => ({ accepted: true })),
     heartbeat: vi.fn(async () => undefined),
@@ -86,12 +119,13 @@ describe("reference agent tools", () => {
     expect(first).not.toBe(second);
   });
 
-  it("reads only the API context", async () => {
+  it("cross-checks the gateway context through The Graph MCP", async () => {
     const fake = api();
     const tools = createReferenceTools(fake, options);
     const result = await execute(tools.readVault, {});
     expect(fake.context).toHaveBeenCalledOnce();
-    expect(result).toMatchObject({ vault: fund, navWad: "1000" });
+    expect(fake.graphVault).toHaveBeenCalledWith(fund);
+    expect(result).toMatchObject({ vault: fund, navWad: "1000", mcpVerification: { verified: true } });
   });
 
   it("rejects gateway context that differs from the runtime-pinned vault", async () => {
@@ -102,6 +136,21 @@ describe("reference agent tools", () => {
     });
     const tools = createReferenceTools(fake, options);
     await expect(execute(tools.readVault, {})).rejects.toThrow("runtime-pinned Fund/controller");
+  });
+
+  it("rejects an MCP response from another deployment", async () => {
+    const fake = api();
+    vi.mocked(fake.graphVault).mockResolvedValueOnce({
+      ...await fake.graphVault(fund),
+      provenance: {
+        deploymentId: "different",
+        chainId: 4663,
+        blockNumber: 100n,
+        indexingErrors: false,
+      },
+    });
+    const tools = createReferenceTools(fake, options);
+    await expect(execute(tools.readVault, {})).rejects.toThrow("MCP snapshot does not match");
   });
 
   it("quotes without signing in dry-run mode", async () => {

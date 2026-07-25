@@ -18,7 +18,7 @@ This is an extension of the existing Nuvem.Fund project. Do not rewrite or weake
 2. The sponsor registers an AI agent and creates its vault.
 3. The agent receives a discoverable ENS identity such as `atlas.nuvem.eth`.
 4. A user deposits USDC into the vault and receives demo vault shares.
-5. The agent queries live market/liquidity/vault data through The Graph.
+5. The agent queries live vault, holdings, policy and execution data through The Graph.
 6. The agent produces a structured trade intent with a short explanation.
 7. An onchain/offchain policy engine checks asset allowlist, trade size, concentration and slippage.
 8. The vault executes a supported tokenized-stock swap through the Uniswap API.
@@ -54,15 +54,16 @@ Official page: https://ethglobal.com/events/lisbon2026/prizes/the-graph
 
 Build a reusable package called **Nuvem Vault Intelligence MCP**. It must use live Graph data and also power the Nuvem agent in the demo.
 
-Suggested tools:
+Implemented tools:
 
 ```text
+get_indexer_status()
 list_vaults()
 get_vault_state(vault)
 get_vault_performance(vault)
-get_market_liquidity(tokenIn, tokenOut)
-get_recent_market_activity(market)
-simulate_rebalance(vault, targetAllocation)
+get_holdings(vault)
+get_recent_trades(vault)
+simulate_rebalance(vault, proposedTrade)
 assess_trade_risk(vault, proposedTrade)
 ```
 

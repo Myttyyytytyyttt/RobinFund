@@ -1,6 +1,6 @@
 # Nuvem Agents — changelog de continuidad
 
-Última actualización: 2026-07-23 (Europe/Lisbon).
+Última actualización: 2026-07-26 (Europe/Lisbon).
 
 Resumen corto para jueces: [`JUDGES_SUMMARY.md`](./JUDGES_SUMMARY.md).
 
@@ -53,7 +53,7 @@ inmutable, manteniendo el protocolo económico preexistente aislado de la lógic
 | Frontend | Wizard/dashboard implementados; build/tests y visual desktop/mobile verdes |
 | World Nuvem | App/RP/action de producción activas; IDKit 4.2.1, gateway y Postgres implementados; el primer scan llegó a World App pero la cuenta no tenía Proof of Human |
 | World canonical | Integración y validadores AgentBook implementados; falta E2E público con registro real |
-| The Graph | Robinhood Substreams autenticado con un bloque real; faltan package Nuvem, sink SQL y endpoint consultable |
+| The Graph | Graph Node `v0.44.0` sincronizado en Robinhood testnet, deployment inmutable y MCP read-only público; falta sustituir el quick tunnel por un túnel/host persistente |
 | Uniswap Trading API | Quote y ejecución CLASSIC reales sobre fork 4663; falta canario público |
 | Robinhood 46630 | AgentRegistry y adapter AI de test desplegados; falta el primer controller/Fund público |
 | Robinhood 4663 | Fork probado; no hay deployment público Agents ni autorización de capital público |
@@ -65,10 +65,13 @@ inmutable, manteniendo el protocolo económico preexistente aislado de la lógic
   producción y verifica el mismo selector/campos externos.
 - El backing World local es no canónico y se etiqueta como tal. El lookup canónico está cubierto por
   tests del gateway, no por una prueba pública.
-- Ponder alimenta la UI local; Robinhood Substreams autentica, pero el sink/query Nuvem todavía no
-  está desplegado.
+- El MCP tiene URL Vercel estable, pero su GraphQL upstream actual usa un quick tunnel dependiente
+  de este PC; no se representa como hosting durable hasta activar el overlay de túnel con nombre.
 - Mainnet con capital público sigue bloqueada por auditoría externa, operación, issuer y revisión
   legal. Los resultados locales no equivalen a una auditoría.
 
-La evidencia ejecutable y todas las direcciones efímeras están en
-[`packages/deploy/outputs/2026-07-22-nuvem-agents-local.md`](../packages/deploy/outputs/2026-07-22-nuvem-agents-local.md).
+La evidencia ejecutable está en
+[`packages/deploy/outputs/2026-07-22-nuvem-agents-local.md`](../packages/deploy/outputs/2026-07-22-nuvem-agents-local.md),
+[`packages/deploy/outputs/2026-07-25-the-graph-robinhood-live.md`](../packages/deploy/outputs/2026-07-25-the-graph-robinhood-live.md)
+y
+[`packages/deploy/outputs/2026-07-26-the-graph-public-mcp.md`](../packages/deploy/outputs/2026-07-26-the-graph-public-mcp.md).

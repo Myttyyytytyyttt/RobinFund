@@ -1,5 +1,8 @@
 [
   {"type":"function","name":"USDG","stateMutability":"view","inputs":[],"outputs":[{"type":"address"}]},
+  {"type":"function","name":"REGISTRY","stateMutability":"view","inputs":[],"outputs":[{"type":"address"}]},
+  {"type":"function","name":"assetCount","stateMutability":"view","inputs":[],"outputs":[{"type":"uint256"}]},
+  {"type":"function","name":"assets","stateMutability":"view","inputs":[{"type":"uint256"}],"outputs":[{"type":"address"}]},
   {"type":"function","name":"nav","stateMutability":"view","inputs":[],"outputs":[{"name":"snapshot","type":"tuple","components":[{"name":"navWad","type":"uint256"},{"name":"valid","type":"bool"}]}]},
   {"anonymous":false,"type":"event","name":"EntryFeeCharged","inputs":[{"indexed":true,"name":"orderId","type":"uint256"},{"indexed":false,"name":"fee6","type":"uint256"},{"indexed":false,"name":"toManager6","type":"uint256"},{"indexed":false,"name":"toProtocol6","type":"uint256"}]},
   {"anonymous":false,"type":"event","name":"DepositExecuted","inputs":[{"indexed":true,"name":"orderId","type":"uint256"},{"indexed":true,"name":"lp","type":"address"},{"indexed":false,"name":"amount6","type":"uint256"},{"indexed":false,"name":"sharesMinted","type":"uint256"}]},

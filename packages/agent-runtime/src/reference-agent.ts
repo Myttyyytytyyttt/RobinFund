@@ -13,9 +13,11 @@ import type {
   QuoteResult,
   VaultContext,
 } from "@nuvem/agent-sdk";
+import type { McpVaultSnapshot } from "./graph-mcp.js";
 
 export interface ReferenceAgentApi {
   context(): Promise<VaultContext>;
+  graphVault(vault: Address): Promise<McpVaultSnapshot>;
   quote(input: QuoteInput, context?: VaultContext): Promise<QuoteResult>;
   signAndSubmit(quote: QuoteResult, input: QuoteInput, safety: LocalSafetyConfig): Promise<Record<string, unknown>>;
   heartbeat(runtimeVersion: string, capabilities: string[]): Promise<void>;
@@ -42,6 +44,41 @@ function assertTrustedContext(context: VaultContext, options: ReferenceAgentOpti
   ) {
     throw new Error("Gateway context does not match the runtime-pinned Fund/controller");
   }
+  if (context.provenance.chainId !== options.expectedChainId) {
+    throw new Error("Gateway Graph provenance is for another chain");
+  }
+}
+
+function assertMcpMatches(
+  context: VaultContext,
+  snapshot: McpVaultSnapshot,
+  options: ReferenceAgentOptions,
+): void {
+  const blockSkew = context.provenance.blockNumber >= snapshot.provenance.blockNumber
+    ? context.provenance.blockNumber - snapshot.provenance.blockNumber
+    : snapshot.provenance.blockNumber - context.provenance.blockNumber;
+  if (
+    snapshot.provenance.deploymentId !== context.provenance.deploymentId
+    || snapshot.provenance.chainId !== options.expectedChainId
+    || snapshot.provenance.indexingErrors
+    || blockSkew > 60n
+    || snapshot.data.address.toLowerCase() !== context.vault.toLowerCase()
+    || snapshot.data.controller?.toLowerCase() !== context.controller.toLowerCase()
+    || snapshot.data.agentId?.toLowerCase() !== context.agentId.toLowerCase()
+  ) {
+    throw new Error("The Graph MCP snapshot does not match the gateway's pinned context");
+  }
+}
+
+async function trustedContext(
+  api: ReferenceAgentApi,
+  options: ReferenceAgentOptions,
+): Promise<{ context: VaultContext; snapshot: McpVaultSnapshot }> {
+  const context = await api.context();
+  assertTrustedContext(context, options);
+  const snapshot = await api.graphVault(context.vault);
+  assertMcpMatches(context, snapshot, options);
+  return { context, snapshot };
 }
 
 export function evidenceHash(
@@ -74,9 +111,16 @@ export function createReferenceTools(api: ReferenceAgentApi, options: ReferenceA
       description: "Read fresh Graph-backed NAV, holdings, recent trades and data provenance. Always call this first.",
       inputSchema: z.object({}),
       execute: async () => {
-        const context = await api.context();
-        assertTrustedContext(context, options);
-        return serializable(context);
+        const { context, snapshot } = await trustedContext(api, options);
+        return serializable({
+          ...context,
+          mcpVerification: {
+            verified: true,
+            deploymentId: snapshot.provenance.deploymentId,
+            blockNumber: snapshot.provenance.blockNumber,
+            chainId: snapshot.provenance.chainId,
+          },
+        });
       },
     }),
     quoteTrade: tool({
@@ -90,8 +134,20 @@ export function createReferenceTools(api: ReferenceAgentApi, options: ReferenceA
         reasoning: z.string().min(1).max(4_000),
       }),
       execute: async ({ tokenIn, tokenOut, amountIn, maxSlippageBps, summary, reasoning }) => {
-        const context = await api.context();
-        assertTrustedContext(context, options);
+        const { context, snapshot } = await trustedContext(api, options);
+        if (
+          !context.navValid
+          || !snapshot.data.navValid
+          || context.state !== 0
+          || snapshot.data.state !== 0
+          || !snapshot.data.controllerEnabled
+          || snapshot.data.controllerPaused
+          || snapshot.data.agentStatus !== 1
+          || snapshot.data.backedUntil == null
+          || snapshot.data.backedUntil <= new Date()
+        ) {
+          throw new Error("The Graph MCP reports a vault state that is not safe to quote");
+        }
         const trade = {
           tokenIn: tokenIn.toLowerCase() as Address,
           tokenOut: tokenOut.toLowerCase() as Address,
@@ -130,8 +186,7 @@ export function createReferenceTools(api: ReferenceAgentApi, options: ReferenceA
         let context = item.context;
         let requoted = false;
         if (quote.executionPlan.expiresAt.getTime() - Date.now() <= (options.requoteBeforeMs ?? 15_000)) {
-          context = await api.context();
-          assertTrustedContext(context, options);
+          ({ context } = await trustedContext(api, options));
           input = {
             ...item.input,
             evidenceHash: evidenceHash(context, {
@@ -159,7 +214,7 @@ export function createReferenceTools(api: ReferenceAgentApi, options: ReferenceA
       description: "Explicitly take no trade when evidence is weak, stale, unsafe or no rebalance is needed.",
       inputSchema: z.object({ reason: z.string().min(1).max(2_000) }),
       execute: async ({ reason }) => {
-        const context = await api.context();
+        const { context } = await trustedContext(api, options);
         if (api.recordDecision) await api.recordDecision("hold", reason, context);
         return { held: true, reason };
       },
@@ -177,7 +232,7 @@ export class NuvemReferenceAgent {
       instructions: `You are the Nuvem reference vault manager. You have no permission beyond the exposed tools.
 
 Rules:
-- Always call readVault before deciding.
+- Always call readVault before deciding; it verifies the Graph MCP snapshot against the gateway cursor.
 - Use only addresses and balances returned by fresh context.
 - Prefer hold when evidence is incomplete; never invent prices, liquidity, fills or performance.
 - At most one quote and one execution per cycle.
@@ -192,7 +247,7 @@ Rules:
   }
 
   async runCycle(): Promise<{ text: string; steps: number }> {
-    await this.api.heartbeat("nuvem-reference/0.1.0", ["graph-context", "uniswap-classic", "eip712", "hold"]);
+    await this.api.heartbeat("nuvem-reference/0.1.0", ["the-graph-mcp", "graph-provenance", "uniswap-classic", "eip712", "hold"]);
     const result = await this.agent.generate({
       prompt: "Evaluate the current vault. Hold unless a policy-compliant rebalance is clearly supported by the provided data.",
       timeout: { totalMs: 90_000, stepMs: 30_000 },

@@ -48,10 +48,16 @@ export function createServices(config: GatewayConfig) {
   });
   const graphUrl = config.GRAPH_URL ?? "https://unconfigured.invalid/graphql";
   const graphDeploymentId = config.GRAPH_DEPLOYMENT_ID ?? "unconfigured";
-  const graph = new GraphVaultIntelligence({
-    url: graphUrl,
+  const graphSource = new SubgraphIntelligenceSource({
+    graphUrl,
+    rpcUrl: config.RH_RPC_URL,
     deploymentId: graphDeploymentId,
-  }, chain);
+    expectedChainId: config.RH_CHAIN_ID,
+    maxBlockLag: config.GRAPH_MAX_BLOCK_LAG,
+    maxAgeSeconds: config.GRAPH_MAX_AGE_SECONDS,
+    requestTimeoutMs: config.GRAPH_TIMEOUT_MS,
+  });
+  const graph = new GraphVaultIntelligence(graphSource);
   const uniswap = new UniswapTradingApi({
     apiBaseUrl: config.UNISWAP_API_BASE_URL,
     apiKey: config.UNISWAP_API_KEY ?? "disabled",
@@ -102,13 +108,13 @@ export function createServices(config: GatewayConfig) {
     config.WORLD_CHAIN_RPC,
     config.WORLD_AGENTBOOK_RELAY_URL,
   );
-  const mcpHandler = config.TRADING_ENABLED
+  const mcpHandler = config.GRAPH_ENABLED
     ? createMcpHandler(
-      new SubgraphIntelligenceSource(graphUrl, config.RH_RPC_URL, graphDeploymentId),
+      graphSource,
       config.USDG_ADDRESS,
     )
     : async () => new Response(JSON.stringify({
-      error: { code: "TRADING_NOT_CONFIGURED", message: "Graph-backed MCP is not enabled on this deployment" },
+      error: { code: "GRAPH_NOT_CONFIGURED", message: "Graph-backed MCP is not enabled on this deployment" },
     }), { status: 503, headers: { "content-type": "application/json" } });
   return {
     store,

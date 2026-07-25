@@ -1,0 +1,22 @@
+services:
+  postgres:
+    environment:
+      POSTGRES_PASSWORD: ${GRAPH_POSTGRES_PASSWORD:?GRAPH_POSTGRES_PASSWORD is required}
+
+  graph-node:
+    environment:
+      postgres_pass: ${GRAPH_POSTGRES_PASSWORD:?GRAPH_POSTGRES_PASSWORD is required}
+      GRAPH_POI_ACCESS_TOKEN: ${GRAPH_POI_ACCESS_TOKEN:?GRAPH_POI_ACCESS_TOKEN is required}
+
+  cloudflared:
+    image: cloudflare/cloudflared:latest
+    pull_policy: always
+    restart: unless-stopped
+    depends_on:
+      - graph-node
+    command:
+      - tunnel
+      - --no-autoupdate
+      - run
+      - --token
+      - ${CLOUDFLARE_TUNNEL_TOKEN:?CLOUDFLARE_TUNNEL_TOKEN is required}

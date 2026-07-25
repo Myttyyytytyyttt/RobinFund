@@ -55,10 +55,15 @@ export interface TradeTypedData {
 
 export interface GraphProvenance {
   deploymentId: string;
+  chainId: number;
   blockNumber: bigint;
+  blockHash: Hex | null;
   blockTimestamp: Date;
   chainHeadBlock: bigint;
+  blockLag: bigint;
+  indexingErrors: false;
   observedAt: Date;
+  ageSeconds: number;
 }
 
 export interface VaultContext {
@@ -66,8 +71,22 @@ export interface VaultContext {
   vault: Address;
   controller: Address;
   policyHash: Hex;
+  state: number;
   navWad: bigint;
-  holdings: Array<{ token: Address; balance: bigint; valueWad: bigint }>;
+  navValid: boolean;
+  navUpdatedAt: Date | null;
+  navObservedAt: Date;
+  controllerEnabled: boolean;
+  controllerPaused: boolean;
+  agentStatus: number | null;
+  backedUntil: Date | null;
+  holdings: Array<{
+    token: Address;
+    balance: bigint;
+    valueWad: bigint;
+    valid: boolean;
+    observedAt: Date;
+  }>;
   recentTrades: Array<Record<string, unknown>>;
   provenance: GraphProvenance;
 }

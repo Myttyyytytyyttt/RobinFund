@@ -20,9 +20,10 @@ pública será `https://<proyecto>.vercel.app` (los rewrites internos apuntan a 
 en su lugar una transición durable y finita por request; nunca se inicia un loop dentro de la
 Function.
 
-`TRADING_ENABLED=false` deja disponibles onboarding/World/vault jobs pero devuelve `503` en
-context, quotes, intents y MCP. Es el modo correcto para una red sin Graph + venue reales; nunca se
-debe habilitar para hacer que una demo incompleta parezca ejecutable.
+`GRAPH_ENABLED` y `TRADING_ENABLED` son controles separados. Con Graph activo y trading apagado,
+contexto, estado y MCP siguen disponibles en modo read-only, mientras quotes/intents devuelven
+`503`. Trading exige Graph activo: no existe un modo que permita ejecutar con inteligencia stale o
+sin procedencia.
 
 En desarrollo, los procesos cargan el `.env` gitignored de la raíz sin sobrescribir variables ya
 inyectadas por el entorno. Producción debe usar el secret manager del runtime.
@@ -31,6 +32,8 @@ inyectadas por el entorno. Producción debe usar el secret manager del runtime.
 
 | Ruta | Auth |
 |---|---|
+| `GET /readyz` | pública; valida deployment/cadena/frescura Graph |
+| `GET /v1/graph/status` | pública; procedencia Graph sanitizada |
 | `POST /v1/agent-sessions/challenge` | pública, idempotente |
 | `POST /v1/agent-sessions` | header AgentKit |
 | `GET /v1/agents/:id/context` | sesión agente |
@@ -64,7 +67,7 @@ La plantilla completa está en [`.env.example`](../../.env.example). Grupos:
 - chain: `RH_RPC_URL` + `RH_CHAIN_ID`, AgentRegistry, USDG y confirmaciones;
 - World: app/RP/action Nuvem, RP signing key, RPC/relay AgentBook, pepper y verifier key dedicada;
 - signer Nuvem: `MANAGED_SIGNER_SECRET` solo para dev/canario; KMS/HSM no exportable en producción;
-- Graph: endpoint y deployment ID;
+- Graph: `GRAPH_URL`, deployment ID inmutable, RPC/cadena esperada, lag/edad/timeout;
 - Uniswap: API key, base URL, approval proxy verificado contra `swap.to` y Universal Router oficial de la chain;
 - relay: relayer key dedicada;
 - vault worker: operator key, registries, adapter, NAVLib y asset allowlist.
@@ -125,7 +128,8 @@ desconocida antes de estimar gas.
   el human ID al browser.
 - El backing on-chain combina la evidencia Nuvem World ID y la evidencia AgentBook; ninguna basta sola.
 - Sesión opaca revocable de 15 minutos; rotar/pausar revoca sesiones.
-- Graph >20 bloques o >2 minutos stale: quote rechazada.
+- Graph con deployment/cadena incorrectos, indexing errors, >50 bloques o >5 minutos stale:
+  contexto, MCP y quote se rechazan.
 - Quote no CLASSIC, Permit2, target/from/chain/value inesperados: rechazada.
 - El calldata del proxy se decodifica y liga al Universal Router, token de entrada, amount y un deadline no menor que el firmado. Token de salida/recipient quedan ligados por quote + delta real del Fund + minOut.
 - Quote e intención se persisten antes de relay; workers concurrentes usan claims atómicos.

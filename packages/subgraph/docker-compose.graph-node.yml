@@ -1,0 +1,67 @@
+name: nuvem-graph
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: graph-node
+      POSTGRES_PASSWORD: graph-node-local
+      POSTGRES_DB: graph-node
+      PGDATA: /var/lib/postgresql/data/pgdata
+      POSTGRES_INITDB_ARGS: "-E UTF8 --locale=C"
+    command:
+      - postgres
+      - -cshared_preload_libraries=pg_stat_statements
+      - -cmax_connections=200
+    volumes:
+      - graph-postgres:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U graph-node -d graph-node"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  ipfs:
+    image: ipfs/kubo:v0.36.0
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:5001:5001"
+    volumes:
+      - graph-ipfs:/data/ipfs
+    healthcheck:
+      test: ["CMD", "ipfs", "id"]
+      interval: 10s
+      timeout: 10s
+      retries: 20
+
+  graph-node:
+    image: graphprotocol/graph-node:v0.44.0
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      ipfs:
+        condition: service_healthy
+    ports:
+      - "127.0.0.1:8000:8000"
+      - "127.0.0.1:8001:8001"
+      - "127.0.0.1:8020:8020"
+      - "127.0.0.1:8030:8030"
+      - "127.0.0.1:8040:8040"
+    environment:
+      postgres_host: postgres
+      postgres_port: "5432"
+      postgres_user: graph-node
+      postgres_pass: graph-node-local
+      postgres_db: graph-node
+      ipfs: ipfs:5001
+      ethereum: "robinhood-testnet:${RH_RPC_URL:?RH_RPC_URL must point to Robinhood testnet}"
+      GRAPH_LOG: info
+      GRAPH_POI_ACCESS_TOKEN: local-only-poi-token
+      GRAPH_ETHEREUM_CLEANUP_BLOCKS: "true"
+      ETHEREUM_REORG_THRESHOLD: "50"
+
+volumes:
+  graph-postgres:
+  graph-ipfs:
