@@ -100,10 +100,11 @@ async function contractSourceHash() {
     .sort((left, right) => left.localeCompare(right));
   const hash = createHash("sha256");
   for (const path of paths) {
-    const relative = path.slice(repositoryRoot.length + 1);
+    const relative = path.slice(repositoryRoot.length + 1).replaceAll("\\", "/");
     hash.update(relative);
     hash.update("\0");
-    hash.update(await readFile(path));
+    const source = await readFile(path, "utf8");
+    hash.update(source.replace(/\r\n?/g, "\n"));
     hash.update("\0");
   }
   return hash.digest("hex");
