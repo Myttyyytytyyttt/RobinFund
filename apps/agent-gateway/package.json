@@ -5,6 +5,7 @@
   "type": "module",
   "description": "Nuvem Agents control plane, AgentKit session gateway and durable relayer",
   "scripts": {
+    "prebuild": "pnpm --dir ../../packages/managed-signer build && pnpm --dir ../../packages/vault-intelligence-mcp build",
     "build": "pnpm check:vault-artifact-sources && tsc -p tsconfig.json",
     "start": "node dist/main.js",
     "smoke:config": "tsx src/smoke-config.ts",
