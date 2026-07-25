@@ -68,6 +68,24 @@ $env:RH_RPC_URL = "<private Robinhood testnet RPC>"
 pnpm graph-node:down
 ```
 
+## Durable public tunnel
+
+`docker-compose.graph-node.tunnel.yml` is a production-oriented overlay for a remotely managed
+Cloudflare Tunnel. It keeps Graph admin, metrics, Postgres and IPFS off the public network; only the
+Graph query service is routed by the tunnel configuration.
+
+1. Create a named tunnel and published hostname in Cloudflare.
+2. Set its service URL to `http://graph-node:8000`.
+3. Copy `graph-node-public.env.example` to the gitignored `graph-node-public.env` and replace every
+   placeholder.
+4. Start the stack with `pnpm graph-node:public:up`, then create/deploy the subgraph through the
+   loopback admin/IPFS ports as shown above.
+5. Pin the resulting public GraphQL URL and immutable deployment ID in the hosted MCP.
+
+The tunnel token grants permission to run the tunnel. Keep it only in the host secret store and
+rotate it if it is exposed. A Cloudflare quick tunnel is acceptable for a timed demo but is not a
+durable endpoint.
+
 ## Indexing model
 
 Registry and Fund history is event-driven. A single configured canary polls on-chain NAV and

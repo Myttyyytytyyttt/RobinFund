@@ -50,3 +50,15 @@ pnpm smoke:live
 Defaults are 50 blocks, 300 seconds and a 10-second request timeout. The same source implementation
 is embedded by the agent gateway, preventing its REST context and `/mcp` interface from applying
 different provenance rules.
+
+## Public deployment
+
+The package includes raw Vercel Function entrypoints for a standalone, read-only deployment:
+
+- `GET /healthz` checks the process without claiming Graph readiness;
+- `GET /readyz` performs a fail-closed Graph + Robinhood RPC provenance check;
+- `POST /mcp` serves stateless Streamable HTTP MCP requests.
+
+Configure only `GRAPH_URL`, `GRAPH_DEPLOYMENT_ID`, `RH_RPC_URL`, `RH_CHAIN_ID` and `USDG_ADDRESS`.
+The Graph endpoint itself must be durable: pointing Vercel at a local or quick-tunnel Graph Node is
+valid only for a temporary demo and must not be represented as production hosting.

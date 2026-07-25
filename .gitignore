@@ -39,6 +39,7 @@ packages/indexer/generated/
 # The Graph (regenerados por codegen/build)
 packages/subgraph/generated/
 packages/subgraph/build/
+packages/subgraph/graph-node-public.env
 
 # Devnet (Ponder store efímero por si acaso)
 packages/devnet/.ponder/
