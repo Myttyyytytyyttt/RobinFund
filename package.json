@@ -4,7 +4,13 @@
   "version": "0.0.1",
   "description": "Fondos sociales sobre Stock Tokens en Robinhood Chain",
   "scripts": {
-    "test:contracts": "pnpm --dir packages/contracts test"
+    "build": "pnpm --dir apps/agent-gateway build && pnpm --dir packages/agent-sdk build && pnpm --dir packages/agent-runtime build && pnpm --dir website build",
+    "test": "pnpm test:uniswap:unit && pnpm --dir packages/agent-sdk test && pnpm --dir website test && pnpm test:contracts:unit",
+    "test:contracts": "pnpm --dir packages/contracts test",
+    "test:contracts:unit": "forge test --root packages/contracts --no-match-path 'test/fork/*'",
+    "test:uniswap:unit": "pnpm --dir apps/agent-gateway exec vitest run test/uniswap.test.ts && pnpm --dir packages/agent-runtime test && forge test --root packages/contracts --match-path 'test/unit/agents/UniswapApiAdapter.t.sol'",
+    "test:uniswap:fork": "pnpm --dir packages/devnet test:uniswap-api-fork",
+    "typecheck": "pnpm -r --if-present typecheck"
   },
   "packageManager": "pnpm@10.18.1"
 }

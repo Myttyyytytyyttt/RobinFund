@@ -29,6 +29,7 @@ export interface ReferenceAgentOptions {
   expectedUniversalRouter: Address;
   expectedAdapter?: Address;
   maxSlippageBps: number;
+  requoteBeforeMs?: number;
 }
 
 export function evidenceHash(
@@ -107,16 +108,33 @@ export function createReferenceTools(api: ReferenceAgentApi, options: ReferenceA
         const item = pending.get(quoteId);
         if (!item) return { executed: false, reason: "Unknown or already consumed quote" };
         pending.delete(quoteId);
-        const result = await api.signAndSubmit(item.quote, item.input, {
-          chainId: item.quote.executionPlan.chainId,
-          expectedFund: item.context.vault,
-          expectedController: item.context.controller,
+        let quote = item.quote;
+        let input = item.input;
+        let context = item.context;
+        let requoted = false;
+        if (quote.executionPlan.expiresAt.getTime() - Date.now() <= (options.requoteBeforeMs ?? 15_000)) {
+          context = await api.context();
+          input = {
+            ...item.input,
+            evidenceHash: evidenceHash(context, {
+              tokenIn: item.input.tokenIn,
+              tokenOut: item.input.tokenOut,
+              amountIn: item.input.amountIn,
+            }),
+          };
+          quote = await api.quote(input, context);
+          requoted = true;
+        }
+        const result = await api.signAndSubmit(quote, input, {
+          chainId: quote.executionPlan.chainId,
+          expectedFund: context.vault,
+          expectedController: context.controller,
           expectedAdapter: options.expectedAdapter,
           expectedApprovalProxy: options.expectedApprovalProxy,
           expectedUniversalRouter: options.expectedUniversalRouter,
           maxSlippageBps: options.maxSlippageBps,
         });
-        return serializable({ executed: true, result });
+        return serializable({ executed: true, requoted, quoteId: quote.executionPlan.quoteId, result });
       },
     }),
     hold: tool({

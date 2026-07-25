@@ -24,8 +24,11 @@ const context: VaultContext = {
   },
 };
 
-function fakeQuote(): QuoteResult {
-  const deadline = Math.floor(Date.now() / 1_000) + 30;
+function fakeQuote(
+  quoteId = "00000000-0000-4000-8000-000000000001",
+  lifetimeSeconds = 30,
+): QuoteResult {
+  const deadline = Math.floor(Date.now() / 1_000) + lifetimeSeconds;
   const intent = {
     agentId: context.agentId, fund, tokenIn, tokenOut, amountIn: 10n, minAmountOut: 9n,
     maxSlippageBps: 75, policyHash: context.policyHash,
@@ -34,7 +37,7 @@ function fakeQuote(): QuoteResult {
   };
   return {
     executionPlan: {
-      proposalId: "p", quoteId: "00000000-0000-4000-8000-000000000001",
+      proposalId: "p", quoteId,
       quoteHash: `0x${"77".repeat(32)}` as Hex,
       adapter: "0x5555555555555555555555555555555555555555", approvalProxy: "0x0000000085e102724e78ecd2f45dc9ca239affad",
       adapterId: 7n, fund, controller, chainId: 4663, tokenIn, tokenOut,
@@ -109,5 +112,33 @@ describe("reference agent tools", () => {
     }) as { quoteId: string };
     expect(await execute(tools.executeQuotedTrade, { quoteId: quote.quoteId })).toMatchObject({ executed: true });
     expect(fake.signAndSubmit).toHaveBeenCalledOnce();
+  });
+
+  it("refreshes a near-expiry quote before asking the signer to submit", async () => {
+    const fake = api();
+    const expiring = fakeQuote("00000000-0000-4000-8000-000000000001", 5);
+    const refreshed = fakeQuote("00000000-0000-4000-8000-000000000002", 30);
+    vi.mocked(fake.quote)
+      .mockResolvedValueOnce(expiring)
+      .mockResolvedValueOnce(refreshed);
+    const tools = createReferenceTools(fake, { ...options, execute: true });
+    const quote = await execute(tools.quoteTrade, {
+      tokenIn, tokenOut, amountIn: "10", maxSlippageBps: 75, summary: "test", reasoning: "evidence",
+    }) as { quoteId: string };
+
+    const result = await execute(tools.executeQuotedTrade, { quoteId: quote.quoteId });
+
+    expect(result).toMatchObject({
+      executed: true,
+      requoted: true,
+      quoteId: refreshed.executionPlan.quoteId,
+    });
+    expect(fake.quote).toHaveBeenCalledTimes(2);
+    expect(fake.context).toHaveBeenCalledTimes(2);
+    expect(fake.signAndSubmit).toHaveBeenCalledWith(
+      refreshed,
+      expect.objectContaining({ evidenceHash: expect.stringMatching(/^0x[0-9a-f]{64}$/) }),
+      expect.objectContaining({ expectedFund: fund, expectedController: controller }),
+    );
   });
 });

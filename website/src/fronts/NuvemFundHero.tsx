@@ -7,6 +7,7 @@ import { VaultAccessModal } from '@/features/vaults/VaultAccessModal'
 import { VaultCommunityView } from '@/features/vaults/VaultCommunityView'
 import { VaultCreatorModal } from '@/features/vaults/VaultCreatorModal'
 import { AgentDashboard } from '@/features/vaults/AgentDashboard'
+import { UniswapLiveStat } from '@/components/UniswapLiveStat'
 import type { Vault } from '@/features/vaults/types'
 import { groupVaultManagers, loadVaults } from '@/lib/vaultStore'
 
@@ -35,7 +36,6 @@ const STATS = [
   { value: 'Open', label: 'Permissionless access' },
   { value: '24/7', label: 'Self-custody markets' },
   { value: '25×', label: 'Fund cap per manager stake' },
-  { value: '20%', label: 'Performance fee, HWM-gated' },
 ]
 
 // Pasos del How it works (copy simple; el detalle tecnico vive en docs)
@@ -438,6 +438,7 @@ export default function NuvemFundHero({ audioDisabled = false }: NuvemFundHeroPr
                   <span className="text-white/70 text-sm">{label}</span>
                 </div>
               ))}
+              <UniswapLiveStat />
             </div>
           </div>
         </div>

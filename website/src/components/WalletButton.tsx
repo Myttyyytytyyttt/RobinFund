@@ -23,6 +23,7 @@ export default function WalletButton({
 
   const [menuOpen, setMenuOpen] = useState(false)
   const [showProfile, setShowProfile] = useState(false)
+  const [loginError, setLoginError] = useState<string | null>(null)
   const menuRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
@@ -111,6 +112,7 @@ export default function WalletButton({
   // `isNewUser` de Privy es la señal cross-device de "¿ya estuvo aquí?".
   const { login } = useLogin({
     onComplete: ({ user, isNewUser }) => {
+      setLoginError(null)
       const addr = user?.wallet?.address
       const existing = profileStore.get(addr)
       setProfile(existing)
@@ -121,6 +123,9 @@ export default function WalletButton({
           setShowReg(true)
         }
       })
+    },
+    onError: (error) => {
+      setLoginError(String(error))
     },
   })
 
@@ -154,12 +159,23 @@ export default function WalletButton({
   // No conectado
   if (!authenticated) {
     return (
-      <button
-        onClick={login}
-        className="bg-gray-900 text-white rounded-full px-6 py-2.5 text-sm cursor-pointer transition-transform hover:scale-[1.03] active:scale-[0.97]"
-      >
-        Connect
-      </button>
+      <div className="relative">
+        <button
+          onClick={() => {
+            setLoginError(null)
+            login()
+          }}
+          className="bg-gray-900 text-white rounded-full px-6 py-2.5 text-sm cursor-pointer transition-transform hover:scale-[1.03] active:scale-[0.97]"
+        >
+          Connect
+        </button>
+        {loginError && (
+          <div role="alert" className="absolute right-0 top-full z-50 mt-2 w-72 rounded-xl border border-amber-200/30 bg-[#111b21]/95 px-3 py-2.5 text-left text-[11px] leading-4 text-amber-50 shadow-2xl backdrop-blur-xl">
+            Wallet connection failed. Use an external wallet that supports custom EVM networks, such as MetaMask or Rabby, for Robinhood Chain.
+            {import.meta.env.DEV && <div className="mt-1 text-white/45">Localhost must also be listed in this Privy app&apos;s allowed origins.</div>}
+          </div>
+        )}
+      </div>
     )
   }
 

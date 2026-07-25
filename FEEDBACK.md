@@ -40,7 +40,7 @@ it, while the Fund must receive output atomically in the same transaction.
 - Approves exactly amountIn, revokes after execution and requires allowance/residue zero.
 - Measures the Fund's actual output delta and reverts below minOut.
 
-This path is green in unit tests and a Robinhood-state fork with a deterministic local liquidity
-stand-in. A live API quote and calldata generation are now verified (`CLASSIC`, `permitData=null`,
-adapter/Fund bound); execution of that API-generated calldata on the fork and a public canary remain
-pending and are intentionally not represented as live execution.
+This path is green in unit tests and a Robinhood-state fork. A fresh live API quote and its
+API-generated `CLASSIC` calldata were executed successfully on that fork with the exact quoted
+output, zero residual allowance and zero adapter balances. A public canary remains pending and is
+intentionally not represented as a live execution.

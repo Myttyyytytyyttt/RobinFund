@@ -136,17 +136,25 @@ export class UniswapTradingApi {
     const output = object(quote.output, "quote.output");
     const quotedAmountOut = integer(output.amount, "quote.output.amount");
     const minimum = output.minimumAmount ?? quote.amountOutMinimum;
-    const minAmountOut = minimum == null
-      ? quotedAmountOut * BigInt(10_000 - request.maxSlippageBps) / 10_000n
+    const localMinimum = quotedAmountOut * BigInt(10_000 - request.maxSlippageBps) / 10_000n;
+    const apiMinimum = minimum == null
+      ? localMinimum
       : integer(minimum, "quote.output.minimumAmount");
-    if (minAmountOut > quotedAmountOut) {
+    if (apiMinimum > quotedAmountOut) {
       throw new UniswapApiError("UNISWAP_BAD_RESPONSE", "minimum output exceeds quoted output", 502, false);
     }
+    // The provider may tighten this floor, but it may never weaken the
+    // slippage policy the agent requested and the controller will sign.
+    const minAmountOut = apiMinimum > localMinimum ? apiMinimum : localMinimum;
 
     const deadline = Math.floor(Date.now() / 1_000) + (this.options.quoteLifetimeSeconds ?? 30);
     const swapResponse = await this.post("/swap", {
       quote,
-      simulateTransaction: true,
+      // The adapter receives tokenIn from Fund.execute in the outer atomic
+      // transaction. A provider-side simulation of this inner proxy call
+      // cannot observe that preceding transfer. The relayer simulates the
+      // complete controller.executeTrade call immediately before broadcast.
+      simulateTransaction: false,
       deadline,
     });
     const swap = object(swapResponse.swap, "swap");

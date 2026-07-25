@@ -38,7 +38,7 @@ function request(): QuoteRequest {
   };
 }
 
-function quotePayload(routing = "CLASSIC") {
+function quotePayload(routing = "CLASSIC", minimumAmount = "982575") {
   return {
     requestId: "quote-request",
     routing,
@@ -47,7 +47,7 @@ function quotePayload(routing = "CLASSIC") {
       chainId: 4663,
       swapper: adapter,
       input: { token: tokenIn, amount: "1000000", chainId: 4663 },
-      output: { token: tokenOut, amount: "990000", minimumAmount: "982575", recipient: fund },
+      output: { token: tokenOut, amount: "990000", minimumAmount, recipient: fund },
     },
   };
 }
@@ -123,6 +123,21 @@ describe("Uniswap Trading API binding", () => {
     expect(quoteRequest.recipient).toBe(fund);
     expect(quoteRequest.routingPreference).toBeUndefined();
     expect(quoteRequest.protocols).toEqual(["V2", "V3", "V4"]);
+    const swapRequest = JSON.parse(String(calls[1]!.init?.body)) as Record<string, unknown>;
+    expect(swapRequest.simulateTransaction).toBe(false);
+  });
+
+  it("never lets an API minimum weaken the locally requested slippage floor", async () => {
+    let call = 0;
+    const fetchImpl = vi.fn(async (_input: URL | RequestInfo, init?: RequestInit) => {
+      const body = init?.body == null ? {} : JSON.parse(String(init.body)) as { deadline?: number };
+      return new Response(JSON.stringify(
+        ++call === 1 ? quotePayload("CLASSIC", "1") : swapPayload(body.deadline!),
+      ), { status: 200 });
+    }) as unknown as typeof fetch;
+
+    const plan = await api(fetchImpl).createExecutionPlan(profile(), new FakeChain().controller, request());
+    expect(plan.minAmountOut).toBe(982_575n);
   });
 
   it("rejects UniswapX or any non-atomic route", async () => {

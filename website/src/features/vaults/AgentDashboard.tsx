@@ -1,33 +1,88 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { usePrivy, useWallets } from '@privy-io/react-auth'
 import { toDataURL } from 'qrcode'
 import { getAddress, type Address, type Hex } from 'viem'
-import { loadAgentDashboards, type AgentDashboardRecord } from '@/lib/agentStore'
+import { loadAgentDashboards, type AgentDashboardRecord, type PublicAgentDecision } from '@/lib/agentStore'
 import {
   activateWorldBacking,
-  createNuvemWorldIdRequest,
+  AgentGatewayRequestError,
+  createNuvemIdentityCheckRequest,
   finalizeAgentVault,
   getWorldRegistrationStatus,
   pauseAgent,
   rotateAgentSigner,
-  submitNuvemWorldIdProof,
+  submitNuvemIdentityCheckProof,
   submitWorldRegistrationProof,
   syncAgentProfile,
   waitForAgentVaultByAgent,
   waitForWorldRegistration,
 } from '@/lib/agentTransactions'
 import { requestAgentBookProof } from '@/lib/worldAgentBook'
-import { requestNuvemWorldIdProof } from '@/lib/worldIdNuvem'
+import {
+  configuredIdentityEnvironment,
+  requestIdentityCheckProof,
+  type WorldIdentityEnvironment,
+} from '@/lib/worldIdentityCheck'
 import { currentSupabaseAccessToken, ensureSupabaseWalletSession, type EthereumProvider } from '@/lib/supabase'
 import type { BrowserWallet } from '@/lib/vaultTransactions'
 
 const compact = (value: string) => `${value.slice(0, 6)}…${value.slice(-4)}`
+type PendingIdentityProof = {
+  agentId: Hex
+  requestId: string
+  proof: unknown
+  idempotencyKey: string
+  environment: WorldIdentityEnvironment
+}
+
 const ago = (value: string | null) => {
   if (!value) return 'never'
   const seconds = Math.max(0, Math.floor((Date.now() - new Date(value).getTime()) / 1_000))
   if (seconds < 60) return `${seconds}s ago`
   if (seconds < 3_600) return `${Math.floor(seconds / 60)}m ago`
   return `${Math.floor(seconds / 3_600)}h ago`
+}
+
+function decisionExplorerUrl(decision: PublicAgentDecision): string | null {
+  if (!decision.transaction_hash) return null
+  if (decision.chain_id === 4663) {
+    return `https://robinhoodchain.blockscout.com/tx/${decision.transaction_hash}`
+  }
+  if (decision.chain_id === 46630) {
+    return `https://explorer.testnet.chain.robinhood.com/tx/${decision.transaction_hash}`
+  }
+  return null
+}
+
+function UniswapDecision({ decision }: { decision: PublicAgentDecision }) {
+  const explorer = decisionExplorerUrl(decision)
+  const route = decision.token_in && decision.token_out
+    ? `${compact(decision.token_in)} → ${compact(decision.token_out)}`
+    : 'Bound CLASSIC route'
+  const title = decision.decision === 'executed'
+    ? 'Executed via Uniswap API'
+    : decision.decision === 'approved'
+      ? 'Uniswap execution approved'
+      : null
+  if (!title || !decision.token_in || !decision.token_out) return null
+  return (
+    <div className="rounded-xl border border-[#ff4d8d]/20 bg-[#ff4d8d]/[0.06] p-3 text-[10px]">
+      <div className="flex items-center justify-between gap-3">
+        <span className="font-medium text-pink-100">{title}</span>
+        <span className="rounded-full border border-pink-200/15 px-2 py-0.5 text-[9px] text-pink-100/65">CLASSIC · chain {decision.chain_id}</span>
+      </div>
+      <div className="mt-2 font-mono text-white/60">{route}</div>
+      <div className="mt-2 grid grid-cols-3 gap-2">
+        <div><div className="text-white/25">Input</div><div className="mt-0.5 truncate text-white/65">{decision.amount_in ?? '—'}</div></div>
+        <div><div className="text-white/25">Quoted out</div><div className="mt-0.5 truncate text-white/65">{decision.quoted_amount_out ?? '—'}</div></div>
+        <div><div className="text-white/25">Min out</div><div className="mt-0.5 truncate text-white/65">{decision.min_amount_out ?? '—'}</div></div>
+      </div>
+      <div className="mt-2 flex items-center justify-between border-t border-white/8 pt-2 text-white/35">
+        <span>{decision.slippage_bps != null ? `${decision.slippage_bps / 100}% max slippage` : 'Onchain policy checked'}</span>
+        {explorer && <a href={explorer} target="_blank" rel="noreferrer" className="text-pink-100/70 underline decoration-pink-100/25 underline-offset-2 hover:text-pink-50">View transaction ↗</a>}
+      </div>
+    </div>
+  )
 }
 
 export function AgentDashboard({ sponsor }: { sponsor?: string }) {
@@ -39,7 +94,9 @@ export function AgentDashboard({ sponsor }: { sponsor?: string }) {
   const [rotate, setRotate] = useState<Record<string, string>>({})
   const [worldConnectorUri, setWorldConnectorUri] = useState<string | null>(null)
   const [worldQr, setWorldQr] = useState<string | null>(null)
-  const [worldPhase, setWorldPhase] = useState<'nuvem' | 'agentbook' | null>(null)
+  const [worldPhase, setWorldPhase] = useState<'identity' | 'agentbook' | null>(null)
+  const [identityProofReady, setIdentityProofReady] = useState(false)
+  const pendingIdentityProof = useRef<PendingIdentityProof | null>(null)
   const loginAddress = user?.wallet?.address
   const wallet = wallets.find((candidate) => candidate.address.toLowerCase() === loginAddress?.toLowerCase())
 
@@ -71,6 +128,86 @@ export function AgentDashboard({ sponsor }: { sponsor?: string }) {
 
   if (agents.length === 0 && !error) return null
 
+  const clearPendingIdentityProof = () => {
+    pendingIdentityProof.current = null
+    setIdentityProofReady(false)
+  }
+
+  const verifyIdentity = async (
+    agentId: Hex,
+    token: string,
+    environment: WorldIdentityEnvironment,
+  ): Promise<void> => {
+    let pending = pendingIdentityProof.current
+    if (
+      pending
+      && (
+        pending.agentId.toLowerCase() !== agentId.toLowerCase()
+        || pending.environment !== environment
+      )
+    ) {
+      clearPendingIdentityProof()
+      pending = null
+    }
+
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      if (!pending) {
+        const identity = await createNuvemIdentityCheckRequest(agentId, token, environment)
+        if (identity.verified) {
+          clearPendingIdentityProof()
+          return
+        }
+        const proof = await requestIdentityCheckProof(identity, setWorldConnectorUri, {
+          expectedEnvironment: environment,
+        })
+        pending = {
+          agentId,
+          requestId: identity.requestId,
+          proof,
+          idempotencyKey: crypto.randomUUID(),
+          environment,
+        }
+        pendingIdentityProof.current = pending
+        setIdentityProofReady(true)
+      }
+
+      try {
+        await submitNuvemIdentityCheckProof(
+          pending.agentId,
+          pending.requestId,
+          pending.proof,
+          token,
+          pending.idempotencyKey,
+        )
+        clearPendingIdentityProof()
+        return
+      } catch (caught) {
+        if (caught instanceof AgentGatewayRequestError && caught.code === 'WORLD_IDENTITY_REQUEST_INVALID') {
+          clearPendingIdentityProof()
+          pending = null
+          continue
+        }
+        if (
+          caught instanceof AgentGatewayRequestError
+          && [
+            'WORLD_IDENTITY_PROOF_INVALID',
+            'WORLD_IDENTITY_PROOF_MISMATCH',
+            'WORLD_IDENTITY_REJECTED',
+            'WORLD_IDENTITY_BINDING_CONFLICT',
+            'WORLD_IDENTITY_REPLAY',
+          ].includes(caught.code)
+        ) {
+          clearPendingIdentityProof()
+        } else if (caught instanceof AgentGatewayRequestError && caught.status >= 500) {
+          pending = { ...pending, idempotencyKey: crypto.randomUUID() }
+          pendingIdentityProof.current = pending
+        }
+        throw caught
+      }
+    }
+    throw new Error('The previous World Identity Check expired. Retry to generate a fresh QR.')
+  }
+
   const act = async (agent: AgentDashboardRecord, action: 'pause' | 'rotate' | 'resume') => {
     if (!wallet) return setError('Connect the sponsor wallet to manage this agent.')
     setBusy(agent.agent_id)
@@ -95,16 +232,17 @@ export function AgentDashboard({ sponsor }: { sponsor?: string }) {
         await ensureSupabaseWalletSession(wallet.address, supabaseWallet)
         const token = await currentSupabaseAccessToken()
         if (!token) throw new Error('Could not create the sponsor SIWE session.')
-        if (!agent.world_backed) {
-          setWorldPhase('nuvem')
-          const nuvemWorld = await createNuvemWorldIdRequest(agent.agent_id as Hex, token)
-          if (!nuvemWorld.verified) {
-            const proof = await requestNuvemWorldIdProof(nuvemWorld, setWorldConnectorUri)
-            await submitNuvemWorldIdProof(agent.agent_id as Hex, nuvemWorld.requestId, proof, token)
-          }
+        const agentId = agent.agent_id as Hex
+        const beforeActivation = await syncAgentProfile(agentId, token)
+        const alreadyActive = beforeActivation.agent?.worldBacked === true
+          || beforeActivation.agent?.status === 'active'
+        if (!alreadyActive) {
+          const identityEnvironment = configuredIdentityEnvironment()
+          setWorldPhase('identity')
+          await verifyIdentity(agentId, token, identityEnvironment)
           setWorldConnectorUri(null)
           setWorldPhase('agentbook')
-          let registration = await getWorldRegistrationStatus(agent.agent_id as Hex, token)
+          let registration = await getWorldRegistrationStatus(agentId, token)
           if (!registration.registered) {
             if (!registration.nextNonce) throw new Error('AgentBook did not return the next registration nonce.')
             const proof = await requestAgentBookProof({
@@ -113,21 +251,21 @@ export function AgentDashboard({ sponsor }: { sponsor?: string }) {
               action: registration.action,
               nextNonce: registration.nextNonce,
             }, setWorldConnectorUri)
-            await submitWorldRegistrationProof(agent.agent_id as Hex, proof, token)
-            registration = await waitForWorldRegistration(agent.agent_id as Hex, token)
+            await submitWorldRegistrationProof(agentId, proof, token)
+            registration = await waitForWorldRegistration(agentId, token)
           }
           if (!registration.registered) throw new Error('World AgentBook registration was not confirmed.')
           setWorldConnectorUri(null)
           setWorldPhase(null)
           await activateWorldBacking(wallet as BrowserWallet, {
-            agentId: agent.agent_id as Hex,
+            agentId,
             signer: getAddress(agent.signer_address),
           }, token)
-          await syncAgentProfile(agent.agent_id as Hex, token)
+          await syncAgentProfile(agentId, token)
         }
-        const deployment = await waitForAgentVaultByAgent(agent.agent_id as Hex, token)
+        const deployment = await waitForAgentVaultByAgent(agentId, token)
         await finalizeAgentVault(wallet as BrowserWallet, deployment)
-        await syncAgentProfile(agent.agent_id as Hex, token, deployment.controller)
+        await syncAgentProfile(agentId, token, deployment.controller)
       }
       await refresh()
       setWorldConnectorUri(null)
@@ -151,8 +289,20 @@ export function AgentDashboard({ sponsor }: { sponsor?: string }) {
         </div>
         <div className="text-xs text-white/40">Public sanitized audit · private keys stay local</div>
       </div>
-      {error && <div role="alert" aria-live="assertive" className="mb-4 rounded-xl border border-red-200/20 bg-red-300/10 px-4 py-3 text-xs text-red-100">{error}<div className="mt-1 text-white/40">Retry generates a fresh QR.</div></div>}
-      {worldConnectorUri && <div aria-live="polite" className="mb-4 rounded-2xl border border-white/15 bg-white p-4 text-center text-gray-950"><div className="text-sm font-semibold">{worldPhase === 'nuvem' ? 'Verify sponsor with Nuvem' : 'Register agent in AgentBook'}</div><p className="mt-1 text-xs text-gray-500">Keep this tab open, scan once, and approve in World App. The dashboard advances automatically; the QR expires after 5 minutes.</p>{worldQr && <img src={worldQr} alt="World App verification QR code" className="mx-auto mt-3 h-52 w-52 rounded-lg" />}<a href={worldConnectorUri} className="mt-3 inline-flex rounded-lg bg-gray-950 px-4 py-2 text-xs font-semibold text-white">Open World App</a></div>}
+      {error && <div role="alert" aria-live="assertive" className="mb-4 rounded-xl border border-red-200/20 bg-red-300/10 px-4 py-3 text-xs text-red-100">{error}<div className="mt-1 text-white/40">{identityProofReady ? 'World App already approved. Retry resubmits the proof held only in this tab.' : 'Retry detects completed Identity, AgentBook and backing steps before creating a fresh QR.'}</div></div>}
+      {worldConnectorUri && (
+        <div aria-live="polite" className="mb-4 rounded-2xl border border-white/15 bg-white p-4 text-center text-gray-950">
+          <div className="text-sm font-semibold">{worldPhase === 'identity' ? 'Complete World Identity Check' : 'Register agent in AgentBook'}</div>
+          <p className="mt-1 text-xs text-gray-500">Keep this tab open, scan once, and approve in World App. The dashboard advances automatically; the QR expires after 5 minutes.</p>
+          {worldQr && <img src={worldQr} alt="World App verification QR code" className="mx-auto mt-3 h-52 w-52 rounded-lg" />}
+          <div className="mt-3 flex flex-wrap justify-center gap-2">
+            <a href={worldConnectorUri} target="_blank" rel="noreferrer" className="inline-flex rounded-lg bg-gray-950 px-4 py-2 text-xs font-semibold text-white">Open World App</a>
+            {worldPhase === 'identity' && configuredIdentityEnvironment() === 'staging' && (
+              <a href="https://simulator.orb.engineer/" target="_blank" rel="noreferrer" className="inline-flex rounded-lg border border-gray-300 px-4 py-2 text-xs font-semibold text-gray-800">Open staging simulator</a>
+            )}
+          </div>
+        </div>
+      )}
       <div className="grid gap-4 lg:grid-cols-2">
         {agents.map((agent) => {
           const online = agent.last_heartbeat_at && Date.now() - new Date(agent.last_heartbeat_at).getTime() < 120_000
@@ -178,10 +328,13 @@ export function AgentDashboard({ sponsor }: { sponsor?: string }) {
               </div>
               <div className="mt-4 space-y-2">
                 {agent.decisions.slice(0, 3).map((decision) => (
-                  <div key={decision.id} className="flex gap-3 rounded-lg border border-white/8 bg-white/[0.03] px-3 py-2 text-[11px]">
-                    <span className={decision.decision === 'executed' ? 'text-emerald-200' : decision.decision === 'rejected' || decision.decision === 'failed' ? 'text-red-200' : 'text-amber-100'}>{decision.decision.toUpperCase()}</span>
-                    <span className="line-clamp-2 flex-1 text-white/55">{decision.summary}</span>
-                    <span className="shrink-0 text-white/25">{ago(decision.occurred_at)}</span>
+                  <div key={decision.id} className="space-y-2">
+                    <div className="flex gap-3 rounded-lg border border-white/8 bg-white/[0.03] px-3 py-2 text-[11px]">
+                      <span className={decision.decision === 'executed' ? 'text-emerald-200' : decision.decision === 'rejected' || decision.decision === 'failed' ? 'text-red-200' : 'text-amber-100'}>{decision.decision.toUpperCase()}</span>
+                      <span className="line-clamp-2 flex-1 text-white/55">{decision.summary}</span>
+                      <span className="shrink-0 text-white/25">{ago(decision.occurred_at)}</span>
+                    </div>
+                    <UniswapDecision decision={decision} />
                   </div>
                 ))}
                 {agent.decisions.length === 0 && <div className="rounded-lg border border-dashed border-white/10 px-3 py-4 text-center text-[11px] text-white/30">No sanitized decisions yet</div>}
