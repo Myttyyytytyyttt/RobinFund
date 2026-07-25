@@ -1,40 +1,27 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import { usePrivy, useWallets } from '@privy-io/react-auth'
 import { toDataURL } from 'qrcode'
 import { getAddress, type Address, type Hex } from 'viem'
 import { loadAgentDashboards, type AgentDashboardRecord, type PublicAgentDecision } from '@/lib/agentStore'
 import {
   activateWorldBacking,
-  AgentGatewayRequestError,
-  createNuvemIdentityCheckRequest,
+  createNuvemWorldIdRequest,
   finalizeAgentVault,
   getWorldRegistrationStatus,
   pauseAgent,
   rotateAgentSigner,
-  submitNuvemIdentityCheckProof,
+  submitNuvemWorldIdProof,
   submitWorldRegistrationProof,
   syncAgentProfile,
   waitForAgentVaultByAgent,
   waitForWorldRegistration,
 } from '@/lib/agentTransactions'
 import { requestAgentBookProof } from '@/lib/worldAgentBook'
-import {
-  configuredIdentityEnvironment,
-  requestIdentityCheckProof,
-  type WorldIdentityEnvironment,
-} from '@/lib/worldIdentityCheck'
+import { requestNuvemWorldIdProof } from '@/lib/worldIdNuvem'
 import { currentSupabaseAccessToken, ensureSupabaseWalletSession, type EthereumProvider } from '@/lib/supabase'
 import type { BrowserWallet } from '@/lib/vaultTransactions'
 
 const compact = (value: string) => `${value.slice(0, 6)}…${value.slice(-4)}`
-type PendingIdentityProof = {
-  agentId: Hex
-  requestId: string
-  proof: unknown
-  idempotencyKey: string
-  environment: WorldIdentityEnvironment
-}
-
 const ago = (value: string | null) => {
   if (!value) return 'never'
   const seconds = Math.max(0, Math.floor((Date.now() - new Date(value).getTime()) / 1_000))
@@ -94,9 +81,7 @@ export function AgentDashboard({ sponsor }: { sponsor?: string }) {
   const [rotate, setRotate] = useState<Record<string, string>>({})
   const [worldConnectorUri, setWorldConnectorUri] = useState<string | null>(null)
   const [worldQr, setWorldQr] = useState<string | null>(null)
-  const [worldPhase, setWorldPhase] = useState<'identity' | 'agentbook' | null>(null)
-  const [identityProofReady, setIdentityProofReady] = useState(false)
-  const pendingIdentityProof = useRef<PendingIdentityProof | null>(null)
+  const [worldPhase, setWorldPhase] = useState<'nuvem' | 'agentbook' | null>(null)
   const loginAddress = user?.wallet?.address
   const wallet = wallets.find((candidate) => candidate.address.toLowerCase() === loginAddress?.toLowerCase())
 
@@ -128,86 +113,6 @@ export function AgentDashboard({ sponsor }: { sponsor?: string }) {
 
   if (agents.length === 0 && !error) return null
 
-  const clearPendingIdentityProof = () => {
-    pendingIdentityProof.current = null
-    setIdentityProofReady(false)
-  }
-
-  const verifyIdentity = async (
-    agentId: Hex,
-    token: string,
-    environment: WorldIdentityEnvironment,
-  ): Promise<void> => {
-    let pending = pendingIdentityProof.current
-    if (
-      pending
-      && (
-        pending.agentId.toLowerCase() !== agentId.toLowerCase()
-        || pending.environment !== environment
-      )
-    ) {
-      clearPendingIdentityProof()
-      pending = null
-    }
-
-    for (let attempt = 0; attempt < 2; attempt += 1) {
-      if (!pending) {
-        const identity = await createNuvemIdentityCheckRequest(agentId, token, environment)
-        if (identity.verified) {
-          clearPendingIdentityProof()
-          return
-        }
-        const proof = await requestIdentityCheckProof(identity, setWorldConnectorUri, {
-          expectedEnvironment: environment,
-        })
-        pending = {
-          agentId,
-          requestId: identity.requestId,
-          proof,
-          idempotencyKey: crypto.randomUUID(),
-          environment,
-        }
-        pendingIdentityProof.current = pending
-        setIdentityProofReady(true)
-      }
-
-      try {
-        await submitNuvemIdentityCheckProof(
-          pending.agentId,
-          pending.requestId,
-          pending.proof,
-          token,
-          pending.idempotencyKey,
-        )
-        clearPendingIdentityProof()
-        return
-      } catch (caught) {
-        if (caught instanceof AgentGatewayRequestError && caught.code === 'WORLD_IDENTITY_REQUEST_INVALID') {
-          clearPendingIdentityProof()
-          pending = null
-          continue
-        }
-        if (
-          caught instanceof AgentGatewayRequestError
-          && [
-            'WORLD_IDENTITY_PROOF_INVALID',
-            'WORLD_IDENTITY_PROOF_MISMATCH',
-            'WORLD_IDENTITY_REJECTED',
-            'WORLD_IDENTITY_BINDING_CONFLICT',
-            'WORLD_IDENTITY_REPLAY',
-          ].includes(caught.code)
-        ) {
-          clearPendingIdentityProof()
-        } else if (caught instanceof AgentGatewayRequestError && caught.status >= 500) {
-          pending = { ...pending, idempotencyKey: crypto.randomUUID() }
-          pendingIdentityProof.current = pending
-        }
-        throw caught
-      }
-    }
-    throw new Error('The previous World Identity Check expired. Retry to generate a fresh QR.')
-  }
-
   const act = async (agent: AgentDashboardRecord, action: 'pause' | 'rotate' | 'resume') => {
     if (!wallet) return setError('Connect the sponsor wallet to manage this agent.')
     setBusy(agent.agent_id)
@@ -232,17 +137,16 @@ export function AgentDashboard({ sponsor }: { sponsor?: string }) {
         await ensureSupabaseWalletSession(wallet.address, supabaseWallet)
         const token = await currentSupabaseAccessToken()
         if (!token) throw new Error('Could not create the sponsor SIWE session.')
-        const agentId = agent.agent_id as Hex
-        const beforeActivation = await syncAgentProfile(agentId, token)
-        const alreadyActive = beforeActivation.agent?.worldBacked === true
-          || beforeActivation.agent?.status === 'active'
-        if (!alreadyActive) {
-          const identityEnvironment = configuredIdentityEnvironment()
-          setWorldPhase('identity')
-          await verifyIdentity(agentId, token, identityEnvironment)
+        if (!agent.world_backed) {
+          setWorldPhase('nuvem')
+          const nuvemWorld = await createNuvemWorldIdRequest(agent.agent_id as Hex, token)
+          if (!nuvemWorld.verified) {
+            const proof = await requestNuvemWorldIdProof(nuvemWorld, setWorldConnectorUri)
+            await submitNuvemWorldIdProof(agent.agent_id as Hex, nuvemWorld.requestId, proof, token)
+          }
           setWorldConnectorUri(null)
           setWorldPhase('agentbook')
-          let registration = await getWorldRegistrationStatus(agentId, token)
+          let registration = await getWorldRegistrationStatus(agent.agent_id as Hex, token)
           if (!registration.registered) {
             if (!registration.nextNonce) throw new Error('AgentBook did not return the next registration nonce.')
             const proof = await requestAgentBookProof({
@@ -251,21 +155,21 @@ export function AgentDashboard({ sponsor }: { sponsor?: string }) {
               action: registration.action,
               nextNonce: registration.nextNonce,
             }, setWorldConnectorUri)
-            await submitWorldRegistrationProof(agentId, proof, token)
-            registration = await waitForWorldRegistration(agentId, token)
+            await submitWorldRegistrationProof(agent.agent_id as Hex, proof, token)
+            registration = await waitForWorldRegistration(agent.agent_id as Hex, token)
           }
           if (!registration.registered) throw new Error('World AgentBook registration was not confirmed.')
           setWorldConnectorUri(null)
           setWorldPhase(null)
           await activateWorldBacking(wallet as BrowserWallet, {
-            agentId,
+            agentId: agent.agent_id as Hex,
             signer: getAddress(agent.signer_address),
           }, token)
-          await syncAgentProfile(agentId, token)
+          await syncAgentProfile(agent.agent_id as Hex, token)
         }
-        const deployment = await waitForAgentVaultByAgent(agentId, token)
+        const deployment = await waitForAgentVaultByAgent(agent.agent_id as Hex, token)
         await finalizeAgentVault(wallet as BrowserWallet, deployment)
-        await syncAgentProfile(agentId, token, deployment.controller)
+        await syncAgentProfile(agent.agent_id as Hex, token, deployment.controller)
       }
       await refresh()
       setWorldConnectorUri(null)
@@ -289,20 +193,8 @@ export function AgentDashboard({ sponsor }: { sponsor?: string }) {
         </div>
         <div className="text-xs text-white/40">Public sanitized audit · private keys stay local</div>
       </div>
-      {error && <div role="alert" aria-live="assertive" className="mb-4 rounded-xl border border-red-200/20 bg-red-300/10 px-4 py-3 text-xs text-red-100">{error}<div className="mt-1 text-white/40">{identityProofReady ? 'World App already approved. Retry resubmits the proof held only in this tab.' : 'Retry detects completed Identity, AgentBook and backing steps before creating a fresh QR.'}</div></div>}
-      {worldConnectorUri && (
-        <div aria-live="polite" className="mb-4 rounded-2xl border border-white/15 bg-white p-4 text-center text-gray-950">
-          <div className="text-sm font-semibold">{worldPhase === 'identity' ? 'Complete World Identity Check' : 'Register agent in AgentBook'}</div>
-          <p className="mt-1 text-xs text-gray-500">Keep this tab open, scan once, and approve in World App. The dashboard advances automatically; the QR expires after 5 minutes.</p>
-          {worldQr && <img src={worldQr} alt="World App verification QR code" className="mx-auto mt-3 h-52 w-52 rounded-lg" />}
-          <div className="mt-3 flex flex-wrap justify-center gap-2">
-            <a href={worldConnectorUri} target="_blank" rel="noreferrer" className="inline-flex rounded-lg bg-gray-950 px-4 py-2 text-xs font-semibold text-white">Open World App</a>
-            {worldPhase === 'identity' && configuredIdentityEnvironment() === 'staging' && (
-              <a href="https://simulator.orb.engineer/" target="_blank" rel="noreferrer" className="inline-flex rounded-lg border border-gray-300 px-4 py-2 text-xs font-semibold text-gray-800">Open staging simulator</a>
-            )}
-          </div>
-        </div>
-      )}
+      {error && <div role="alert" aria-live="assertive" className="mb-4 rounded-xl border border-red-200/20 bg-red-300/10 px-4 py-3 text-xs text-red-100">{error}<div className="mt-1 text-white/40">Retry generates a fresh QR.</div></div>}
+      {worldConnectorUri && <div aria-live="polite" className="mb-4 rounded-2xl border border-white/15 bg-white p-4 text-center text-gray-950"><div className="text-sm font-semibold">{worldPhase === 'nuvem' ? 'Verify sponsor with Nuvem' : 'Register agent in AgentBook'}</div><p className="mt-1 text-xs text-gray-500">Keep this tab open, scan once, and approve in World App. The dashboard advances automatically; the QR expires after 5 minutes.</p>{worldQr && <img src={worldQr} alt="World App verification QR code" className="mx-auto mt-3 h-52 w-52 rounded-lg" />}<a href={worldConnectorUri} className="mt-3 inline-flex rounded-lg bg-gray-950 px-4 py-2 text-xs font-semibold text-white">Open World App</a></div>}
       <div className="grid gap-4 lg:grid-cols-2">
         {agents.map((agent) => {
           const online = agent.last_heartbeat_at && Date.now() - new Date(agent.last_heartbeat_at).getTime() < 120_000
