@@ -39,7 +39,8 @@ portal y los registros production/staging coinciden. Las credenciales previas qu
 1. Sponsor SIWE crea el perfil/job y registra el signer en `AgentRegistry`.
 2. `POST /v1/agents/:id/world-id/request` firma un RP request de cinco minutos.
 3. El signal fija `chainId + agentId + sponsor + signer + action`.
-4. Frontend IDKit `4.2.1` solicita `proof_of_human`, protocolo 4.0 sin fallback legacy.
+4. Frontend IDKit `4.2.2` solicita `proof_of_human`; prefiere protocolo 4.0 y permite únicamente el
+   fallback legacy `orb` para cuentas verificadas todavía no migradas.
 5. `POST /v1/agents/:id/world-id/verify` valida nonce/action/signal y reenvía el payload opaco sin
    transformarlo al endpoint oficial World.
 6. Postgres consume el request atómicamente y guarda solo HMACs/hashes.
@@ -90,3 +91,35 @@ y ausencia de proof/nullifier raw en persistencia.
 No se declara una verificación humana real hasta que un sponsor escanee el QR, World acepte el proof
 y el contador de verificaciones de la app deje de estar en cero. Ese acto requiere una persona con
 World ID en World App; no se reemplaza por un mock ni por el smoke Postgres.
+
+## Corrección de compatibilidad — 2026-07-24
+
+Los logs públicos mostraron tres requests Nuvem creados con HTTP `201` y ninguna llamada posterior a
+`/world-id/verify`: World App fallaba antes de devolver un proof al browser. La integración exigía
+4.0 estricto, aunque World recomienda que `proofOfHuman` permita el fallback Orb para cuentas
+verificadas que todavía responden con World ID 3.0.
+
+Se cambió el request a `allow_legacy_proofs=true` y el backend acepta exactamente dos formatos:
+
+- World ID 4.0 con `identifier=proof_of_human`;
+- World ID 3.0 con `identifier=orb`.
+
+Device, Document y Selfie siguen rechazados. Ambos formatos se ligan al mismo nonce/action/signal y
+se reenvían sin transformar al endpoint oficial `/api/v4/verify/{rp_id}`, que valida v4 y legacy v3.
+IDKit core se actualizó de `4.2.1` a `4.2.2`.
+
+La UX mantiene explícitamente la pestaña abierta, indica la caducidad de cinco minutos, limpia el QR
+fallido y muestra el error junto al flujo. El frontend quedó en `15/15` unit tests y build production
+verde; el gateway quedó en `57/57` unit tests y typecheck verde.
+
+Deploy production:
+
+- gateway `dpl_B62AaSvYvSQ3a2u2GY9TVMqo3PDJ`, `READY`, alias
+  `https://nuvem-agent-gateway.vercel.app`;
+- frontend `dpl_7nNmeEqB1cradrxRDSMWv9StvCjh`, `READY`, alias
+  `https://www.nuvem.fund`;
+- `/healthz=200`, web `=200`, preflight desde `https://www.nuvem.fund=204`;
+- bundle productivo confirmado con fallback legacy, error accionable y aviso de mantener la pestaña.
+
+No hubo errores runtime en los primeros 30 minutos observados. La corrección no se considera una
+verificación humana completa hasta observar `/world-id/verify` con HTTP `200` tras un scan real.

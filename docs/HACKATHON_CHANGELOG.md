@@ -1,6 +1,8 @@
 # Nuvem Agents — changelog de continuidad
 
-Última actualización: 2026-07-22 (Europe/Lisbon).
+Última actualización: 2026-07-23 (Europe/Lisbon).
+
+Resumen corto para jueces: [`JUDGES_SUMMARY.md`](./JUDGES_SUMMARY.md).
 
 ## Línea base declarada
 
@@ -49,11 +51,11 @@ inmutable, manteniendo el protocolo económico preexistente aislado de la lógic
 | Gateway/worker | Implementados y cubiertos por tests de concurrencia, replay y recuperación |
 | Supabase | Migraciones aplicadas al proyecto NuvemFund; RLS e integración SIWE verificadas |
 | Frontend | Wizard/dashboard implementados; build/tests y visual desktop/mobile verdes |
-| World Nuvem | App/RP/action de producción activas; IDKit 4.2.1, gateway y Postgres implementados; falta el primer scan humano real |
+| World Nuvem | App/RP/action de producción activas; IDKit 4.2.1, gateway y Postgres implementados; el primer scan llegó a World App pero la cuenta no tenía Proof of Human |
 | World canonical | Integración y validadores AgentBook implementados; falta E2E público con registro real |
-| The Graph | Subgraph compila; falta deployment público y `GRAPH_DEPLOYMENT_ID` real |
-| Uniswap Trading API | Integración fail-closed implementada; falta API key y trade canario real |
-| Robinhood 46630 | Protocolo humano/asset pack ya público; contratos Agents aún no desplegados allí |
+| The Graph | Robinhood Substreams autenticado con un bloque real; faltan package Nuvem, sink SQL y endpoint consultable |
+| Uniswap Trading API | Quote y ejecución CLASSIC reales sobre fork 4663; falta canario público |
+| Robinhood 46630 | AgentRegistry y adapter AI de test desplegados; falta el primer controller/Fund público |
 | Robinhood 4663 | Fork probado; no hay deployment público Agents ni autorización de capital público |
 
 ## Límites honestos de la demo
@@ -63,7 +65,8 @@ inmutable, manteniendo el protocolo económico preexistente aislado de la lógic
   producción y verifica el mismo selector/campos externos.
 - El backing World local es no canónico y se etiqueta como tal. El lookup canónico está cubierto por
   tests del gateway, no por una prueba pública.
-- Ponder alimenta la UI local; el subgraph The Graph todavía no está desplegado.
+- Ponder alimenta la UI local; Robinhood Substreams autentica, pero el sink/query Nuvem todavía no
+  está desplegado.
 - Mainnet con capital público sigue bloqueada por auditoría externa, operación, issuer y revisión
   legal. Los resultados locales no equivalen a una auditoría.
 

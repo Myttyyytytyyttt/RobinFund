@@ -41,7 +41,7 @@ inyectadas por el entorno. Producción debe usar el secret manager del runtime.
 | `POST /v1/agent-vaults` | sponsor SIWE |
 | `GET /v1/agent-vaults/:id` | sponsor SIWE |
 | `POST /v1/agents/:id/world-id/request` | sponsor SIWE; request RP de la app Nuvem |
-| `POST /v1/agents/:id/world-id/verify` | sponsor SIWE; verifica/consume proof World ID 4.0 |
+| `POST /v1/agents/:id/world-id/verify` | sponsor SIWE; verifica/consume Proof of Human 4.0 o fallback Orb legado |
 | `GET /v1/agents/:id/world-registration` | sponsor SIWE; nonce/estado AgentBook |
 | `POST /v1/agents/:id/world-registration` | sponsor SIWE; relay del proof oficial |
 | `POST /v1/agents/:id/world-backing` | sponsor SIWE |
@@ -71,7 +71,8 @@ prefijo `VITE_` ni se devuelve por API.
 ## Garantías operativas
 
 - Challenge/nonce AgentKit persistido y no reutilizable.
-- La action propia `sponsor-ai-vault` exige World ID 4.0, liga signal a sponsor + signer + agentId y
+- La action propia `sponsor-ai-vault` prefiere Proof of Human 4.0 y acepta solo el fallback Orb
+  legado para cuentas verificadas todavía no migradas; liga signal a sponsor + signer + agentId y
   solo persiste HMACs/hashes. El RP signing key nunca llega al browser.
 - Un sponsor World ya verificado puede vincular otros agentes desde la misma wallet sin otro scan;
   el límite de Nuvem-managed agents se serializa por hash humano.

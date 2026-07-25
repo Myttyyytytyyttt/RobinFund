@@ -134,14 +134,26 @@ Configuración pública fijada en gateway y frontend:
 App ID: app_5fe197d24d83c55573c5d9d0356f3d6e
 RP ID: rp_db7d77ff9edef255
 Action: sponsor-ai-vault
-Protocol: 4.0 only
-Credential: proof_of_human
+Protocol: World ID 4.0 + verified legacy Orb fallback
+Credential: proof_of_human / orb only
 ```
 
 Secretos backend-only: `WORLD_RP_SIGNING_KEY`, `WORLD_ID_PEPPER` y la API administrativa del
 Developer Portal. Nunca usar prefijo `VITE_`. El gateway debe verificar nonce, action, signal,
 environment y respuesta del Portal antes de consumir el request. El signal liga chain + agentId +
 sponsor + signer. La action propia identifica al sponsor; no sustituye AgentBook.
+
+Pruebas según el tipo de usuario:
+
+- un LP normal no necesita World y puede probar depósitos/retiros permissionless ahora;
+- el Simulator con `environment=staging` sirve para ensayar IDKit y el backend, pero no demuestra
+  AgentBook canónico ni una verificación real en el dashboard de producción;
+- el E2E canónico necesita que una persona con Proof of Human complete el scan desde su propio
+  World App;
+- no prestar ni compartir una cuenta World. Si el owner no tiene Orb, usar un tester/teammate
+  verificado que actúe como sponsor de un vault demo con su propia wallet;
+- `credential_unavailable` significa que la cuenta no dispone de la credencial solicitada; no es un
+  error que el gateway pueda reparar.
 
 ### World AgentBook
 

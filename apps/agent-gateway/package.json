@@ -20,7 +20,7 @@
     "@nuvem/vault-intelligence-mcp": "workspace:*",
     "@worldcoin/agentkit": "^0.2.0",
     "@worldcoin/agentkit-core": "0.2.0",
-    "@worldcoin/idkit-core": "4.2.1",
+    "@worldcoin/idkit-core": "4.2.2",
     "hono": "4.12.31",
     "postgres": "^3.4.9",
     "viem": "2.55.4",

@@ -24,9 +24,29 @@ function proofFor(request: Extract<WorldIdRequestResponse, { verified: false }>,
       issuer_schema_id: 1,
       expires_at_min: Math.floor(Date.now() / 1_000) + 3_600,
     }],
-    user_presence_completed: false,
+    user_presence_completed: true,
     environment: "production",
     ...overrides,
+  };
+}
+
+function legacyOrbProofFor(
+  request: Extract<WorldIdRequestResponse, { verified: false }>,
+  identifier = "orb",
+) {
+  return {
+    protocol_version: "3.0",
+    nonce: request.rpContext.nonce,
+    action,
+    responses: [{
+      identifier,
+      signal_hash: hashSignal(request.signal),
+      proof: `0x${"12".repeat(64)}`,
+      merkle_root: `0x${"34".repeat(32)}`,
+      nullifier,
+    }],
+    user_presence_completed: true,
+    environment: "production",
   };
 }
 
@@ -70,7 +90,7 @@ describe("WorldIdSponsorService", () => {
       verified: false,
       appId,
       action,
-      allowLegacyProofs: false,
+      allowLegacyProofs: true,
       rpContext: { rp_id: rpId },
     });
     if (request.verified) throw new Error("expected a proof request");
@@ -87,6 +107,59 @@ describe("WorldIdSponsorService", () => {
     });
     expect(persisted).not.toContain(nullifier);
     expect(persisted).not.toContain(JSON.stringify(proof.responses[0]?.proof));
+  });
+
+  it("accepts an Orb-verified legacy proof through the v4 verification endpoint", async () => {
+    const { portal, service } = setup();
+    const request = await service.request(agentId, sponsor);
+    if (request.verified) throw new Error("expected a proof request");
+    await expect(service.verify(agentId, sponsor, request.requestId, legacyOrbProofFor(request)))
+      .resolves.toMatchObject({ verified: true, reused: false, action });
+    expect(portal).toHaveBeenCalledTimes(1);
+  });
+
+  it("accepts the proof_of_human identifier emitted by the IDKit v3 compatibility result", async () => {
+    const { portal, service } = setup();
+    const request = await service.request(agentId, sponsor);
+    if (request.verified) throw new Error("expected a proof request");
+    await expect(service.verify(agentId, sponsor, request.requestId, legacyOrbProofFor(request, "proof_of_human")))
+      .resolves.toMatchObject({ verified: true, reused: false, action });
+    expect(portal).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not weaken the fallback to a non-Orb legacy credential", async () => {
+    const { portal, service } = setup();
+    const request = await service.request(agentId, sponsor);
+    if (request.verified) throw new Error("expected a proof request");
+    const proof = legacyOrbProofFor(request);
+    proof.responses[0]!.identifier = "device";
+    await expect(service.verify(agentId, sponsor, request.requestId, proof))
+      .rejects.toMatchObject({ code: "WORLD_ID_PROOF_MISMATCH", status: 409 });
+    expect(portal).not.toHaveBeenCalled();
+  });
+
+  it("requires the World App user-presence check before contacting the verifier", async () => {
+    const { portal, service } = setup();
+    const request = await service.request(agentId, sponsor);
+    if (request.verified) throw new Error("expected a proof request");
+    const proof = proofFor(request);
+    proof.user_presence_completed = false;
+    await expect(service.verify(agentId, sponsor, request.requestId, proof))
+      .rejects.toMatchObject({ code: "WORLD_ID_PROOF_MISMATCH", status: 409 });
+    expect(portal).not.toHaveBeenCalled();
+  });
+
+  it("normalizes decimal field elements before binding and nullifier hashing", async () => {
+    const { store, portal, service } = setup();
+    const request = await service.request(agentId, sponsor);
+    if (request.verified) throw new Error("expected a proof request");
+    const proof = legacyOrbProofFor(request, "proof_of_human");
+    proof.responses[0]!.signal_hash = BigInt(hashSignal(request.signal)).toString(10);
+    proof.responses[0]!.nullifier = BigInt(nullifier).toString(10);
+    await expect(service.verify(agentId, sponsor, request.requestId, proof))
+      .resolves.toMatchObject({ verified: true });
+    expect(portal).toHaveBeenCalledTimes(1);
+    expect(store.worldIdRequests.get(request.requestId)?.signalHash).toBe(hashSignal(request.signal).toLowerCase());
   });
 
   it("rejects a proof whose signal is not bound to sponsor, signer and agent", async () => {

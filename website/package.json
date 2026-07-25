@@ -13,7 +13,7 @@
   "dependencies": {
     "@privy-io/react-auth": "^3.35.1",
     "@supabase/supabase-js": "2.110.7",
-    "@worldcoin/idkit-core": "4.2.1",
+    "@worldcoin/idkit-core": "4.2.2",
     "@worldcoin/idkit-core-legacy": "npm:@worldcoin/idkit-core@2.1.0",
     "clsx": "^2.1.1",
     "framer-motion": "^12.42.2",

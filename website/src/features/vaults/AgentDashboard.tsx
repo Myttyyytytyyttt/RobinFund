@@ -133,6 +133,9 @@ export function AgentDashboard({ sponsor }: { sponsor?: string }) {
       setWorldConnectorUri(null)
       setWorldPhase(null)
     } catch (caught) {
+      setWorldConnectorUri(null)
+      setWorldQr(null)
+      setWorldPhase(null)
       setError(caught instanceof Error ? caught.message : 'Agent action failed.')
     } finally {
       setBusy(null)
@@ -148,8 +151,8 @@ export function AgentDashboard({ sponsor }: { sponsor?: string }) {
         </div>
         <div className="text-xs text-white/40">Public sanitized audit · private keys stay local</div>
       </div>
-      {error && <div className="mb-4 rounded-xl border border-red-200/20 bg-red-300/10 px-4 py-3 text-xs text-red-100">{error}</div>}
-      {worldConnectorUri && <div className="mb-4 rounded-2xl border border-white/15 bg-white p-4 text-center text-gray-950"><div className="text-sm font-semibold">{worldPhase === 'nuvem' ? 'Verify sponsor with Nuvem' : 'Register agent in AgentBook'}</div><p className="mt-1 text-xs text-gray-500">Finish launch safely from this dashboard.</p>{worldQr && <img src={worldQr} alt="World App verification QR code" className="mx-auto mt-3 h-52 w-52 rounded-lg" />}<a href={worldConnectorUri} className="mt-3 inline-flex rounded-lg bg-gray-950 px-4 py-2 text-xs font-semibold text-white">Open World App</a></div>}
+      {error && <div role="alert" aria-live="assertive" className="mb-4 rounded-xl border border-red-200/20 bg-red-300/10 px-4 py-3 text-xs text-red-100">{error}<div className="mt-1 text-white/40">Retry generates a fresh QR.</div></div>}
+      {worldConnectorUri && <div aria-live="polite" className="mb-4 rounded-2xl border border-white/15 bg-white p-4 text-center text-gray-950"><div className="text-sm font-semibold">{worldPhase === 'nuvem' ? 'Verify sponsor with Nuvem' : 'Register agent in AgentBook'}</div><p className="mt-1 text-xs text-gray-500">Keep this tab open, scan once, and approve in World App. The dashboard advances automatically; the QR expires after 5 minutes.</p>{worldQr && <img src={worldQr} alt="World App verification QR code" className="mx-auto mt-3 h-52 w-52 rounded-lg" />}<a href={worldConnectorUri} className="mt-3 inline-flex rounded-lg bg-gray-950 px-4 py-2 text-xs font-semibold text-white">Open World App</a></div>}
       <div className="grid gap-4 lg:grid-cols-2">
         {agents.map((agent) => {
           const online = agent.last_heartbeat_at && Date.now() - new Date(agent.last_heartbeat_at).getTime() < 120_000

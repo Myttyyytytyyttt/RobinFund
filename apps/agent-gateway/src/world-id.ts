@@ -8,28 +8,95 @@ import type { AgentChainReader } from "./chain.js";
 import { hmacSha256, requestHash, sha256 } from "./crypto.js";
 import type { ControlPlaneStore } from "./store.js";
 
-const hexSchema = z.string().regex(/^0x[0-9a-fA-F]+$/);
-const responseSchema = z.object({
-  identifier: z.literal("proof_of_human"),
-  signal_hash: hexSchema,
-  proof: z.array(hexSchema).length(5),
-  nullifier: hexSchema,
-  issuer_schema_id: z.literal(1),
+const nonEmptyStringSchema = z.string().min(1);
+const v4ResponseSchema = z.object({
+  identifier: nonEmptyStringSchema,
+  signal_hash: nonEmptyStringSchema.optional(),
+  proof: z.array(nonEmptyStringSchema).min(1),
+  nullifier: nonEmptyStringSchema,
+  issuer_schema_id: z.number().int(),
   expires_at_min: z.number().int().nonnegative(),
 }).passthrough();
 
-const proofSchema = z.object({
-  protocol_version: z.literal("4.0"),
-  nonce: z.string().min(1),
-  action: z.string().min(1),
-  responses: z.array(responseSchema).min(1),
-  user_presence_completed: z.boolean(),
-  environment: z.literal("production"),
+const legacyOrbResponseSchema = z.object({
+  identifier: nonEmptyStringSchema,
+  signal_hash: nonEmptyStringSchema.optional(),
+  proof: nonEmptyStringSchema,
+  merkle_root: nonEmptyStringSchema,
+  nullifier: nonEmptyStringSchema,
 }).passthrough();
+
+const v4ProofSchema = z.object({
+  protocol_version: z.literal("4.0"),
+  nonce: nonEmptyStringSchema,
+  action: nonEmptyStringSchema,
+  responses: z.array(v4ResponseSchema).min(1),
+  user_presence_completed: z.boolean(),
+  environment: nonEmptyStringSchema,
+}).passthrough();
+
+const legacyOrbProofSchema = z.object({
+  protocol_version: z.literal("3.0"),
+  nonce: nonEmptyStringSchema,
+  action: nonEmptyStringSchema.optional(),
+  responses: z.array(legacyOrbResponseSchema).min(1),
+  user_presence_completed: z.boolean(),
+  environment: nonEmptyStringSchema,
+}).passthrough();
+
+const proofSchema = z.discriminatedUnion("protocol_version", [v4ProofSchema, legacyOrbProofSchema]);
 
 const portalResponseSchema = z.object({
   success: z.literal(true),
 }).passthrough();
+
+function numericField(value: string): bigint | null {
+  if (!/^(?:0x[0-9a-f]+|[0-9]+)$/i.test(value)) return null;
+  try {
+    return BigInt(value);
+  } catch {
+    return null;
+  }
+}
+
+function sameNumericField(left: string | undefined, right: string): boolean {
+  if (!left) return false;
+  const leftValue = numericField(left);
+  const rightValue = numericField(right);
+  return leftValue !== null && rightValue !== null && leftValue === rightValue;
+}
+
+function canonicalNumericField(value: string): Hex | null {
+  const parsed = numericField(value);
+  return parsed === null ? null : `0x${parsed.toString(16)}` as Hex;
+}
+
+function proofShape(rawProof: unknown): Record<string, unknown> {
+  if (!rawProof || typeof rawProof !== "object" || Array.isArray(rawProof)) {
+    return { kind: Array.isArray(rawProof) ? "array" : typeof rawProof };
+  }
+  const proof = rawProof as Record<string, unknown>;
+  const responses = Array.isArray(proof.responses) ? proof.responses : [];
+  return {
+    protocolVersion: typeof proof.protocol_version === "string" ? proof.protocol_version : typeof proof.protocol_version,
+    environment: typeof proof.environment === "string" ? proof.environment : typeof proof.environment,
+    hasNonce: typeof proof.nonce === "string" && proof.nonce.length > 0,
+    hasAction: typeof proof.action === "string" && proof.action.length > 0,
+    userPresenceCompleted: proof.user_presence_completed === true,
+    responseCount: responses.length,
+    responses: responses.slice(0, 4).map((entry) => {
+      if (!entry || typeof entry !== "object" || Array.isArray(entry)) return { kind: typeof entry };
+      const response = entry as Record<string, unknown>;
+      return {
+        identifier: typeof response.identifier === "string" ? response.identifier : typeof response.identifier,
+        issuerSchemaId: typeof response.issuer_schema_id === "number" ? response.issuer_schema_id : undefined,
+        hasSignalHash: typeof response.signal_hash === "string" && response.signal_hash.length > 0,
+        proofKind: Array.isArray(response.proof) ? "array" : typeof response.proof,
+        proofItems: Array.isArray(response.proof) ? response.proof.length : undefined,
+      };
+    }),
+  };
+}
 
 export type WorldIdRpContext = {
   rp_id: string;
@@ -49,7 +116,7 @@ export type WorldIdRequestResponse =
       action: string;
       signal: Hex;
       rpContext: WorldIdRpContext;
-      allowLegacyProofs: false;
+      allowLegacyProofs: true;
       expiresAt: string;
     };
 
@@ -170,7 +237,7 @@ export class WorldIdSponsorService {
         expires_at: signature.expiresAt,
         signature: signature.sig,
       },
-      allowLegacyProofs: false,
+      allowLegacyProofs: true,
       expiresAt: expiresAt.toISOString(),
     };
   }
@@ -193,15 +260,39 @@ export class WorldIdSponsorService {
     ) throw new AgentAuthError("WORLD_ID_REQUEST_INVALID", "World ID request is missing, expired or already consumed", 409);
 
     const parsed = proofSchema.safeParse(rawProof);
-    if (!parsed.success) throw new AgentAuthError("WORLD_ID_PROOF_INVALID", "World App returned an invalid World ID 4.0 proof", 400);
+    if (!parsed.success) {
+      console.warn("[world-id] rejected unsupported proof shape", {
+        shape: proofShape(rawProof),
+        issues: parsed.error.issues.map((issue) => ({
+          code: issue.code,
+          path: issue.path.map(String).join("."),
+        })),
+      });
+      throw new AgentAuthError(
+        "WORLD_ID_PROOF_INVALID",
+        "World App returned neither a valid World ID 4.0 Proof of Human nor a legacy Orb proof",
+        400,
+      );
+    }
     const proof = parsed.data;
-    const proofOfHuman = proof.responses.find((entry) => entry.identifier === "proof_of_human");
+    const proofOfHuman = proof.protocol_version === "4.0"
+      ? proof.responses.find((entry) => entry.identifier.toLowerCase() === "proof_of_human" && entry.issuer_schema_id === 1)
+      : proof.responses.find((entry) => {
+        const identifier = entry.identifier.toLowerCase();
+        return identifier === "orb" || identifier === "proof_of_human";
+      });
     if (
-      proof.action !== pending.action
+      proof.environment !== "production"
+      || proof.user_presence_completed !== true
+      || proof.action !== pending.action
       || sha256(proof.nonce) !== pending.rpNonceHash
       || !proofOfHuman
-      || proofOfHuman.signal_hash.toLowerCase() !== pending.signalHash.toLowerCase()
+      || !sameNumericField(proofOfHuman.signal_hash, pending.signalHash)
     ) throw new AgentAuthError("WORLD_ID_PROOF_MISMATCH", "World proof is not bound to this sponsor and agent", 409);
+    const nullifier = canonicalNumericField(proofOfHuman.nullifier);
+    if (!nullifier) {
+      throw new AgentAuthError("WORLD_ID_PROOF_INVALID", "World proof contains an invalid nullifier", 400);
+    }
 
     let response: Response;
     try {
@@ -226,14 +317,13 @@ export class WorldIdSponsorService {
       throw new AgentAuthError("WORLD_ID_REJECTED", "World rejected this proof", response.status === 429 ? 429 : 403);
     }
 
-    const nullifier = proofOfHuman.nullifier.toLowerCase();
     const result = await this.store.recordWorldIdVerification({
       requestId,
       agentId,
       sponsor,
       signer: agent.signer,
       rpNonceHash: sha256(proof.nonce),
-      signalHash: proofOfHuman.signal_hash.toLowerCase() as Hex,
+      signalHash: pending.signalHash,
       humanHash: hmacSha256(this.options.worldIdPepper, `world-id-v4-human:${nullifier}`),
       nullifierHash: hmacSha256(this.options.worldIdPepper, `world-id-v4-nullifier:${nullifier}`),
       proofHash: requestHash(rawProof),

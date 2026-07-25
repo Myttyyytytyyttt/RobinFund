@@ -95,6 +95,17 @@ export type NuvemWorldIdStatus =
   | { verified: true; reused: boolean }
   | ({ verified: false; reused: false } & NuvemWorldIdRequest)
 
+export class AgentGatewayRequestError extends Error {
+  constructor(
+    readonly code: string,
+    readonly status: number,
+    message: string,
+  ) {
+    super(message)
+    this.name = 'AgentGatewayRequestError'
+  }
+}
+
 export async function createNuvemWorldIdRequest(
   agentId: Hex,
   accessToken: string,
@@ -123,6 +134,7 @@ export async function submitNuvemWorldIdProof(
   requestId: string,
   proof: unknown,
   accessToken: string,
+  idempotencyKey: string = crypto.randomUUID(),
 ): Promise<void> {
   const runtime = await loadProtocolRuntime(true)
   if (!runtime.agentGatewayUrl) throw new Error('Nuvem World ID is not configured.')
@@ -131,13 +143,20 @@ export async function submitNuvemWorldIdProof(
     headers: {
       authorization: `Bearer ${accessToken}`,
       'content-type': 'application/json',
-      'idempotency-key': `world-v4-${requestId}`,
+      'idempotency-key': idempotencyKey,
     },
     body: JSON.stringify({ requestId, proof }),
   })
-  const payload = await response.json() as { worldId?: { verified?: boolean }; error?: { message?: string } }
+  const payload = await response.json() as {
+    worldId?: { verified?: boolean }
+    error?: { code?: string; message?: string }
+  }
   if (!response.ok || payload.worldId?.verified !== true) {
-    throw new Error(payload.error?.message || `Nuvem World verification returned HTTP ${response.status}`)
+    throw new AgentGatewayRequestError(
+      payload.error?.code || 'WORLD_ID_HTTP_ERROR',
+      response.status,
+      payload.error?.message || `Nuvem World verification returned HTTP ${response.status}`,
+    )
   }
 }
 

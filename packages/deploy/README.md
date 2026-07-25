@@ -25,6 +25,7 @@ Los secretos nunca se escriben aquí. Las claves privadas, RPC autenticados y cr
 | [RUNBOOK.md](./RUNBOOK.md) | Procedimiento reproducible por entorno |
 | [TESTNET-ASSET-PACK.md](./TESTNET-ASSET-PACK.md) | Diseño de los activos equivalentes para chain 46630 |
 | [AGENT-RUNBOOK.md](./AGENT-RUNBOOK.md) | Promoción, operación e incidentes de Nuvem Agents/BYOA |
+| [../../docs/JUDGES_SUMMARY.md](../../docs/JUDGES_SUMMARY.md) | Resumen before/after y estado por prize para jueces |
 | [outputs/2026-07-21-baseline.md](./outputs/2026-07-21-baseline.md) | Evidencia inicial antes del reinicio |
 | [outputs/2026-07-21-devnet-restart.md](./outputs/2026-07-21-devnet-restart.md) | Output del reinicio permissionless |
 | [outputs/2026-07-21-testnet-asset-pack.md](./outputs/2026-07-21-testnet-asset-pack.md) | Build, tests, E2E 46630 local y preflight público |
@@ -35,6 +36,7 @@ Los secretos nunca se escriben aquí. Las claves privadas, RPC autenticados y cr
 | [outputs/2026-07-22-world-managed-onboarding.md](./outputs/2026-07-22-world-managed-onboarding.md) | Signer gestionado + AgentBook |
 | [outputs/2026-07-22-world-id-v4-nuvem-app.md](./outputs/2026-07-22-world-id-v4-nuvem-app.md) | App/RP/action propia, gateway y Supabase World ID 4.0 |
 | [outputs/2026-07-22-nuvem-agents-testnet.md](./outputs/2026-07-22-nuvem-agents-testnet.md) | Gateway/frontend públicos, World Portal, AgentRegistry y adapter AI en 46630 |
+| [outputs/2026-07-23-substreams-world-diagnostics.md](./outputs/2026-07-23-substreams-world-diagnostics.md) | Probe Robinhood Substreams y diagnóstico World `credential_unavailable` |
 
 ## Comandos del paquete
 

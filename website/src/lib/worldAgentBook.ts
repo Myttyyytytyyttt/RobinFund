@@ -1,6 +1,7 @@
 import { createWorldBridgeStore, type ISuccessResult } from '@worldcoin/idkit-core-legacy'
 import { solidityEncode } from '@worldcoin/idkit-core-legacy/hashing'
 import { decodeAbiParameters, type Address, type Hex } from 'viem'
+import { explainWorldProofError } from './worldIdNuvem'
 
 export const CANONICAL_AGENTBOOK = '0xA23aB2712eA7BBa896930544C7d6636a96b944dA' as Address
 export const AGENTBOOK_WORLD_APP_ID = 'app_a7c3e2b6b83927251a0db5345bd7146a' as const
@@ -73,7 +74,7 @@ export async function requestAgentBookProof(
         proof: normalizeAgentBookProof(result),
       }
     }
-    if (errorCode) throw new Error(`World verification failed: ${errorCode}`)
+    if (errorCode) throw new Error(explainWorldProofError('World AgentBook registration', errorCode))
     await delay(1_000)
   }
   throw new Error('World verification timed out. Open the link again and retry.')

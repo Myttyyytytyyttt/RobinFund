@@ -1,6 +1,6 @@
 # Estado de despliegue
 
-Última actualización: 2026-07-22 (Europe/Lisbon).
+Última actualización: 2026-07-24 (Europe/Lisbon).
 
 ## Punto de partida
 
@@ -24,7 +24,7 @@
 | D7 · TestBots público | Completada | 3 bots, 4 trades, fees, retiros y cierre reconciliados |
 | D8 · Entry fee dinámica | Completada | Curva 0%-5%, 3 tasas FIFO y transfers reconciliados |
 | D9 · Nuvem Agents local | Completada | Controller, LP abierto, fee, policy, trade, replay, Ponder y rotación |
-| D10 · Nuvem Agents público | En progreso | Gateway/frontend + World app + AgentRegistry/adapter 46630 listos; faltan proof humano, Graph y canario público |
+| D10 · Nuvem Agents público | En progreso | Gateway/frontend + World app + AgentRegistry/adapter 46630 listos; Substreams autentica; faltan sink, proof humano y canario público |
 
 ## Hallazgos iniciales
 
@@ -139,6 +139,19 @@ Direcciones y outputs completos: `outputs/2026-07-21-devnet-restart.md`.
   determinista registrados en 46630. El worker de vaults está preparado y la cola está vacía.
 - Trading API real: quote + calldata CLASSIC + ejecución en fork 4663 verdes, con minOut respetado,
   allowance final cero y adapter sin residuos. No se envió ninguna transacción pública.
+- Robinhood Substreams real: JWT y endpoint Pinax verificados procesando un bloque mainnet. El
+  paquete/sink SQL y la API consultable todavía no están desplegados; `GRAPH_URL` sigue fail-closed.
+- World real: el primer scan con una cuenta no Orb devolvió `credential_unavailable`. Un segundo
+  intento con una cuenta verificada sí creó el request público (`201`), pero World App no devolvió
+  el proof: no hubo ninguna llamada a `/world-id/verify`.
+- Compatibilidad desplegada: IDKit `4.2.2`, Proof of Human 4.0 preferido y fallback limitado a
+  legacy `orb`; Device, Document y Selfie siguen rechazados. Gateway y frontend production están
+  `READY`, health/CORS/bundle verdes. Falta únicamente completar un scan real y observar
+  `/world-id/verify=200` para declarar el flow humano production verde.
+- El primer proof humano que sí llegó al gateway reveló un parser local demasiado estricto y devolvió
+  `WORLD_ID_PROOF_INVALID`. Está corregido en production: admite las representaciones oficiales
+  `proof_of_human`/`orb`, exige presencia humana + nonce/action/signal y conserva reintentos solo en
+  memoria. Evidencia: `outputs/2026-07-24-world-id-production-parser-fix.md`.
 - Pendiente público: proof humano Nuvem + AgentBook canónico, primer controller/Fund, pipeline
   Firehose/Substreams y canario público tras resolver/documentar el target de Approval Proxy.
 - El adapter ID 1 de 46630 usa un venue de test sin valor. No es Uniswap y solo valida

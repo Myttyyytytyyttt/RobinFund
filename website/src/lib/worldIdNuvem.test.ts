@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
   assertNuvemWorldIdRequest,
+  explainWorldProofError,
   NUVEM_WORLD_ACTION,
   NUVEM_WORLD_APP_ID,
   NUVEM_WORLD_RP_ID,
@@ -19,7 +20,7 @@ const request: NuvemWorldIdRequest = {
     expires_at: 2,
     signature: `0x${'22'.repeat(65)}`,
   },
-  allowLegacyProofs: false,
+  allowLegacyProofs: true,
   expiresAt: '2099-01-01T00:00:00.000Z',
 }
 
@@ -33,10 +34,29 @@ describe('Nuvem World ID 4.0 request pinning', () => {
       .toThrow('pinned Nuvem World ID 4.0 action')
   })
 
-  it('rejects legacy fallback for the Nuvem sponsor gate', () => {
+  it('requires the verified Orb fallback for accounts without a v4 credential', () => {
     expect(() => assertNuvemWorldIdRequest({
       ...request,
-      allowLegacyProofs: true as false,
+      allowLegacyProofs: false as true,
     })).toThrow('pinned Nuvem World ID 4.0 action')
+  })
+
+  it('explains that credential_unavailable requires Orb verification', () => {
+    expect(explainWorldProofError('Nuvem World verification', 'credential_unavailable'))
+      .toContain('Orb-verified World ID')
+  })
+
+  it('distinguishes credential synchronization from rejection', () => {
+    expect(explainWorldProofError('Nuvem World verification', 'inclusion_proof_pending'))
+      .toContain('finish syncing')
+    expect(explainWorldProofError('Nuvem World verification', 'user_rejected'))
+      .toContain('cancelled')
+  })
+
+  it('turns a bridge connection failure into an actionable retry', () => {
+    expect(explainWorldProofError('Nuvem World verification', 'connection_failed'))
+      .toContain('fresh QR')
+    expect(explainWorldProofError('Nuvem World verification', new Error('Network request timed out')))
+      .toContain('fresh QR')
   })
 })

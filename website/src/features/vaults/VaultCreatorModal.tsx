@@ -1,9 +1,10 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { usePrivy, useWallets } from '@privy-io/react-auth'
 import { toDataURL } from 'qrcode'
 import { getAddress, isAddress, type Address, type Hex } from 'viem'
 import {
   activateWorldBacking,
+  AgentGatewayRequestError,
   createNuvemWorldIdRequest,
   createAgentId,
   deployLocalAgentVault,
@@ -42,6 +43,12 @@ type Props = { open: boolean; onClose: () => void; onCreated: (address: Address)
 type ManagerType = 'human' | 'ai'
 type RuntimeKind = 'external' | 'nuvem_reference'
 type Status = 'idle' | 'provisioning' | 'preparing' | 'registering' | 'world_nuvem' | 'world_agentbook' | 'backing' | 'deploying' | 'binding' | 'approving' | 'queued' | 'success'
+type PendingNuvemWorldProof = {
+  agentId: Hex
+  requestId: string
+  proof: unknown
+  idempotencyKey: string
+}
 
 type FormState = {
   name: string
@@ -137,6 +144,8 @@ export function VaultCreatorModal({ open, onClose, onCreated }: Props) {
   const [worldConnectorUri, setWorldConnectorUri] = useState<string | null>(null)
   const [worldQr, setWorldQr] = useState<string | null>(null)
   const [worldCommand, setWorldCommand] = useState<string | null>(null)
+  const [worldProofReady, setWorldProofReady] = useState(false)
+  const pendingWorldProof = useRef<PendingNuvemWorldProof | null>(null)
 
   const loginAddress = user?.wallet?.address
   const activeExternal = wallets.find((wallet) => wallet.walletClientType !== 'privy')
@@ -170,6 +179,8 @@ export function VaultCreatorModal({ open, onClose, onCreated }: Props) {
     setWorldConnectorUri(null)
     setWorldQr(null)
     setWorldCommand(null)
+    pendingWorldProof.current = null
+    setWorldProofReady(false)
   }, [open])
 
   useEffect(() => {
@@ -257,6 +268,67 @@ export function VaultCreatorModal({ open, onClose, onCreated }: Props) {
     return token
   }
 
+  const clearPendingNuvemWorldProof = () => {
+    pendingWorldProof.current = null
+    setWorldProofReady(false)
+  }
+
+  const verifyNuvemSponsor = async (input: AgentVaultCreationInput, token: string): Promise<void> => {
+    let pending = pendingWorldProof.current
+    if (pending && pending.agentId.toLowerCase() !== input.agentId.toLowerCase()) {
+      clearPendingNuvemWorldProof()
+      pending = null
+    }
+
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      if (!pending) {
+        const nuvemWorld = await createNuvemWorldIdRequest(input.agentId, token)
+        if (nuvemWorld.verified) {
+          clearPendingNuvemWorldProof()
+          return
+        }
+        const proof = await requestNuvemWorldIdProof(nuvemWorld, setWorldConnectorUri)
+        pending = {
+          agentId: input.agentId,
+          requestId: nuvemWorld.requestId,
+          proof,
+          idempotencyKey: crypto.randomUUID(),
+        }
+        pendingWorldProof.current = pending
+        setWorldProofReady(true)
+      }
+
+      try {
+        await submitNuvemWorldIdProof(
+          pending.agentId,
+          pending.requestId,
+          pending.proof,
+          token,
+          pending.idempotencyKey,
+        )
+        clearPendingNuvemWorldProof()
+        return
+      } catch (caught) {
+        if (caught instanceof AgentGatewayRequestError && caught.code === 'WORLD_ID_REQUEST_INVALID') {
+          clearPendingNuvemWorldProof()
+          pending = null
+          continue
+        }
+        if (
+          caught instanceof AgentGatewayRequestError
+          && ['WORLD_ID_PROOF_INVALID', 'WORLD_ID_PROOF_MISMATCH', 'WORLD_ID_REJECTED'].includes(caught.code)
+        ) {
+          clearPendingNuvemWorldProof()
+        } else if (caught instanceof AgentGatewayRequestError && caught.status >= 500) {
+          pending = { ...pending, idempotencyKey: crypto.randomUUID() }
+          pendingWorldProof.current = pending
+        }
+        throw caught
+      }
+    }
+    throw new Error('The previous World request expired. Retry once to generate a fresh QR.')
+  }
+
   const submit = async () => {
     setError(null)
     setWorldConnectorUri(null)
@@ -311,11 +383,7 @@ export function VaultCreatorModal({ open, onClose, onCreated }: Props) {
       setJobId(job.id)
 
       setStatus('world_nuvem')
-      const nuvemWorld = await createNuvemWorldIdRequest(input.agentId, token)
-      if (!nuvemWorld.verified) {
-        const proof = await requestNuvemWorldIdProof(nuvemWorld, setWorldConnectorUri)
-        await submitNuvemWorldIdProof(input.agentId, nuvemWorld.requestId, proof, token)
-      }
+      await verifyNuvemSponsor(input, token)
       setWorldConnectorUri(null)
       setStatus('world_agentbook')
       let registration = await getWorldRegistrationStatus(input.agentId, token)
@@ -342,6 +410,8 @@ export function VaultCreatorModal({ open, onClose, onCreated }: Props) {
       await finishAgent(deployed, () => syncAgentProfile(input.agentId, token, deployed.controller))
     } catch (caught) {
       setStatus('idle')
+      setWorldConnectorUri(null)
+      setWorldQr(null)
       setError(caught instanceof Error ? caught.message : 'Vault creation failed.')
     }
   }
@@ -369,6 +439,8 @@ export function VaultCreatorModal({ open, onClose, onCreated }: Props) {
                 <Choice active={managerType === 'ai'} title="AI manager" text="A policy-limited controller verifies every signed agent intent." onClick={() => { setManagerType('ai'); setError(null) }} />
               </div>
 
+              {error && <div role="alert" aria-live="assertive" className="rounded-xl border border-red-300/20 bg-red-300/10 px-4 py-3 text-xs leading-5 text-red-100">{error}<div className="mt-1 text-white/40">{worldProofReady ? 'World App already approved. Retry resubmits the proof held only in this tab; no new QR is needed.' : 'Retry resumes completed onchain steps and creates a fresh QR only when needed.'}</div></div>}
+
               <div className="grid gap-4 sm:grid-cols-[1fr_150px]"><Field label="Vault name" value={form.name} onChange={update('name')} /><Field label="Symbol" hint="2–8 chars" value={form.symbol} onChange={(value) => update('symbol')(value.toUpperCase())} /></div>
               <Field label="Initial loss protection" hint="Sponsor capital" value={form.initialStake} onChange={update('initialStake')} suffix="USDG" min={2000} step={100} />
               <div className="grid gap-4 sm:grid-cols-2"><Field label="Performance fee" value={form.performanceFee} onChange={update('performanceFee')} suffix="%" min={0} max={30} step={0.1} /><Field label="Maximum entry fee" value={form.entryFeeMax} onChange={update('entryFeeMax')} suffix="%" min={0} max={5} step={0.1} /></div>
@@ -384,14 +456,13 @@ export function VaultCreatorModal({ open, onClose, onCreated }: Props) {
                     <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3"><Field label="Max trade" value={form.maxTrade} onChange={update('maxTrade')} suffix="% NAV" min={1} max={20} step={1} /><Field label="Max concentration" value={form.maxConcentration} onChange={update('maxConcentration')} suffix="% NAV" min={10} max={50} step={1} /><Field label="Daily turnover" value={form.dailyTurnover} onChange={update('dailyTurnover')} suffix="% NAV" min={5} max={100} step={1} /><Field label="Max slippage" value={form.maxSlippage} onChange={update('maxSlippage')} suffix="%" min={0.1} max={1} step={0.05} /><Field label="Trades per day" value={form.maxTradesPerDay} onChange={update('maxTradesPerDay')} min={1} max={200} step={1} /><Field label="Min interval" value={form.minTradeInterval} onChange={update('minTradeInterval')} suffix="min" min={1} max={60} step={1} /><Field label="Intent lifetime" value={form.maxIntentLifetime} onChange={update('maxIntentLifetime')} suffix="min" min={1} max={5} step={1} /></div>
                   </div>
                   <div className="rounded-xl border border-sky-200/15 bg-sky-200/[0.05] px-4 py-3 text-[11px] leading-5 text-sky-50/65">Every public AI vault uses Nuvem World ID plus canonical AgentBook backing. The first Nuvem check is reused for later agents from the same sponsor wallet. LP deposits remain permissionless with no World or KYC step.</div>
-                  {(status === 'world_nuvem' || status === 'world_agentbook') && worldConnectorUri && <div className="rounded-2xl border border-white/15 bg-white p-4 text-center text-gray-950"><div className="text-sm font-semibold">{status === 'world_nuvem' ? 'Verify the sponsor with Nuvem' : 'Register the agent in AgentBook'}</div><p className="mt-1 text-xs text-gray-500">{status === 'world_nuvem' ? 'This is Nuvem’s own World ID 4.0 action, bound to your wallet and this agent signer.' : 'This second proof makes the signer discoverable through World’s canonical AgentBook.'} Nuvem never stores a raw World identifier or proof.</p>{worldQr && <img src={worldQr} alt="World App verification QR code" className="mx-auto mt-3 h-56 w-56 rounded-lg" />}<a href={worldConnectorUri} className="mt-3 inline-flex rounded-lg bg-gray-950 px-4 py-2 text-xs font-semibold text-white">Open World App</a>{status === 'world_agentbook' && worldCommand && <div className="mt-3 border-t border-gray-200 pt-3 text-[10px] text-gray-500"><div>CLI fallback</div><button type="button" onClick={() => void navigator.clipboard.writeText(worldCommand)} className="mt-1 cursor-pointer font-mono text-gray-800 underline">Copy command</button></div>}</div>}
+                  {(status === 'world_nuvem' || status === 'world_agentbook') && worldConnectorUri && <div aria-live="polite" className="rounded-2xl border border-white/15 bg-white p-4 text-center text-gray-950"><div className="text-sm font-semibold">{status === 'world_nuvem' ? 'Verify the sponsor with Nuvem' : 'Register the agent in AgentBook'}</div><p className="mt-1 text-xs text-gray-500">{status === 'world_nuvem' ? 'This is Nuvem’s own World ID action, bound to your wallet and this agent signer.' : 'This second proof makes the signer discoverable through World’s canonical AgentBook.'} Nuvem never stores a raw World identifier or proof.</p>{worldQr && <img src={worldQr} alt="World App verification QR code" className="mx-auto mt-3 h-56 w-56 rounded-lg" />}<p className="mt-3 text-xs font-medium text-gray-700">Keep this tab open, scan once, and approve in World App. This page advances automatically; the QR expires after 5 minutes.</p><a href={worldConnectorUri} className="mt-3 inline-flex rounded-lg bg-gray-950 px-4 py-2 text-xs font-semibold text-white">Open World App</a>{status === 'world_agentbook' && worldCommand && <div className="mt-3 border-t border-gray-200 pt-3 text-[10px] text-gray-500"><div>CLI fallback</div><button type="button" onClick={() => void navigator.clipboard.writeText(worldCommand)} className="mt-1 cursor-pointer font-mono text-gray-800 underline">Copy command</button></div>}</div>}
                 </div>
               )}
 
               <button type="button" onClick={() => setAdvanced((value) => !value)} className="flex w-full cursor-pointer items-center justify-between border-t border-white/10 pt-4 text-xs text-white/55 hover:text-white">Economic parameters <span className={advanced ? 'rotate-180' : ''}>⌄</span></button>
               {advanced && <div className="grid gap-4 rounded-2xl border border-white/10 bg-black/20 p-4 sm:grid-cols-2"><Field label="Minimum entry fee" value={form.entryFeeMin} onChange={update('entryFeeMin')} suffix="%" min={0} max={5} step={0.1} /><Field label="Sponsor share of entry fee" value={form.managerEntryShare} onChange={update('managerEntryShare')} suffix="%" min={0} max={50} step={1} /><Field label="AUM cap multiplier" value={form.kFactor} onChange={update('kFactor')} suffix="× stake" min={1} max={25} step={1} /><Field label="Accounting period" value={form.periodDays} onChange={update('periodDays')} suffix="days" min={7} max={90} step={1} /><Field label="Withdrawal cooldown" value={form.cooldownHours} onChange={update('cooldownHours')} suffix="hours" min={1} max={168} step={1} /></div>}
 
-              {error && <div className="rounded-xl border border-red-300/20 bg-red-300/10 px-4 py-3 text-xs leading-5 text-red-100">{error}<div className="mt-1 text-white/40">Completed onchain steps are detected on retry and are not duplicated.</div></div>}
               {status === 'queued' && <div className="rounded-xl border border-amber-200/20 bg-amber-200/10 px-4 py-3 text-xs text-amber-50">Deployment job accepted. World verification and operator deployment are pending.{jobId && <div className="mt-1 font-mono text-[10px] text-white/45">{jobId}</div>}</div>}
               {status === 'success' && <div className="rounded-xl border border-emerald-300/25 bg-emerald-300/10 px-4 py-3 text-sm text-emerald-100">{managerType === 'ai' ? 'AI vault bound, policy active and loss protection locked.' : 'Vault registered and loss protection locked.'}<div className="mt-1 font-mono text-[10px] text-white/45">{agentDeployment?.fund || humanDeployment?.fund}</div></div>}
 

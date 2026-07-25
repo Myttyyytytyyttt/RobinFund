@@ -124,7 +124,7 @@ function proofFor(request: Extract<WorldIdRequestResponse, { verified: false }>,
       issuer_schema_id: 1,
       expires_at_min: Math.floor(Date.now() / 1_000) + 3_600,
     }],
-    user_presence_completed: false,
+    user_presence_completed: true,
     environment: "production",
   };
 }
