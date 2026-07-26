@@ -78,6 +78,30 @@ and derives `world-staging-identity` from the verified Identity Check subject.
 That backing is labelled `canonical: false` and is rejected by configuration on
 Robinhood mainnet.
 
+## Verified staging run — 2026-07-26
+
+This is observed evidence from the public gateway and Robinhood testnet, not a
+synthetic fixture:
+
+- `POST .../world-id/request` returned `201` at `00:19:42 UTC`;
+- `POST .../world-id/verify` returned `200` at `00:20:09 UTC`;
+- agent `0x6b67cb06968ddbaed08ec9fe3cca72d2456391938a7943c15304440f0229079c`
+  is `Active` in the public `AgentRegistry`;
+- controller `0x821800c893ab97a5C01368E2373e6fE5ba9fd423` is authorized and bound to
+  Fund `0x74D799D16C44155E0dDed0bDDC984a980325c859`.
+
+The later
+[`addStake` transaction](https://explorer.testnet.chain.robinhood.com/tx/0xd13cca7039f790424d391c5d4b26450befb234adcff8657513edd23e9d86106a)
+reverted in `tUSDG.transferFrom` with `InsufficientBalance()`. The sponsor had
+`0 tUSDG`; the `2,000 tUSDG` allowance was already present and the public faucet
+was available. This is post-World economic finalization, not an Identity Check,
+QR or AgentKit failure.
+
+The testnet retry path now checks balance and allowance before staking. It claims
+the public tUSDG faucet when available, skips a redundant approval and resumes
+the same saved job. It does not create another agent, proof request, controller
+or Fund.
+
 ## Developer feedback
 
 | Area | Observation | Mitigation in Nuvem |
@@ -88,6 +112,7 @@ Robinhood mainnet.
 | Preview policy binding | The public result exposes `identity_attested`, but not a signed application policy hash. | Pin and persist the server-issued policy for the official flow, never trust browser-supplied policy metadata, and disclose the remaining modified-client limitation below. |
 | Simulator discovery | Two similarly named simulators caused repeated false debugging paths. | Document and display only `simulator.orb.engineer` for this preview. |
 | Recovery | World App approval, wallet approval, and asynchronous deployment cross several failure boundaries. | Persist only non-secret workflow coordinates in `sessionStorage`; keep the proof only in memory and make every subsequent step idempotent. |
+| Testnet stake preflight | Identity could succeed while the final `addStake` reverted because the sponsor had no tUSDG. | Check balance/allowance first; on chain 46630 claim the public faucet and reuse an existing approval before resuming the same job. |
 
 ## Community feedback observed in the supplied hackathon Discord
 
@@ -142,7 +167,7 @@ end-to-end sessions and attach screen/video evidence.
 
 | Date/device | Environment | User understood passport + 18 consent? | Completed/abandoned step | Time | Friction or quote | Change made |
 | --- | --- | --- | --- | --- | --- | --- |
-| TODO | staging | TODO | TODO | TODO | TODO | TODO |
+| 2026-07-26 / Windows desktop + Orb Simulator | staging | Not separately measured | Identity Check completed; launch reached final stake | 27s request-to-verify | Repeated wallet prompts; final stake failed because sponsor balance was 0 tUSDG | Added balance/allowance preflight, automatic testnet faucet and exact-job recovery |
 | TODO | production | TODO | TODO | TODO | TODO | TODO |
 
 Ask each tester:

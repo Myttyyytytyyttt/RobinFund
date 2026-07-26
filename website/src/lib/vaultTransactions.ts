@@ -3,6 +3,7 @@ import {
   createWalletClient,
   custom,
   erc20Abi,
+  formatUnits,
   http,
   parseAbi,
   parseUnits,
@@ -15,6 +16,40 @@ import { loadProtocolRuntime } from './protocolRuntime'
 
 const stakeAbi = parseAbi(['function addStake(uint256 amount)', 'function stakeAvailable() view returns (uint256)'])
 const fundAbi = parseAbi(['function requestDeposit(uint256 amount6) returns (uint256)'])
+const testnetUsdgAbi = parseAbi([
+  'function faucet() returns (uint256)',
+  'function nextFaucetAt(address account) view returns (uint256)',
+])
+const ROBINHOOD_TESTNET_CHAIN_ID = 46_630
+const ZERO_HASH = '0x0000000000000000000000000000000000000000000000000000000000000000' as Hash
+
+export type InitialProtectionFundingPlan = {
+  needsFaucet: boolean
+  needsApproval: boolean
+  shortfall6: bigint
+}
+
+export function planInitialProtectionFunding(input: {
+  chainId: number
+  balance6: bigint
+  allowance6: bigint
+  amount6: bigint
+  nextFaucetAt?: bigint
+  blockTimestamp?: bigint
+}): InitialProtectionFundingPlan {
+  const shortfall6 = input.balance6 >= input.amount6 ? 0n : input.amount6 - input.balance6
+  const faucetReady = (
+    input.chainId === ROBINHOOD_TESTNET_CHAIN_ID
+    && input.nextFaucetAt !== undefined
+    && input.blockTimestamp !== undefined
+    && input.nextFaucetAt <= input.blockTimestamp
+  )
+  return {
+    needsFaucet: shortfall6 > 0n && faucetReady,
+    needsApproval: input.allowance6 < input.amount6,
+    shortfall6,
+  }
+}
 
 export type BrowserWallet = {
   address: string
@@ -83,7 +118,7 @@ export async function addInitialProtection(
   wallet: BrowserWallet,
   deployment: VaultDeployment,
 ): Promise<{ approveHash: Hash; stakeHash: Hash }> {
-  const { publicClient, walletClient, account } = await clients(wallet)
+  const { runtime, publicClient, walletClient, account } = await clients(wallet)
   const target6 = BigInt(deployment.initialStake6)
   const current6 = await publicClient.readContract({
     address: deployment.stakeEscrow,
@@ -91,19 +126,94 @@ export async function addInitialProtection(
     functionName: 'stakeAvailable',
   })
   if (current6 >= target6) {
-    const zero = '0x0000000000000000000000000000000000000000000000000000000000000000' as Hash
-    return { approveHash: zero, stakeHash: zero }
+    return { approveHash: ZERO_HASH, stakeHash: ZERO_HASH }
   }
   const amount6 = target6 - current6
-  const approveHash = await walletClient.writeContract({
-    address: deployment.usdg,
-    abi: erc20Abi,
-    functionName: 'approve',
-    args: [deployment.stakeEscrow, amount6],
-    account,
-    chain: robinhoodChain,
+  let [balance6, allowance6] = await Promise.all([
+    publicClient.readContract({
+      address: deployment.usdg,
+      abi: erc20Abi,
+      functionName: 'balanceOf',
+      args: [account],
+    }),
+    publicClient.readContract({
+      address: deployment.usdg,
+      abi: erc20Abi,
+      functionName: 'allowance',
+      args: [account, deployment.stakeEscrow],
+    }),
+  ])
+
+  let nextFaucetAt: bigint | undefined
+  let blockTimestamp: bigint | undefined
+  if (runtime.chainId === ROBINHOOD_TESTNET_CHAIN_ID && balance6 < amount6) {
+    const [availableAt, block] = await Promise.all([
+      publicClient.readContract({
+        address: deployment.usdg,
+        abi: testnetUsdgAbi,
+        functionName: 'nextFaucetAt',
+        args: [account],
+      }),
+      publicClient.getBlock({ blockTag: 'latest' }),
+    ])
+    nextFaucetAt = availableAt
+    blockTimestamp = block.timestamp
+  }
+
+  let funding = planInitialProtectionFunding({
+    chainId: runtime.chainId,
+    balance6,
+    allowance6,
+    amount6,
+    nextFaucetAt,
+    blockTimestamp,
   })
-  await wait(publicClient, approveHash)
+  if (funding.needsFaucet) {
+    const faucetHash = await walletClient.writeContract({
+      address: deployment.usdg,
+      abi: testnetUsdgAbi,
+      functionName: 'faucet',
+      account,
+      chain: robinhoodChain,
+    })
+    await wait(publicClient, faucetHash)
+    balance6 = await publicClient.readContract({
+      address: deployment.usdg,
+      abi: erc20Abi,
+      functionName: 'balanceOf',
+      args: [account],
+    })
+    funding = planInitialProtectionFunding({
+      chainId: runtime.chainId,
+      balance6,
+      allowance6,
+      amount6,
+      nextFaucetAt,
+      blockTimestamp,
+    })
+  }
+  if (funding.shortfall6 > 0n) {
+    const cooldown = nextFaucetAt && blockTimestamp && nextFaucetAt > blockTimestamp
+      ? ` The testnet faucet is available again at ${new Date(Number(nextFaucetAt) * 1_000).toISOString()}.`
+      : ''
+    throw new Error(
+      `Sponsor wallet has ${formatUnits(balance6, 6)} tUSDG but ${formatUnits(amount6, 6)} tUSDG is required for initial protection.${cooldown}`,
+    )
+  }
+
+  let approveHash = ZERO_HASH
+  if (funding.needsApproval) {
+    approveHash = await walletClient.writeContract({
+      address: deployment.usdg,
+      abi: erc20Abi,
+      functionName: 'approve',
+      args: [deployment.stakeEscrow, amount6],
+      account,
+      chain: robinhoodChain,
+    })
+    await wait(publicClient, approveHash)
+    allowance6 = amount6
+  }
   const stakeHash = await walletClient.writeContract({
     address: deployment.stakeEscrow,
     abi: stakeAbi,

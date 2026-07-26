@@ -17,9 +17,10 @@ type Heading = { level: 2 | 3; text: string; slug: string }
 // Orden y títulos legibles de las páginas
 const PAGE_META: Record<string, string> = {
   'SPEC.md': 'Protocol Spec',
+  'WORLD_INTEGRATION.md': 'World + AgentKit',
   'ROADMAP.md': 'Build Roadmap',
 }
-const PAGE_ORDER = ['SPEC.md', 'ROADMAP.md']
+const PAGE_ORDER = ['SPEC.md', 'WORLD_INTEGRATION.md', 'ROADMAP.md']
 
 function slugify(text: string): string {
   return text

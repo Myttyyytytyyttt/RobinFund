@@ -27,7 +27,7 @@ pero no sustituye la declaración oficial ni afirma por sí mismo cuándo se esc
 | Área | Cambio nuevo |
 |---|---|
 | Contratos | `AgentRegistry`, `AgentVaultController`, `UniswapApiAdapter`, scripts y tests adversariales |
-| Identidad | Action World ID 4.0 propia de Nuvem + AgentBook; backing ligado a ambas evidencias, sponsor, signer, chain, registry, nonce y caducidad |
+| Identidad | Identity Check 4.0 propia de Nuvem; producción añade AgentBook, mientras staging usa un backing no canónico y explícito |
 | BYOA | SDK TypeScript, CLI y cliente Python; clave local y conexiones solo salientes |
 | Control plane | Gateway Hono, SIWE sponsor, sesiones AgentKit, OpenAPI, SSE e idempotencia |
 | Ejecución | Quote CLASSIC, typed data EIP-712, worker durable, simulación, broadcast y receipts |
@@ -35,7 +35,7 @@ pero no sustituye la declaración oficial ni afirma por sí mismo cuándo se esc
 | Datos | Esquema Supabase `agent_private`, RLS pública, subgraph y MCP read-only con frescura |
 | Agente demo | Runtime `ToolLoopAgent`, dry-run por defecto, misma API pública que BYOA |
 | Frontend | Selector Human/AI, política, external/reference agent, backing, deploy y dashboard |
-| Managed onboarding | Signer aislado por vault, QR/deep link AgentBook y fallback CLI sin seed para el sponsor |
+| Managed onboarding | Signer aislado por vault, QR/deep link Identity Check, AgentBook canónico en producción y fallback CLI sin seed |
 | World privacy | Proof opaco transitorio, solo HMACs/hashes privados, RP request single-use y límite atómico de tres agentes Nuvem por humano |
 | Operación | E2E local de 10 actos, runbook, arquitectura, demo y outputs reproducibles |
 
@@ -51,11 +51,11 @@ inmutable, manteniendo el protocolo económico preexistente aislado de la lógic
 | Gateway/worker | Implementados y cubiertos por tests de concurrencia, replay y recuperación |
 | Supabase | Migraciones aplicadas al proyecto NuvemFund; RLS e integración SIWE verificadas |
 | Frontend | Wizard/dashboard implementados; build/tests y visual desktop/mobile verdes |
-| World Nuvem | App/RP/action de producción activas; IDKit 4.2.1, gateway y Postgres implementados; el primer scan llegó a World App pero la cuenta no tenía Proof of Human |
-| World canonical | Integración y validadores AgentBook implementados; falta E2E público con registro real |
+| World Nuvem | App/RP/action production + staging activas; IDKit 4.2.2; request `201` y verify `200` reales en Simulator; agente staging activo onchain |
+| World canonical | Integración y validadores AgentBook implementados; sigue pendiente el E2E de producción con registro real |
 | The Graph | Robinhood Substreams autenticado con un bloque real; faltan package Nuvem, sink SQL y endpoint consultable |
 | Uniswap Trading API | Quote y ejecución CLASSIC reales sobre fork 4663; falta canario público |
-| Robinhood 46630 | AgentRegistry y adapter AI de test desplegados; falta el primer controller/Fund público |
+| Robinhood 46630 | AgentRegistry, adapter AI, primer controller y Fund públicos; stake final pendiente hasta que el sponsor reciba tUSDG del faucet |
 | Robinhood 4663 | Fork probado; no hay deployment público Agents ni autorización de capital público |
 
 ## Límites honestos de la demo
@@ -63,8 +63,8 @@ inmutable, manteniendo el protocolo económico preexistente aislado de la lógic
 - El E2E local usa estado forkeado de Robinhood 4663, pero chain ID local `31337`.
 - El proxy local de swap es un stand-in explícito; el bytecode de `UniswapApiAdapter` es el de
   producción y verifica el mismo selector/campos externos.
-- El backing World local es no canónico y se etiqueta como tal. El lookup canónico está cubierto por
-  tests del gateway, no por una prueba pública.
+- El backing World local y staging es no canónico y se etiqueta como tal. Staging tiene Identity
+  Check público verificado; AgentBook canónico sigue cubierto por tests, no por una prueba pública.
 - Ponder alimenta la UI local; Robinhood Substreams autentica, pero el sink/query Nuvem todavía no
   está desplegado.
 - Mainnet con capital público sigue bloqueada por auditoría externa, operación, issuer y revisión

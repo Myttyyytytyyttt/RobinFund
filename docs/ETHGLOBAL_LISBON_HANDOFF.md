@@ -98,7 +98,11 @@ The human sponsor concept should connect to Nuvem's skin-in-the-game model: the 
 
 Avoid generic reputation, generic login or API discounts; those are explicitly weak/non-qualifying examples. The key use case is authorization to manage third-party capital.
 
-Optional only after the main flow works: use Identity Check as a per-vault module for age/jurisdiction eligibility in RWA vaults. It must minimize collected attributes and include developer/user testing notes.
+Implemented beyond the original minimum: Nuvem now uses Identity Check as the AI-vault eligibility
+gate with only `document_type=passport` and `minimum_age=18`. Robinhood testnet uses World staging
+and an explicitly non-canonical backing; production still requires canonical AgentBook. The
+2026-07-26 staging run completed request + verification and activated the agent onchain. Keep the
+developer/user test log and the preview security limitation in `WORLD_IDENTITY_TESTING.md`.
 
 ### 4. ENS — Best ENS Integration for AI Agents
 
@@ -273,4 +277,3 @@ The project is successful when a judge can see, end to end, that:
 ## Judge hook
 
 > AI agents will manage money. Nuvem makes them investable, accountable and safe enough to back.
-

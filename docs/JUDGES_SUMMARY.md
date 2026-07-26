@@ -44,20 +44,25 @@ immutable manager, isolating the new agent surface from the existing vault accou
 
 **Before:** Nuvem could not prove that an agent was sponsored by a unique human.
 
-**Implemented:** Nuvem has its own World ID 4.0 app/RP/action (`sponsor-ai-vault`), signed proof
-requests, backend verification, replay protection and private hashed bindings. The agent signer must
-also be registered in canonical AgentBook. Both pieces of evidence are required before
-`AgentRegistry` can activate the agent.
+**Implemented:** Nuvem has its own World ID 4.0 app/RP/action (`sponsor-ai-vault`), an
+Identity Check policy for passport + minimum age 18, signed proof requests, backend verification,
+replay protection and private hashed bindings. Production additionally requires the signer in
+canonical AgentBook before `AgentRegistry` can activate the agent. Robinhood testnet uses a
+separate, explicitly non-canonical `world-staging-identity` backing so the hackathon Simulator can
+exercise the full authorization path without claiming production AgentBook evidence.
 
 **Product effect:** World changes real permissions. An unbacked agent cannot open a session or
 execute a vault trade; pausing the backing stops execution.
 
-**Current proof:** app, action, gateway, database and frontend are live. The first production scan
-reached World App, but the test account lacked the requested Proof of Human credential.
+**Current proof:** on 2026-07-26 the staging request returned `201`, verification returned `200`,
+and the resulting agent is `Active` in the public Robinhood testnet `AgentRegistry`. Its controller
+is authorized and its Fund is deployed. A later `addStake(2,000 tUSDG)` transaction reverted because
+the sponsor wallet held `0 tUSDG`; the trace proves this was post-World economic finalization, not a
+QR or Identity Check failure.
 
-**Still required:** one Orb-verified tester must complete the Nuvem action and canonical AgentBook
-registration, then we must record the World dashboard event, AgentBook transaction and
-`AgentRegistry` activation.
+**Still required:** one eligible production tester must complete the Nuvem Identity Check and
+canonical AgentBook registration, then we must record the production World dashboard event,
+AgentBook transaction and canonical `AgentRegistry` activation.
 
 ### The Graph — load-bearing agent context
 

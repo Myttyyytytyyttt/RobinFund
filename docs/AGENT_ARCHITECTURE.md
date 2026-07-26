@@ -10,8 +10,8 @@ on-chain.
 ```mermaid
 flowchart LR
     S[Sponsor wallet] -->|SIWE + tx sponsor| UI[Wizard / Dashboard]
-    S -->|World App| NW[Nuvem World ID 4.0<br/>sponsor-ai-vault]
-    S -->|World App| AB[Canonical AgentBook]
+    S -->|Identity Check| NW[Nuvem World ID 4.0<br/>sponsor-ai-vault]
+    S -->|production only| AB[Canonical AgentBook]
     NW --> GW
     AB --> GW
     GW --> WV[Nuvem backing verifier]
@@ -60,6 +60,24 @@ controller:
 El QR se genera localmente; no se envía el connector URI a un servicio de imágenes. Existe fallback
 CLI (`npx @worldcoin/agentkit-cli@0.2.0 register <signer>`) si World App no puede abrir el deep link.
 
+### Ruta staging del hackathon
+
+Robinhood testnet `46630` fuerza World `staging`. IDKit `4.2.2` solicita `identity_check` con
+`document_type=passport`, `minimum_age=18`, sin legacy proofs ni Selfie Check, y el QR se completa
+con `https://simulator.orb.engineer/`. El gateway exige el `rp_context` firmado, action, signal,
+policy y environment originales.
+
+Staging omite deliberadamente el QR de AgentBook canónico y deriva un backing
+`world-staging-identity` etiquetado `canonical: false`. Robinhood mainnet `4663` fuerza
+`production` y exige Identity Check más AgentBook en World Chain. Una configuración cruzada se
+rechaza tanto en frontend como en gateway.
+
+El 2026-07-26 el flujo staging real devolvió `/world-id/request=201` y
+`/world-id/verify=200`; el agente quedó `Active`, su controller autorizado y el Fund desplegado en
+46630. El fallo posterior de `addStake` fue `tUSDG.InsufficientBalance()` con saldo sponsor cero:
+ocurrió después de World y no invalida el Identity Check. El reintento conserva el mismo job,
+reclama el faucet de testnet si falta saldo y evita repetir QR, deploy o approval ya minado.
+
 ### External / BYOA
 
 El manager introduce únicamente la dirección de su signer local. Completa la misma action propia de
@@ -67,7 +85,7 @@ Nuvem y el mismo registro AgentBook; la private key permanece en su PC/VPS y Nuv
 Después, AgentKit abre sesiones salientes HTTPS de 15 minutos y cada trade sigue exigiendo una firma
 EIP-712 independiente.
 
-La app propia usa `app_5fe197d24d83c55573c5d9d0356f3d6`, RP `rp_db7d77ff9edef255` y action
+La app propia usa `app_5fe197d24d83c55573c5d9d0356f3d6e`, RP `rp_db7d77ff9edef255` y action
 `sponsor-ai-vault`. El registro AgentBook sigue usando deliberadamente la app/action oficial de
 AgentKit (`app_a7c3e2b6b83927251a0db5345bd7146a` / `agentbook-registration`). Son controles
 complementarios: Nuvem verifica al sponsor y AgentBook verifica el signer agente.
@@ -193,6 +211,8 @@ Nuvem World nonce/action/signal/replay/cuota, World canonical verifier, worker c
 Graph stale y errores de Uniswap. El esquema World ID 4.0 también pasó un smoke real contra
 Postgres NuvemFund con limpieza posterior.
 
-La app/RP/action de Nuvem están registradas y activas. Pendiente de evidencia pública: un scan real
-visible en el dashboard World, AgentBook real, subgraph desplegado, quote real de Trading API,
-deployment Agents en 46630 y canario mínimo 4663. Ninguna de esas ausencias se sustituye por un mock silencioso.
+La app/RP/action de Nuvem están registradas y activas. Staging ya tiene evidencia pública de
+Identity Check aceptado, backing activo, controller y Fund en 46630. Sigue pendiente la evidencia
+canónica de producción: tester elegible, AgentBook real y captura del dashboard World; también
+siguen pendientes el subgraph consultable, el canario público de Trading API y el canario mínimo
+4663. Ninguna de esas ausencias se sustituye por un mock silencioso.

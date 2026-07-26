@@ -28,11 +28,12 @@ pnpm test:agent-e2e
 1. **Elegir AI manager.** En el wizard comparar Human y AI; conservar la misma economía de Fund.
 2. **Elegir runtime.** Mostrar `Nuvem reference` sin wallet/seed del agente y `External` con signer
    local/BYOA; ambos usan solo conexiones salientes.
-3. **World backing.** Enseñar QR/deep link y fallback CLI. En local, mostrar la etiqueta
-   `non-canonical`; en demo pública usar AgentBook
-   real y comprobar el backing antes de activar.
+3. **World backing.** En Robinhood testnet enseñar Identity Check staging con
+   `simulator.orb.engineer`, `/world-id/verify=200` y la etiqueta `non-canonical`. En producción,
+   añadir AgentBook real y comprobar ambas evidencias antes de activar.
 4. **Crear vault.** Desplegar controller separado, Fund con controller como manager y registrar ambos.
-5. **Aportar stake.** Sponsor hace bind + first-loss stake. El worker no marca `ready` antes de ambos.
+5. **Aportar stake.** Antes de firmar, comprobar saldo tUSDG; en 46630 usar el faucet público si
+   falta. Sponsor hace bind + first-loss stake. El worker no marca `ready` antes de ambos.
 6. **LP abierto.** Depositar desde otra wallet sin World, KYC ni sesión backend.
 7. **Rechazo visible.** Firmar un trade >10% NAV; debe revertir `TradeTooLarge` sin consumir nonce.
 8. **Trade válido.** Mostrar evidence hash, quote, selector/campos del proxy, firma local y receipt.
@@ -53,6 +54,8 @@ pnpm test:agent-e2e
 
 - Reiniciar el proceso agente y reenviar los mismos bytes: `InvalidNonce`, balances intactos.
 - Reiniciar worker después de broadcast: debe recuperar receipt, no crear otra tx.
+- Si `addStake` falla por `tUSDG.InsufficientBalance`, pulsar **Resume pending AI vault**. El
+  preflight reclama faucet, reutiliza allowance y continúa el mismo agent/controller/Fund sin QR.
 - Simular Graph stale: quote rechazada antes de Uniswap.
 - Simular Uniswap 429/5xx: job retryable, sin intención firmable incompleta.
 
@@ -62,6 +65,7 @@ No cambiar las etiquetas hasta que exista evidencia real de cada proveedor:
 
 | Badge | Requisito |
 |---|---|
+| `World staging identity` | request `201`, verify `200`, backing `canonical: false` y agent activo |
 | `World canonical` | AgentBook lookup y activación minada |
 | `Graph live` | endpoint, deployment ID y lag dentro del límite |
 | `Uniswap live` | quote CLASSIC, simulación y receipt real |
